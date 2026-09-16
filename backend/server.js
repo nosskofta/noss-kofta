@@ -1,14 +1,23 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import cors from 'cors';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const app = express();
 
-// 🚨 سحر الـ CORS: مكتبة جاهزة بتفتح كل الأبواب بدون أي تعقيد ولازم تكون في الأول خالص 🚨
-app.use(cors());
+// 🚨 البوابة الحديدية للـ CORS (بدون مكتبات عشان مفيش حاجة تقع في النص) 🚨
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  
+  // لو الطلب استكشافي (Preflight) من المتصفح، رد عليه فوراً بالقبول 200
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+  next();
+});
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
