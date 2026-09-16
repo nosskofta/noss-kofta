@@ -235,7 +235,9 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
       ) : (
         <div className="space-y-16">
           {categoriesToShow.map(cat => {
-            const catItems = menuItems.filter(item => item.category === cat.name);
+            // التعديل الأول: ترتيب الأصناف هنا بناءً على الـ order
+            const catItems = menuItems.filter(item => item.category === cat.name).sort((a, b) => (a.order || 0) - (b.order || 0));
+            
             if (catItems.length === 0 && selectedCategory !== 'الكل' && selectedCategory !== 'All') {
               return (
                 <div key={cat._id} className="border-b border-[#3A1218] pb-10">
@@ -464,7 +466,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     } catch (err) {}
   };
 
-  // 🌟 دالة ترتيب الأصناف (اللي كانت ناقصة) 🌟
+  // 🌟 التعديل التاني: إرسال كل بيانات الصنف + الـ order الجديد 🌟
   const handleMoveItem = async (index, direction, catItems) => {
     const newItems = [...catItems];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
@@ -480,7 +482,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           fetch(`${API_BASE}/api/items/${itm._id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ order: idx })
+            body: JSON.stringify({ ...itm, order: idx })
           })
         )
       );
@@ -614,7 +616,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     const itemData = {
       name,
       price: Number(price),
-      discount: Number(discount) || 0, // 👈 هنا بنضمن إرسال الخصم للسيرفر صراحة
+      discount: Number(discount) || 0,
       image: image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta",
       description,
       extras,
@@ -654,7 +656,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     setEditId(item._id);
     setName(item.name);
     setPrice(item.price);
-    setDiscount(item.discount !== undefined ? item.discount : ''); // 👈 هنا بنجيب الخصم القديم للمربع
+    setDiscount(item.discount !== undefined ? item.discount : '');
     setImage(item.image);
     setDescription(item.description || '');
     setExtras(item.extras || '');
@@ -982,7 +984,9 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
         <h3 className="text-2xl font-bold text-[#FFD700] border-b border-[#3A1218] pb-3">📋 إدارة وترتيب الأصناف حسب الأقسام</h3>
         
         {categories.map(cat => {
-          const catItems = menuItems.filter(item => item.category === cat.name);
+          // 🌟 التعديل التالت: ترتيب الأصناف في لوحة الإدارة 🌟
+          const catItems = menuItems.filter(item => item.category === cat.name).sort((a, b) => (a.order || 0) - (b.order || 0));
+          
           return (
             <div key={cat._id} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-6 shadow-xl">
               <h4 className="text-xl font-black text-[#FFD700] mb-4 border-r-4 border-[#800020] pr-3">
@@ -1009,7 +1013,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
                         </div>
                       </div>
 
-                      {/* 🌟 زراير ترتيب الأصناف ظهرت هنا أهيه 🌟 */}
                       <div className="flex items-center gap-2">
                         <button 
                           type="button" 
@@ -1394,13 +1397,11 @@ function App() {
           </ul>
 
           <div className="flex items-center gap-4">
-            {/* 🌟 الهوت لاين رجع تاني أهو 🌟 */}
             <div className="hidden md:flex flex-col text-center border-l border-[#3A1218] pl-4 ml-2">
               <span className="text-[#FFD700] text-[10px] font-black tracking-widest">{t.hotlineText}</span>
               <span className="text-white font-bold text-sm tracking-wider">01042258982</span>
             </div>
             
-            {/* 🌟 زرار اللغة رجع تاني أهو 🌟 */}
             <button 
               onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')} 
               className="bg-[#12080A] text-zinc-300 border border-[#3A1218] px-3 py-2 rounded-xl text-sm font-bold hover:text-white hover:border-[#800020] transition"
@@ -1454,13 +1455,12 @@ function App() {
                 </div>
               </div>
             )}
-{/* 🌟 عرض الإضافات الاختيارية 🌟 */}
+
             {selectedItemDetail.addons && selectedItemDetail.addons.length > 0 && (
               <div className="mb-6 space-y-3">
                 <h4 className="text-sm font-bold text-[#FFD700]">✨ الإضافات الاختيارية:</h4>
                 <div className="flex flex-col gap-3">
                   
-                  {/* خيار "بدون إضافات" كافتراضي عشان لو الزبون مش عايز حاجة */}
                   <label className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${!selectedAddon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
                     <div className="flex items-center gap-3">
                       <input type="radio" name="addon" checked={!selectedAddon} onChange={() => setSelectedAddon(null)} className="hidden" />
@@ -1472,7 +1472,6 @@ function App() {
                     <span className="text-sm font-black">+0 ج</span>
                   </label>
 
-                  {/* لوب لعرض كل الإضافات اللي إنت مسجلها */}
                   {selectedItemDetail.addons.map((addon, idx) => (
                     <label key={idx} className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${selectedAddon === addon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
                       <div className="flex items-center gap-3">
