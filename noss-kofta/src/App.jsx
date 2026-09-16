@@ -62,6 +62,12 @@ const translations = {
   }
 };
 
+// ================= دالة حساب السعر بعد الخصم =================
+const getDiscountedPrice = (price, discountPercent) => {
+  if (!discountPercent || discountPercent <= 0) return price;
+  return Math.round(price * (1 - discountPercent / 100));
+};
+
 // ================= 1. صفحة الرئيسية =================
 const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, setCart }) => {
   const t = translations[lang];
@@ -125,21 +131,37 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 transition-all duration-300">
               {offerItems.slice(currentIndex, currentIndex + 3).map((item) => {
+                const finalPrice = getDiscountedPrice(item.price, item.discount);
                 const cartItem = cart.find(i => i.name === item.name);
                 const quantity = cartItem ? cart.filter(i => i.name === item.name).length : 0;
 
                 return (
                   <div 
                     key={item._id} 
-                    className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col"
+                    className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative"
                   >
+                    {item.discount > 0 && (
+                      <span className="absolute top-3 right-3 z-10 bg-red-600 text-white text-xs font-black px-3 py-1 rounded-full shadow-lg">
+                        خصم {item.discount}% 🔥
+                      </span>
+                    )}
+
                     <div onClick={() => handleOpenItemDetails(item)} className="w-full h-[320px] bg-[#12080A] overflow-hidden relative cursor-pointer">
                       <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
                     </div>
                     <div className="p-4 flex items-center justify-between bg-[#220E13] border-t border-[#3A1218]">
                       <div>
                         <h4 className="font-bold text-lg text-white">{item.name}</h4>
-                        <span className="text-[#FFD700] font-black">{item.price} ج</span>
+                        <div className="flex items-center gap-2">
+                          {item.discount > 0 ? (
+                            <>
+                              <span className="text-zinc-500 line-through text-sm">{item.price} ج</span>
+                              <span className="text-[#FFD700] font-black text-lg">{finalPrice} ج</span>
+                            </>
+                          ) : (
+                            <span className="text-[#FFD700] font-black">{item.price} ج</span>
+                          )}
+                        </div>
                       </div>
                       
                       {quantity === 0 ? (
@@ -153,7 +175,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                             if (idx !== -1) { const nc = [...cart]; nc.splice(idx, 1); setCart(nc); }
                           }} className="text-[#FFD700] font-black px-2 hover:text-white">-</button>
                           <span className="font-black text-white">{quantity}</span>
-                          <button onClick={() => setCart([...cart, item])} className="text-[#FFD700] font-black px-2 hover:text-white">+</button>
+                          <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="text-[#FFD700] font-black px-2 hover:text-white">+</button>
                         </div>
                       )}
                     </div>
@@ -233,21 +255,38 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8">
                   {catItems.map(item => {
+                    const finalPrice = getDiscountedPrice(item.price, item.discount);
                     const cartItem = cart.find(i => i.name === item.name);
                     const quantity = cartItem ? cart.filter(i => i.name === item.name).length : 0;
 
                     return (
                       <div 
                         key={item._id} 
-                        className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl"
+                        className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative"
                       >
+                        {item.discount > 0 && (
+                          <span className="absolute top-3 right-3 z-10 bg-red-600 text-white text-xs font-black px-3 py-1 rounded-full shadow-lg">
+                            خصم {item.discount}% 🔥
+                          </span>
+                        )}
+
                         <div onClick={() => item.type === 'box' ? handleOpenBox(item) : handleOpenItemDetails(item)} className="w-full h-48 object-cover bg-[#12080A] overflow-hidden cursor-pointer">
                           <img src={item.image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta"} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
                         </div>
                         <div className="p-4 flex-1 flex flex-col bg-[#1C0D10]">
                           <h3 className="text-xl font-bold mb-1 text-white">{item.name}</h3>
                           <p className="text-xs text-zinc-400 mb-2 line-clamp-2">{item.description || "..."}</p>
-                          <p className="text-[#FFD700] text-2xl font-black mb-4 mt-auto">{item.price} ج</p>
+                          
+                          <div className="flex items-center gap-3 mb-4 mt-auto">
+                            {item.discount > 0 ? (
+                              <>
+                                <span className="text-zinc-500 line-through text-lg">{item.price} ج</span>
+                                <span className="text-[#FFD700] text-2xl font-black">{finalPrice} ج</span>
+                              </>
+                            ) : (
+                              <span className="text-[#FFD700] text-2xl font-black">{item.price} ج</span>
+                            )}
+                          </div>
                           
                           {item.type === 'box' ? (
                             <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow">
@@ -267,7 +306,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                                     if (idx !== -1) { const nc = [...cart]; nc.splice(idx, 1); setCart(nc); }
                                   }} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white">-</button>
                                   <span className="font-black text-white">{quantity}</span>
-                                  <button onClick={() => setCart([...cart, item])} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white">+</button>
+                                  <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white">+</button>
                                 </div>
                               </div>
                             )
@@ -433,6 +472,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const [editId, setEditId] = useState(null);
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
+  const [discount, setDiscount] = useState(''); // نسبة الخصم
   const [image, setImage] = useState('');
   const [description, setDescription] = useState('');
   const [extras, setExtras] = useState('');
@@ -552,6 +592,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     const itemData = {
       name,
       price: Number(price),
+      discount: Number(discount) || 0,
       image: image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta",
       description,
       extras,
@@ -591,6 +632,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     setEditId(item._id);
     setName(item.name);
     setPrice(item.price);
+    setDiscount(item.discount || '');
     setImage(item.image);
     setDescription(item.description || '');
     setExtras(item.extras || '');
@@ -606,7 +648,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 
   const resetForm = () => {
     setEditId(null);
-    setName(''); setPrice(''); setImage(''); setDescription(''); setExtras(''); setMaxItems(''); setType('normal');
+    setName(''); setPrice(''); setDiscount(''); setImage(''); setDescription(''); setExtras(''); setMaxItems(''); setType('normal');
     setIsOffer(false);
     setAddonsList([]);
     setBoxItemsList([]);
@@ -754,6 +796,10 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
         <div>
           <label className="block text-sm mb-2 text-zinc-300">Price *</label>
           <input type="number" required value={price} onChange={(e) => setPrice(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Price" />
+        </div>
+        <div>
+          <label className="block text-sm mb-2 text-[#FFD700]">نسبة الخصم % (اختياري)</label>
+          <input type="number" placeholder="مثال: 10 أو 20" value={discount} onChange={(e) => setDiscount(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" />
         </div>
         <div>
           <label className="block text-sm mb-2 text-zinc-300">Category *</label>
@@ -933,10 +979,12 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
                         <div>
                           <h4 className="font-bold text-white">
                             {item.name} 
+                            {item.discount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-md font-black mr-2">خصم {item.discount}%</span>}
                             {item.type === 'box' && <span className="bg-[#800020] text-white text-xs px-2 py-0.5 rounded-md font-black mr-2">بوكس مخصص</span>}
-                            {item.sizes && item.sizes.length > 0 && <span className="bg-[#C5A059] text-black text-xs px-2 py-0.5 rounded-md font-black mr-2">أحجام متعددة</span>}
                           </h4>
-                          <span className="text-xs text-[#FFD700]">{item.price} ج</span>
+                          <span className="text-xs text-[#FFD700]">
+                            {item.discount > 0 ? `${getDiscountedPrice(item.price, item.discount)} ج (بدل ${item.price})` : `${item.price} ج`}
+                          </span>
                         </div>
                       </div>
 
@@ -1264,6 +1312,7 @@ function App() {
   };
 
   const handleOpenItemDetailsModal = (item) => {
+    const finalPrice = getDiscountedPrice(item.price, item.discount);
     const hasSizes = item.sizes && item.sizes.length > 0;
     const hasAddons = item.addons && item.addons.length > 0;
     if (hasSizes || hasAddons) {
@@ -1271,12 +1320,12 @@ function App() {
       setSelectedSize(hasSizes ? item.sizes[0] : null);
       setSelectedAddon(null);
     } else {
-      setCart([...cart, item]);
+      setCart([...cart, { ...item, price: finalPrice }]);
     }
   };
 
   const basePrice = selectedSize ? selectedSize.price : (selectedItemDetail ? selectedItemDetail.price : 0);
-  const currentItemTotalPrice = basePrice + (selectedAddon ? selectedAddon.price : 0);
+  const currentItemTotalPrice = getDiscountedPrice(basePrice, selectedItemDetail?.discount) + (selectedAddon ? selectedAddon.price : 0);
 
   const handleAddCustomizedItemToCart = () => {
     if (!selectedItemDetail) return;
@@ -1334,12 +1383,22 @@ function App() {
               <div className="mb-6 space-y-3">
                 <h4 className="text-sm font-bold text-[#FFD700]">اختر الحجم:</h4>
                 <div className="grid grid-cols-2 gap-3">
-                  {selectedItemDetail.sizes.map((sz, idx) => (
-                    <div key={idx} onClick={() => setSelectedSize(sz)} className={`p-3 rounded-xl border cursor-pointer flex flex-col items-center justify-center transition ${selectedSize === sz ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
-                      <span className="font-bold">{sz.name}</span>
-                      <span className="text-sm font-black text-[#FFD700]">{sz.price} ج</span>
-                    </div>
-                  ))}
+                  {selectedItemDetail.sizes.map((sz, idx) => {
+                    const finalSzPrice = getDiscountedPrice(sz.price, selectedItemDetail.discount);
+                    return (
+                      <div key={idx} onClick={() => setSelectedSize(sz)} className={`p-3 rounded-xl border cursor-pointer flex flex-col items-center justify-center transition ${selectedSize === sz ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
+                        <span className="font-bold">{sz.name}</span>
+                        {selectedItemDetail.discount > 0 ? (
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-zinc-500 line-through">{sz.price} ج</span>
+                            <span className="text-sm font-black text-[#FFD700]">{finalSzPrice} ج</span>
+                          </div>
+                        ) : (
+                          <span className="text-sm font-black text-[#FFD700]">{sz.price} ج</span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
