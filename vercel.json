@@ -8,9 +8,7 @@
     }
   ],
   "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/noss-kofta/$1"
-    }
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/noss-kofta/index.html" }
   ]
 }
