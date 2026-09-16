@@ -74,6 +74,13 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
   const title = lang === 'ar' ? siteSettings.heroTitleAr : siteSettings.heroTitleEn;
   const offerItems = menuItems.filter(item => item.isOffer);
 
+  // جلب صورة البوستر المحفوظة محلياً للعملاء
+  const [customBanner, setCustomBanner] = useState('');
+  useEffect(() => {
+    const savedBanner = localStorage.getItem('noss_kofta_banner');
+    if (savedBanner) setCustomBanner(savedBanner);
+  }, []);
+
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const nextSlide = () => {
@@ -107,17 +114,17 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
           <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FFD700] via-[#E6C687] to-[#C5A059] drop-shadow-[0_5px_5px_rgba(0,0,0,0.9)] mb-4">
             {title}
           </h1>
-          <Link to="/menu" className="inline-block bg-[#800020] hover:bg-[#990026] text-white border-2 border-[#FFD700] px-8 py-3 text-xl font-black rounded-2xl hover:scale-105 transition shadow-[0_0_30px_rgba(255,215,0,0.4)] mb-8">
+          <Link to="/menu" className="inline-block bg-[#800020] hover:bg-[#990026] text-white border-2 border-[#FFD700] px-8 py-3 text-xl font-black rounded-2xl hover:scale-105 transition shadow-[0_0_30px_rgba(255,215,0,0.4)] mb-6">
             {t.orderNow}
           </Link>
 
-          {/* 🌟 صورة العرض الكبيرة تحت زرار اطلب دلوقتي */}
-          {siteSettings.bannerImage && (
-            <div className="w-full max-w-2xl mt-4 px-4">
+          {/* 🌟 صورة العرض الكبيرة (البوستر تحت زرار اطلب دلوقتي) */}
+          {customBanner && (
+            <div className="w-full max-w-xl mt-3 px-4">
               <img 
-                src={siteSettings.bannerImage} 
+                src={customBanner} 
                 alt="Banner Offer" 
-                className="w-full h-auto max-h-[350px] object-cover rounded-2xl border-2 border-[#FFD700] shadow-[0_0_25px_rgba(255,215,0,0.3)] animate-pulse" 
+                className="w-full h-auto max-h-[320px] object-cover rounded-2xl border-2 border-[#FFD700] shadow-[0_0_30px_rgba(255,215,0,0.4)]" 
               />
             </div>
           )}
@@ -346,17 +353,10 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   }, [isAuthenticated, navigate]);
 
   const [heroImg, setHeroImg] = useState(siteSettings.heroImage);
-  const [bannerImg, setBannerImg] = useState(siteSettings.bannerImage || '');
+  const [bannerImg, setBannerImg] = useState(() => localStorage.getItem('noss_kofta_banner') || '');
   const [titleAr, setTitleAr] = useState(siteSettings.heroTitleAr);
   const [titleEn, setTitleEn] = useState(siteSettings.heroTitleEn);
   const [logoImg, setLogoImg] = useState(siteSettings.logoImage || '');
-
-  // لتحديث الحالة لو البيانات اتحملت من السيرفر
-  useEffect(() => {
-    if (siteSettings.bannerImage) setBannerImg(siteSettings.bannerImage);
-    if (siteSettings.heroImage) setHeroImg(siteSettings.heroImage);
-    if (siteSettings.logoImage) setLogoImg(siteSettings.logoImage);
-  }, [siteSettings]);
 
   // مناطق التوصيل
   const [deliveryZones, setDeliveryZones] = useState([]);
@@ -438,7 +438,9 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           canvas.width = width; canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
-          setBannerImg(canvas.toDataURL('image/jpeg', 0.85));
+          const compressed = canvas.toDataURL('image/jpeg', 0.85);
+          setBannerImg(compressed);
+          localStorage.setItem('noss_kofta_banner', compressed); // 👈 الحفظ الفوري محلياً
         };
         img.src = event.target.result;
       };
@@ -472,16 +474,16 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     try {
+      if (bannerImg) {
+        localStorage.setItem('noss_kofta_banner', bannerImg);
+      } else {
+        localStorage.removeItem('noss_kofta_banner');
+      }
+
       const res = await fetch(`${API_BASE}/api/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          heroImage: heroImg, 
-          bannerImage: bannerImg, 
-          heroTitleAr: titleAr, 
-          heroTitleEn: titleEn, 
-          logoImage: logoImg 
-        })
+        body: JSON.stringify({ heroImage: heroImg, heroTitleAr: titleAr, heroTitleEn: titleEn, logoImage: logoImg })
       });
       if (res.ok) {
         alert("تم تحديث الواجهة واللوجو وصورة العرض بنجاح! 🚀🔥");
@@ -798,7 +800,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
               {bannerImg ? (
                 <>
                   <img src={bannerImg} alt="Banner Preview" className="w-40 h-24 object-cover rounded-xl border border-[#FFD700]" />
-                  <button type="button" onClick={() => setBannerImg('')} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
+                  <button type="button" onClick={() => { setBannerImg(''); localStorage.removeItem('noss_kofta_banner'); }} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
                 </>
               ) : (
                 <span className="text-zinc-500 text-xs">لا توجد صورة بوستر مفعلة حالياً. (امسحها أو اتركها فارغة لتختفي تماماً)</span>
@@ -1319,7 +1321,7 @@ function App() {
   const [cart, setCart] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [siteSettings, setSiteSettings] = useState({ heroImage: '', bannerImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
+  const [siteSettings, setSiteSettings] = useState({ heroImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [logoClicks, setLogoClicks] = useState(0);
   const [lang, setLang] = useState('ar');
@@ -1575,7 +1577,7 @@ function App() {
                   <div className="flex items-center gap-4">
                     <button onClick={() => handleUpdateSelection(bItem.name, 'remove')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">-</button>
                     <span className="text-xl w-4 text-center font-black text-white">{boxSelections[bItem.name] || 0}</span>
-                    <button onClick={() => handleUpdateSelection(bItem.name, 'add')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-+#FFD700 font-bold">+</button>
+                    <button onClick={() => handleUpdateSelection(bItem.name, 'add')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">+</button>
                   </div>
                 </div>
               ))}
