@@ -1398,7 +1398,41 @@ function App() {
                 </div>
               </div>
             )}
+{/* 🌟 عرض الإضافات الاختيارية 🌟 */}
+            {selectedItemDetail.addons && selectedItemDetail.addons.length > 0 && (
+              <div className="mb-6 space-y-3">
+                <h4 className="text-sm font-bold text-[#FFD700]">✨ الإضافات الاختيارية:</h4>
+                <div className="flex flex-col gap-3">
+                  
+                  {/* خيار "بدون إضافات" كافتراضي عشان لو الزبون مش عايز حاجة */}
+                  <label className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${!selectedAddon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
+                    <div className="flex items-center gap-3">
+                      <input type="radio" name="addon" checked={!selectedAddon} onChange={() => setSelectedAddon(null)} className="hidden" />
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${!selectedAddon ? 'border-[#FFD700]' : 'border-[#3A1218]'}`}>
+                        {!selectedAddon && <div className="w-2.5 h-2.5 bg-[#FFD700] rounded-full"></div>}
+                      </div>
+                      <span className="font-bold text-sm">بدون إضافات</span>
+                    </div>
+                    <span className="text-sm font-black">+0 ج</span>
+                  </label>
 
+                  {/* لوب لعرض كل الإضافات اللي إنت مسجلها */}
+                  {selectedItemDetail.addons.map((addon, idx) => (
+                    <label key={idx} className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${selectedAddon === addon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
+                      <div className="flex items-center gap-3">
+                        <input type="radio" name="addon" checked={selectedAddon === addon} onChange={() => setSelectedAddon(addon)} className="hidden" />
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedAddon === addon ? 'border-[#FFD700]' : 'border-[#3A1218]'}`}>
+                          {selectedAddon === addon && <div className="w-2.5 h-2.5 bg-[#FFD700] rounded-full"></div>}
+                        </div>
+                        <span className="font-bold text-sm">{addon.name}</span>
+                      </div>
+                      <span className="text-sm font-black text-[#FFD700]">+{addon.price} ج</span>
+                    </label>
+                  ))}
+
+                </div>
+              </div>
+            )}
             <button onClick={handleAddCustomizedItemToCart} className="w-full bg-[#800020] text-white font-black py-4 rounded-xl hover:bg-[#990026] transition text-lg shadow-lg">
               أضف للسلة • {currentItemTotalPrice} ج
             </button>
