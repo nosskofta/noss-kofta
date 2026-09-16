@@ -6,7 +6,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 
 const MONGO_URI = "mongodb+srv://noskoftaeg_db_user:F6I5ieUXbGcBiEEt@cluster0.5zgvg7b.mongodb.net/?retryWrites=true&w=majority";
@@ -49,7 +50,8 @@ const settingsSchema = new mongoose.Schema({
   heroImage: { type: String, default: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?q=80&w=1920&auto=format&fit=crop' },
   heroTitleAr: { type: String, default: 'أقوى العروض 🔥' },
   heroTitleEn: { type: String, default: 'Strongest Offers 🔥' },
-  logoImage: { type: String, default: '' }
+  logoImage: { type: String, default: '' },
+  promoBannerImage: { type: String, default: '' }
 });
 const Settings = mongoose.model('Settings', settingsSchema);
 
@@ -72,6 +74,7 @@ app.put('/api/settings', async (req, res) => {
       settings.heroTitleAr = req.body.heroTitleAr || settings.heroTitleAr;
       settings.heroTitleEn = req.body.heroTitleEn || settings.heroTitleEn;
       settings.logoImage = req.body.logoImage !== undefined ? req.body.logoImage : settings.logoImage;
+      settings.promoBannerImage = req.body.promoBannerImage !== undefined ? req.body.promoBannerImage : settings.promoBannerImage;
     }
     await settings.save();
     res.json(settings);
