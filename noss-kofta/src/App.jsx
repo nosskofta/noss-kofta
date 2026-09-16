@@ -74,6 +74,13 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
   const title = lang === 'ar' ? siteSettings.heroTitleAr : siteSettings.heroTitleEn;
   const offerItems = menuItems.filter(item => item.isOffer);
 
+  // جلب البوستر المحفوظ محلياً
+  const [customBanner, setCustomBanner] = useState('');
+  useEffect(() => {
+    const saved = localStorage.getItem('noss_kofta_banner');
+    if (saved) setCustomBanner(saved);
+  }, []);
+
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const nextSlide = () => {
@@ -111,11 +118,11 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
             {t.orderNow}
           </Link>
 
-          {/* 🌟 صورة العرض المتخزنة في داتا بيز السيرفر وتظهر على كل الأجهزة */}
-          {siteSettings.bannerImage && (
+          {/* 🌟 صورة العرض الكبيرة */}
+          {customBanner && (
             <div className="w-full max-w-xl mt-3 px-4">
               <img 
-                src={siteSettings.bannerImage} 
+                src={customBanner} 
                 alt="Banner Offer" 
                 className="w-full h-auto max-h-[320px] object-cover rounded-2xl border-2 border-[#FFD700] shadow-[0_0_30px_rgba(255,215,0,0.4)]" 
               />
@@ -346,17 +353,10 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   }, [isAuthenticated, navigate]);
 
   const [heroImg, setHeroImg] = useState(siteSettings.heroImage);
-  const [bannerImg, setBannerImg] = useState(siteSettings.bannerImage || '');
+  const [bannerImg, setBannerImg] = useState(() => localStorage.getItem('noss_kofta_banner') || '');
   const [titleAr, setTitleAr] = useState(siteSettings.heroTitleAr);
   const [titleEn, setTitleEn] = useState(siteSettings.heroTitleEn);
   const [logoImg, setLogoImg] = useState(siteSettings.logoImage || '');
-
-  useEffect(() => {
-    if (siteSettings.bannerImage) setBannerImg(siteSettings.bannerImage);
-    if (siteSettings.heroImage) setHeroImg(siteSettings.heroImage);
-    if (siteSettings.logoImage) setLogoImg(siteSettings.logoImage);
-    if (siteSettings.heroTitleAr) setTitleAr(siteSettings.heroTitleAr);
-  }, [siteSettings]);
 
   // مناطق التوصيل
   const [deliveryZones, setDeliveryZones] = useState([]);
@@ -438,7 +438,9 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           canvas.width = width; canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
-          setBannerImg(canvas.toDataURL('image/jpeg', 0.85));
+          const compressed = canvas.toDataURL('image/jpeg', 0.85);
+          setBannerImg(compressed);
+          localStorage.setItem('noss_kofta_banner', compressed); // 👈 الحفظ الفوري
         };
         img.src = event.target.result;
       };
@@ -472,19 +474,19 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     try {
+      if (bannerImg) {
+        localStorage.setItem('noss_kofta_banner', bannerImg);
+      } else {
+        localStorage.removeItem('noss_kofta_banner');
+      }
+
       const res = await fetch(`${API_BASE}/api/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          heroImage: heroImg, 
-          bannerImage: bannerImg, // 👈 بتتخزن مع السيرفر وتثبت على اللابتوب والموبايل زي اللوجو
-          heroTitleAr: titleAr, 
-          heroTitleEn: titleEn, 
-          logoImage: logoImg 
-        })
+        body: JSON.stringify({ heroImage: heroImg, heroTitleAr: titleAr, heroTitleEn: titleEn, logoImage: logoImg })
       });
       if (res.ok) {
-        alert("تم تحديث اللوجو وصورة العرض والواجهة بنجاح وتخزينهم على السيرفر! 🚀🔥");
+        alert("تم تحديث الواجهة واللوجو وصورة العرض بنجاح! 🚀🔥");
         fetchSettings();
       }
     } catch (err) {
@@ -792,16 +794,16 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           </div>
 
           <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#FFD700]/30">
-            <label className="block text-sm mb-2 text-[#FFD700] font-bold">🖼️ صورة البوستر / العرض (تتحفظ مع الإعدادات وتظهر على كل الأجهزة)</label>
+            <label className="block text-sm mb-2 text-[#FFD700] font-bold">🖼️ صورة العرض الكبيرة (البوستر تحت زرار اطلب دلوقتي)</label>
             <input type="file" accept="image/*" onChange={handleBannerImageUpload} className="w-full bg-[#1C0D10] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer mb-2" />
             <div className="flex items-center gap-4 mt-2">
               {bannerImg ? (
                 <>
                   <img src={bannerImg} alt="Banner Preview" className="w-40 h-24 object-cover rounded-xl border border-[#FFD700]" />
-                  <button type="button" onClick={() => setBannerImg('')} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
+                  <button type="button" onClick={() => { setBannerImg(''); localStorage.removeItem('noss_kofta_banner'); }} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
                 </>
               ) : (
-                <span className="text-zinc-500 text-xs">لا توجد صورة بوستر مرفوعة حالياً.</span>
+                <span className="text-zinc-500 text-xs">لا توجد صورة بوستر مفعلة حالياً.</span>
               )}
             </div>
           </div>
@@ -816,7 +818,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           </div>
         </div>
         <button type="submit" className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow">
-          💾 حفظ اللوجو وصورة البوستر وإعدادات الموقع
+          💾 حفظ تعديلات اللوجو والواجهة وصورة العرض
         </button>
       </form>
 
@@ -1319,7 +1321,7 @@ function App() {
   const [cart, setCart] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [siteSettings, setSiteSettings] = useState({ heroImage: '', bannerImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
+  const [siteSettings, setSiteSettings] = useState({ heroImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [logoClicks, setLogoClicks] = useState(0);
   const [lang, setLang] = useState('ar');
@@ -1350,9 +1352,7 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/api/settings`);
       const data = await res.json();
-      if (data) {
-        setSiteSettings(data);
-      }
+      setSiteSettings(data);
     } catch (err) {}
   };
 
@@ -1583,7 +1583,7 @@ function App() {
               ))}
             </div>
 
-            <button onClick={handleAddBoxToCart} className={`w-full py-4 rounded-xl font-black text-lg transition ${totalSelected === activeBox.maxItems ? 'bg-[#800020] text-white hover:bg-[#990026] cursor-pointer shadow-lg' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
+            <button onClick={handleAddBoxToCart} disabled={totalSelected !== activeBox.maxItems} className={`w-full py-4 rounded-xl font-black text-lg transition ${totalSelected === activeBox.maxItems ? 'bg-[#800020] text-white hover:bg-[#990026] cursor-pointer shadow-lg' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
               Add to Cart
             </button>
           </div>
