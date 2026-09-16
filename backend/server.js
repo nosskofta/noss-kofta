@@ -37,7 +37,7 @@ const Category = mongoose.model('Category', categorySchema);
 const itemSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
-  discount: { type: Number, default: 0 }, // 👈 تمت الإضافة بنجاح هنا
+  discount: { type: Number, default: 0 }, 
   image: { type: String },
   description: { type: String },
   extras: { type: String },
