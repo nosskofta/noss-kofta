@@ -111,7 +111,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
             {t.orderNow}
           </Link>
 
-          {/* 🌟 صورة العرض الكبيرة تأتي من السيرفر مباشرة لتظهر على كل الأجهزة */}
+          {/* 🌟 صورة العرض المتخزنة في داتا بيز السيرفر وتظهر على كل الأجهزة */}
           {siteSettings.bannerImage && (
             <div className="w-full max-w-xl mt-3 px-4">
               <img 
@@ -477,14 +477,14 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           heroImage: heroImg, 
-          bannerImage: bannerImg, // 👈 إرسال صورة البوستر للسيرفر مباشرة لتظهر لكل الأجهزة
+          bannerImage: bannerImg, // 👈 بتتخزن مع السيرفر وتثبت على اللابتوب والموبايل زي اللوجو
           heroTitleAr: titleAr, 
           heroTitleEn: titleEn, 
           logoImage: logoImg 
         })
       });
       if (res.ok) {
-        alert("تم تحديث الواجهة واللوجو وصورة العرض بنجاح! 🚀🔥");
+        alert("تم تحديث اللوجو وصورة العرض والواجهة بنجاح وتخزينهم على السيرفر! 🚀🔥");
         fetchSettings();
       }
     } catch (err) {
@@ -792,7 +792,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           </div>
 
           <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#FFD700]/30">
-            <label className="block text-sm mb-2 text-[#FFD700] font-bold">🖼️ صورة العرض الكبيرة (البوستر تحت زرار اطلب دلوقتي)</label>
+            <label className="block text-sm mb-2 text-[#FFD700] font-bold">🖼️ صورة البوستر / العرض (تتحفظ مع الإعدادات وتظهر على كل الأجهزة)</label>
             <input type="file" accept="image/*" onChange={handleBannerImageUpload} className="w-full bg-[#1C0D10] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer mb-2" />
             <div className="flex items-center gap-4 mt-2">
               {bannerImg ? (
@@ -801,7 +801,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
                   <button type="button" onClick={() => setBannerImg('')} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
                 </>
               ) : (
-                <span className="text-zinc-500 text-xs">لا توجد صورة بوستر مفعلة حالياً. (امسحها أو اتركها فارغة لتختفي تماماً)</span>
+                <span className="text-zinc-500 text-xs">لا توجد صورة بوستر مرفوعة حالياً.</span>
               )}
             </div>
           </div>
@@ -816,7 +816,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           </div>
         </div>
         <button type="submit" className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow">
-          💾 حفظ تعديلات اللوجو والواجهة وصورة العرض
+          💾 حفظ اللوجو وصورة البوستر وإعدادات الموقع
         </button>
       </form>
 
@@ -1583,7 +1583,7 @@ function App() {
               ))}
             </div>
 
-            <button onClick={handleAddBoxToCart} disabled={totalSelected !== activeBox.maxItems} className={`w-full py-4 rounded-xl font-black text-lg transition ${totalSelected === activeBox.maxItems ? 'bg-[#800020] text-white hover:bg-[#990026] cursor-pointer shadow-lg' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
+            <button onClick={handleAddBoxToCart} className={`w-full py-4 rounded-xl font-black text-lg transition ${totalSelected === activeBox.maxItems ? 'bg-[#800020] text-white hover:bg-[#990026] cursor-pointer shadow-lg' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
               Add to Cart
             </button>
           </div>
