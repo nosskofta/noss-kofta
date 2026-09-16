@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom';
-const API_URL = "https://noss-kofta-production.up.railway.app";
+
+const API_BASE = 'https://noss-kofta-production-d57f.up.railway.app';
+
 const translations = {
   ar: {
     home: "الرئيسية",
@@ -88,32 +90,20 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
 
   return (
     <div className="bg-[#12080A] min-h-screen text-white">
-      {/* هيدر العروض الكبرى والفخم مع بانر الخصم التحتاوي */}
-      <header className="relative w-full bg-[#12080A] flex flex-col items-center justify-center overflow-hidden border-b-4 border-[#800020] shadow-2xl pt-12 pb-8">
+      <header className="relative w-full h-[480px] md:h-[550px] bg-[#12080A] flex items-center justify-center overflow-hidden border-b-4 border-[#800020] shadow-2xl">
         <div 
-          className="absolute inset-0 bg-cover bg-center opacity-70 scale-105 transition duration-700"
+          className="absolute inset-0 bg-cover bg-center opacity-90 scale-105 transition duration-700"
           style={{ backgroundImage: `url(${siteSettings.heroImage})` }}
         ></div>
-        <div className="absolute inset-0 bg-gradient-to-t from-[#12080A] via-[#12080A]/60 to-transparent"></div>
-        
-        {/* محتوى الهيدر الأساسي */}
-        <div className="relative z-10 text-center px-4 mb-6">
-          <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FFD700] via-[#E6C687] to-[#C5A059] drop-shadow-[0_5px_5px_rgba(0,0,0,0.9)] mb-4">
+        <div className="absolute inset-0 bg-gradient-to-t from-[#12080A] via-[#12080A]/40 to-transparent"></div>
+        <div className="relative z-10 text-center px-4 mt-20">
+          <h1 className="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FFD700] via-[#E6C687] to-[#C5A059] drop-shadow-[0_5px_5px_rgba(0,0,0,0.9)] mb-6">
             {title}
           </h1>
-          <Link to="/menu" className="inline-block bg-[#800020] hover:bg-[#990026] text-white border-2 border-[#FFD700] px-8 py-3 text-xl font-black rounded-2xl hover:scale-105 transition shadow-[0_0_30px_rgba(255,215,0,0.4)]">
+          <Link to="/menu" className="inline-block bg-[#800020] hover:bg-[#990026] text-white border-2 border-[#FFD700] px-10 py-3.5 text-2xl font-black rounded-2xl hover:scale-105 transition shadow-[0_0_30px_rgba(255,215,0,0.4)]">
             {t.orderNow}
           </Link>
         </div>
-
-        {/* صورة الخصم أو البانر الإضافي تحت زرار اطلب دلوقتي (تظهر فقط لو مضافة) */}
-        {siteSettings.promoBannerImage && (
-          <div className="relative z-10 w-full max-w-4xl px-4 mt-6">
-            <div className="rounded-2xl overflow-hidden border-2 border-[#FFD700]/60 shadow-[0_0_25px_rgba(255,215,0,0.3)] bg-[#1C0D10]">
-              <img src={siteSettings.promoBannerImage} alt="Special Promo Offer" className="w-full h-auto max-h-[350px] object-cover hover:scale-102 transition duration-500" />
-            </div>
-          </div>
-        )}
       </header>
 
       <section className="px-8 py-14 max-w-7xl mx-auto relative">
@@ -306,7 +296,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   }, [isAuthenticated, navigate]);
 
   const [heroImg, setHeroImg] = useState(siteSettings.heroImage);
-  const [promoBannerImg, setPromoBannerImg] = useState(siteSettings.promoBannerImage || '');
   const [titleAr, setTitleAr] = useState(siteSettings.heroTitleAr);
   const [titleEn, setTitleEn] = useState(siteSettings.heroTitleEn);
   const [logoImg, setLogoImg] = useState(siteSettings.logoImage || '');
@@ -318,7 +307,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 
   const fetchZones = async () => {
     try {
-const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones');
+      const res = await fetch(`${API_BASE}/api/zones`);
       const data = await res.json();
       setDeliveryZones(data);
     } catch (err) {}
@@ -332,7 +321,7 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
     e.preventDefault();
     if (!zoneName.trim() || !zoneFee) return;
     try {
-      const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones', {
+      const res = await fetch(`${API_BASE}/api/zones`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: zoneName.trim(), fee: Number(zoneFee) })
@@ -348,7 +337,7 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
   const handleDeleteZone = async (id) => {
     if (!window.confirm("حذف هذه المنطقة؟")) return;
     try {
-      const res = await fetch(`https://noss-kofta-production.up.railway.app/api/zones/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE}/api/zones/${id}`, { method: 'DELETE' });
       if (res.ok) fetchZones();
     } catch (err) {}
   };
@@ -369,29 +358,6 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
           setHeroImg(canvas.toDataURL('image/jpeg', 0.8));
-        };
-        img.src = event.target.result;
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handlePromoBannerUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width; let height = img.height;
-          const MAX_WIDTH = 1200; const MAX_HEIGHT = 600;
-          if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } }
-          else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
-          canvas.width = width; canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
-          setPromoBannerImg(canvas.toDataURL('image/jpeg', 0.8));
         };
         img.src = event.target.result;
       };
@@ -425,19 +391,13 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch('https://noss-kofta-production.up.railway.app/api/settings', {
+      const res = await fetch(`${API_BASE}/api/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          heroImage: heroImg, 
-          promoBannerImage: promoBannerImg, 
-          heroTitleAr: titleAr, 
-          heroTitleEn: titleEn, 
-          logoImage: logoImg 
-        })
+        body: JSON.stringify({ heroImage: heroImg, heroTitleAr: titleAr, heroTitleEn: titleEn, logoImage: logoImg })
       });
       if (res.ok) {
-        alert("تم تحديث الواجهة واللوجو وبانر العروض بنجاح! 🚀🔥");
+        alert("تم تحديث الواجهة واللوجو بنجاح! 🚀🔥");
         fetchSettings();
       }
     } catch (err) {
@@ -456,7 +416,7 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
     try {
       await Promise.all(
         newCategories.map((cat, idx) => 
-          fetch(`https://noss-kofta-production.up.railway.app/api/categories/${cat._id}`, {
+          fetch(`${API_BASE}/api/categories/${cat._id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ order: idx })
@@ -530,13 +490,13 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
     try {
       let res;
       if (editCatId) {
-        res = await fetch(`https://noss-kofta-production.up.railway.app/api/categories/${editCatId}`, {
+        res = await fetch(`${API_BASE}/api/categories/${editCatId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: catName.trim() })
         });
       } else {
-        res = await fetch('https://noss-kofta-production.up.railway.app/api/categories', {
+        res = await fetch(`${API_BASE}/api/categories`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: catName.trim() })
@@ -559,7 +519,7 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
   const handleDeleteCategory = async (id) => {
     if (!window.confirm("Delete?")) return;
     try {
-      const res = await fetch(`https://noss-kofta-production.up.railway.app/api/categories/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE}/api/categories/${id}`, { method: 'DELETE' });
       if (res.ok) fetchCategories();
     } catch (err) {}
   };
@@ -607,13 +567,13 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
     try {
       let res;
       if (editId) {
-        res = await fetch(`https://noss-kofta-production.up.railway.app/api/items/${editId}`, {
+        res = await fetch(`${API_BASE}/api/items/${editId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(itemData)
         });
       } else {
-        res = await fetch('https://noss-kofta-production.up.railway.app/api/items', {
+        res = await fetch(`${API_BASE}/api/items`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(itemData)
@@ -656,7 +616,7 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
   const handleDeleteItem = async (id) => {
     if (!window.confirm("Delete item?")) return;
     try {
-      const res = await fetch(`https://noss-kofta-production.up.railway.app/api/items/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE}/api/items/${id}`, { method: 'DELETE' });
       if (res.ok) fetchItems();
     } catch (err) {}
   };
@@ -668,7 +628,6 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
         <Link className="text-zinc-400 hover:text-white underline" to="/menu">{t.menu}</Link>
       </div>
 
-      {/* قسم إدارة مناطق التوصيل */}
       <div className="bg-[#1C0D10] p-6 rounded-2xl border border-[#800020]/60 mb-8 shadow-xl">
         <h3 className="text-xl font-bold text-[#FFD700] mb-4">🚚 إدارة مناطق التوصيل وأسعارها</h3>
         <form onSubmit={handleAddZone} className="flex flex-col md:flex-row gap-4 mb-6">
@@ -707,28 +666,16 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
 
       <form onSubmit={handleSaveSettings} className="bg-[#1C0D10] p-6 rounded-2xl border border-[#800020]/50 mb-8 shadow-xl">
         <h3 className="text-xl font-bold text-[#FFD700] mb-4">{t.siteSettings}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           <div>
             <label className="block text-sm mb-2 text-zinc-300">شعار المطعم (اللوجو)</label>
             <input type="file" accept="image/*" onChange={handleLogoUpload} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer mb-2" />
-            {logoImg && <img src={logoImg} alt="Logo" className="w-16 h-16 object-contain rounded-xl border border-[#3A1218] bg-[#12080A]" />}
+            {logoImg && <img src={logoImg} alt="Logo Preview" className="w-20 h-20 object-contain rounded-xl border border-[#3A1218] bg-[#12080A]" />}
           </div>
           <div>
-            <label className="block text-sm mb-2 text-zinc-300">صورة الواجهة الخلفية</label>
+            <label className="block text-sm mb-2 text-zinc-300">صورة الواجهة الثابتة فوق</label>
             <input type="file" accept="image/*" onChange={handleHeroImageUpload} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer mb-2" />
-            <img src={heroImg} alt="Hero" className="w-full h-16 object-cover rounded-xl border border-[#3A1218]" />
-          </div>
-          <div>
-            <label className="block text-sm mb-2 text-[#FFD700]">🎁 صورة بانر الخصم (تحت اطلب دلوقتي)</label>
-            <input type="file" accept="image/*" onChange={handlePromoBannerUpload} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-1 text-white text-sm cursor-pointer mb-2" />
-            {promoBannerImg ? (
-              <div className="flex items-center gap-2">
-                <img src={promoBannerImg} alt="Promo" className="w-full h-16 object-cover rounded-xl border border-[#FFD700]" />
-                <button type="button" onClick={() => setPromoBannerImg('')} className="bg-red-500/20 text-red-400 px-2 py-1 rounded-lg text-xs font-bold">حذف</button>
-              </div>
-            ) : (
-              <span className="text-xs text-zinc-500">لا توجد صورة مضافة حالياً</span>
-            )}
+            <img src={heroImg} alt="Hero" className="w-full h-20 object-cover rounded-xl border border-[#3A1218]" />
           </div>
           <div className="space-y-2">
             <div>
@@ -742,11 +689,10 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
           </div>
         </div>
         <button type="submit" className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow">
-          💾 حفظ تعديلات الواجهة والبانر واللوجو
+          💾 حفظ تعديلات اللوجو والواجهة
         </button>
       </form>
 
-      {/* إدارة الأقسام */}
       <div className="bg-[#1C0D10] p-6 rounded-2xl border border-[#3A1218] mb-8 shadow-xl">
         <h3 className="text-xl font-bold text-[#FFD700] mb-4">{t.catManage}</h3>
         <form onSubmit={handleSaveCategory} className="flex gap-4 mb-6">
@@ -799,7 +745,6 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
         </div>
       </div>
       
-      {/* نموذج إضافة وتعديل صنف */}
       <form onSubmit={handleSaveItem} className="bg-[#1C0D10] p-6 rounded-2xl border border-[#3A1218] mb-8 grid grid-cols-1 md:grid-cols-2 gap-4 shadow-xl">
         <h3 className="md:col-span-2 text-xl font-bold text-[#FFD700] mb-2">{t.itemManage}</h3>
         <div>
@@ -880,7 +825,6 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
           </div>
         )}
 
-        {/* الأحجام والأسعار */}
         <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/50">
           <label className="block text-sm mb-2 text-[#FFD700] font-bold">⚖️ أحجام الصنف وأسعارها (مثل: كيلو، نص، ربع)</label>
           <div className="flex gap-2 mb-3">
@@ -915,7 +859,6 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
           )}
         </div>
 
-        {/* الإضافات الاختيارية */}
         <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#3A1218]">
           <label className="block text-sm mb-2 text-[#FFD700] font-bold">✨ الإضافات الاختيارية</label>
           <div className="flex gap-2 mb-3">
@@ -967,7 +910,6 @@ const res = await fetch('https://noss-kofta-production.up.railway.app/api/zones'
         </div>
       </form>
 
-      {/* عرض الأصناف مقسمة حسب الأقسام في لوحة التحكم */}
       <div className="space-y-10 mt-10">
         <h3 className="text-2xl font-bold text-[#FFD700] border-b border-[#3A1218] pb-3">📋 إدارة وترتيب الأصناف حسب الأقسام</h3>
         
@@ -1028,7 +970,7 @@ const CartPage = ({ cart, setCart, lang }) => {
   const [customerAddress, setCustomerAddress] = useState('');
 
   useEffect(() => {
-    fetch('https://noss-kofta-production.up.railway.app/api/zones')
+    fetch(`${API_BASE}/api/zones`)
       .then(res => res.json())
       .then(data => {
         setDeliveryZones(data);
@@ -1228,7 +1170,7 @@ function App() {
   const [cart, setCart] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [siteSettings, setSiteSettings] = useState({ heroImage: '', promoBannerImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
+  const [siteSettings, setSiteSettings] = useState({ heroImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [logoClicks, setLogoClicks] = useState(0);
   const [lang, setLang] = useState('ar');
@@ -1241,7 +1183,7 @@ function App() {
 
   const fetchItems = async () => {
     try {
-      const res = await fetch('https://noss-kofta-production.up.railway.app/api/items');
+      const res = await fetch(`${API_BASE}/api/items`);
       const data = await res.json();
       setMenuItems(data);
     } catch (err) {}
@@ -1249,7 +1191,7 @@ function App() {
 
   const fetchCategories = async () => {
     try {
-      const res = await fetch('https://noss-kofta-production.up.railway.app/api/categories');
+      const res = await fetch(`${API_BASE}/api/categories`);
       const data = await res.json();
       setCategories(data);
     } catch (err) {}
@@ -1257,7 +1199,7 @@ function App() {
 
   const fetchSettings = async () => {
     try {
-      const res = await fetch('https://noss-kofta-production.up.railway.app/api/settings');
+      const res = await fetch(`${API_BASE}/api/settings`);
       const data = await res.json();
       setSiteSettings(data);
     } catch (err) {}
@@ -1409,7 +1351,6 @@ function App() {
         </div>
       )}
 
-      {/* مودال البوكسات */}
       {isBoxModalOpen && activeBox && (
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl">
