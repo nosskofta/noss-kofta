@@ -111,7 +111,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
             {t.orderNow}
           </Link>
 
-          {/* 🌟 صورة العرض الكبيرة (البوستر) تحت زرار اطلب دلوقتي كما طلبت */}
+          {/* 🌟 صورة العرض الكبيرة تحت زرار اطلب دلوقتي */}
           {siteSettings.bannerImage && (
             <div className="w-full max-w-2xl mt-4 px-4">
               <img 
@@ -346,10 +346,17 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   }, [isAuthenticated, navigate]);
 
   const [heroImg, setHeroImg] = useState(siteSettings.heroImage);
-  const [bannerImg, setBannerImg] = useState(siteSettings.bannerImage || ''); // 🌟 حالة صورة العرض الكبيرة
+  const [bannerImg, setBannerImg] = useState(siteSettings.bannerImage || '');
   const [titleAr, setTitleAr] = useState(siteSettings.heroTitleAr);
   const [titleEn, setTitleEn] = useState(siteSettings.heroTitleEn);
   const [logoImg, setLogoImg] = useState(siteSettings.logoImage || '');
+
+  // لتحديث الحالة لو البيانات اتحملت من السيرفر
+  useEffect(() => {
+    if (siteSettings.bannerImage) setBannerImg(siteSettings.bannerImage);
+    if (siteSettings.heroImage) setHeroImg(siteSettings.heroImage);
+    if (siteSettings.logoImage) setLogoImg(siteSettings.logoImage);
+  }, [siteSettings]);
 
   // مناطق التوصيل
   const [deliveryZones, setDeliveryZones] = useState([]);
@@ -416,7 +423,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     }
   };
 
-  // 🌟 دالة رفع صورة العرض الكبيرة (البوستر)
   const handleBannerImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -471,7 +477,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           heroImage: heroImg, 
-          bannerImage: bannerImg, // 🌟 حفظ صورة البوستر في السيرفر
+          bannerImage: bannerImg, 
           heroTitleAr: titleAr, 
           heroTitleEn: titleEn, 
           logoImage: logoImg 
@@ -785,7 +791,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
             <img src={heroImg} alt="Hero" className="w-full h-20 object-cover rounded-xl border border-[#3A1218]" />
           </div>
 
-          {/* 🌟 مكان تحكم في صورة البوستر الكبيرة الجديدة تحت زرار اطلب دلوقتي */}
           <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#FFD700]/30">
             <label className="block text-sm mb-2 text-[#FFD700] font-bold">🖼️ صورة العرض الكبيرة (البوستر تحت زرار اطلب دلوقتي)</label>
             <input type="file" accept="image/*" onChange={handleBannerImageUpload} className="w-full bg-[#1C0D10] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer mb-2" />
@@ -1570,7 +1575,7 @@ function App() {
                   <div className="flex items-center gap-4">
                     <button onClick={() => handleUpdateSelection(bItem.name, 'remove')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">-</button>
                     <span className="text-xl w-4 text-center font-black text-white">{boxSelections[bItem.name] || 0}</span>
-                    <button onClick={() => handleUpdateSelection(bItem.name, 'add')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">+</button>
+                    <button onClick={() => handleUpdateSelection(bItem.name, 'add')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-+#FFD700 font-bold">+</button>
                   </div>
                 </div>
               ))}
@@ -1589,7 +1594,5 @@ function App() {
     </div>
   );
 }
-
-App
 
 export default App;
