@@ -1338,13 +1338,13 @@ function App() {
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#12080A] text-white font-sans flex flex-col justify-between relative">
       <nav className="bg-[#1C0D10] border-b border-[#800020]/60 sticky top-0 z-50 shadow-2xl">
         <div className="flex items-center justify-between px-8 py-3">
-          <div onClick={handleSecretLogoClick} className="flex items-center cursor-pointer select-none">
+          <Link to="/" className="flex items-center cursor-pointer select-none">
             {siteSettings.logoImage ? (
               <img src={siteSettings.logoImage} alt="Logo" style={{ height: '75px', width: 'auto' }} className="object-contain" />
             ) : (
               <span className="text-3xl font-black text-[#FFD700] tracking-tighter">نص كفتة <span className="text-white text-sm">🔥</span></span>
             )}
-          </div>
+          </Link>
           
           <ul className="hidden md:flex gap-4 text-base font-bold">
             <li><Link to="/" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">الرئيسية</Link></li>
@@ -1473,7 +1473,7 @@ function App() {
         </div>
       )}
 
-      <footer className="bg-[#1C0D10] border-t border-[#3A1218] mt-20 text-zinc-400 py-6 text-center text-xs">
+      <footer onClick={handleSecretLogoClick} className="bg-[#1C0D10] border-t border-[#3A1218] mt-20 text-zinc-400 py-6 text-center text-xs cursor-default select-none">
         جميع الحقوق محفوظة © 2026 نص كفتة
       </footer>
     </div>
