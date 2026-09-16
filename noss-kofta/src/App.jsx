@@ -96,19 +96,31 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
 
   return (
     <div className="bg-[#12080A] min-h-screen text-white">
-      <header className="relative w-full h-[480px] md:h-[550px] bg-[#12080A] flex items-center justify-center overflow-hidden border-b-4 border-[#800020] shadow-2xl">
+      <header className="relative w-full min-h-[520px] md:min-h-[620px] bg-[#12080A] flex flex-col items-center justify-center overflow-hidden border-b-4 border-[#800020] shadow-2xl py-12">
         <div 
-          className="absolute inset-0 bg-cover bg-center opacity-90 scale-105 transition duration-700"
+          className="absolute inset-0 bg-cover bg-center opacity-70 scale-105 transition duration-700"
           style={{ backgroundImage: `url(${siteSettings.heroImage})` }}
         ></div>
-        <div className="absolute inset-0 bg-gradient-to-t from-[#12080A] via-[#12080A]/40 to-transparent"></div>
-        <div className="relative z-10 text-center px-4 mt-20">
-          <h1 className="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FFD700] via-[#E6C687] to-[#C5A059] drop-shadow-[0_5px_5px_rgba(0,0,0,0.9)] mb-6">
+        <div className="absolute inset-0 bg-gradient-to-t from-[#12080A] via-[#12080A]/50 to-transparent"></div>
+        
+        <div className="relative z-10 text-center px-4 max-w-4xl mx-auto flex flex-col items-center">
+          <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FFD700] via-[#E6C687] to-[#C5A059] drop-shadow-[0_5px_5px_rgba(0,0,0,0.9)] mb-4">
             {title}
           </h1>
-          <Link to="/menu" className="inline-block bg-[#800020] hover:bg-[#990026] text-white border-2 border-[#FFD700] px-10 py-3.5 text-2xl font-black rounded-2xl hover:scale-105 transition shadow-[0_0_30px_rgba(255,215,0,0.4)]">
+          <Link to="/menu" className="inline-block bg-[#800020] hover:bg-[#990026] text-white border-2 border-[#FFD700] px-8 py-3 text-xl font-black rounded-2xl hover:scale-105 transition shadow-[0_0_30px_rgba(255,215,0,0.4)] mb-8">
             {t.orderNow}
           </Link>
+
+          {/* 🌟 صورة العرض الكبيرة (البوستر) تحت زرار اطلب دلوقتي كما طلبت */}
+          {siteSettings.bannerImage && (
+            <div className="w-full max-w-2xl mt-4 px-4">
+              <img 
+                src={siteSettings.bannerImage} 
+                alt="Banner Offer" 
+                className="w-full h-auto max-h-[350px] object-cover rounded-2xl border-2 border-[#FFD700] shadow-[0_0_25px_rgba(255,215,0,0.3)] animate-pulse" 
+              />
+            </div>
+          )}
         </div>
       </header>
 
@@ -235,7 +247,6 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
       ) : (
         <div className="space-y-16">
           {categoriesToShow.map(cat => {
-            // التعديل الأول: ترتيب الأصناف هنا بناءً على الـ order
             const catItems = menuItems.filter(item => item.category === cat.name).sort((a, b) => (a.order || 0) - (b.order || 0));
             
             if (catItems.length === 0 && selectedCategory !== 'الكل' && selectedCategory !== 'All') {
@@ -335,6 +346,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   }, [isAuthenticated, navigate]);
 
   const [heroImg, setHeroImg] = useState(siteSettings.heroImage);
+  const [bannerImg, setBannerImg] = useState(siteSettings.bannerImage || ''); // 🌟 حالة صورة العرض الكبيرة
   const [titleAr, setTitleAr] = useState(siteSettings.heroTitleAr);
   const [titleEn, setTitleEn] = useState(siteSettings.heroTitleEn);
   const [logoImg, setLogoImg] = useState(siteSettings.logoImage || '');
@@ -404,6 +416,30 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     }
   };
 
+  // 🌟 دالة رفع صورة العرض الكبيرة (البوستر)
+  const handleBannerImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width; let height = img.height;
+          const MAX_WIDTH = 1000; const MAX_HEIGHT = 600;
+          if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } }
+          else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
+          canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          setBannerImg(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -433,10 +469,16 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
       const res = await fetch(`${API_BASE}/api/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ heroImage: heroImg, heroTitleAr: titleAr, heroTitleEn: titleEn, logoImage: logoImg })
+        body: JSON.stringify({ 
+          heroImage: heroImg, 
+          bannerImage: bannerImg, // 🌟 حفظ صورة البوستر في السيرفر
+          heroTitleAr: titleAr, 
+          heroTitleEn: titleEn, 
+          logoImage: logoImg 
+        })
       });
       if (res.ok) {
-        alert("تم تحديث الواجهة واللوجو بنجاح! 🚀🔥");
+        alert("تم تحديث الواجهة واللوجو وصورة العرض بنجاح! 🚀🔥");
         fetchSettings();
       }
     } catch (err) {
@@ -466,7 +508,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     } catch (err) {}
   };
 
-  // 🌟 التعديل التاني: إرسال كل بيانات الصنف + الـ order الجديد 🌟
   const handleMoveItem = async (index, direction, catItems) => {
     const newItems = [...catItems];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
@@ -732,30 +773,45 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 
       <form onSubmit={handleSaveSettings} className="bg-[#1C0D10] p-6 rounded-2xl border border-[#800020]/50 mb-8 shadow-xl">
         <h3 className="text-xl font-bold text-[#FFD700] mb-4">{t.siteSettings}</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
           <div>
             <label className="block text-sm mb-2 text-zinc-300">شعار المطعم (اللوجو)</label>
             <input type="file" accept="image/*" onChange={handleLogoUpload} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer mb-2" />
             {logoImg && <img src={logoImg} alt="Logo Preview" className="w-20 h-20 object-contain rounded-xl border border-[#3A1218] bg-[#12080A]" />}
           </div>
           <div>
-            <label className="block text-sm mb-2 text-zinc-300">صورة الواجهة الثابتة فوق</label>
+            <label className="block text-sm mb-2 text-zinc-300">خلفية الهيدر الثابتة فوق</label>
             <input type="file" accept="image/*" onChange={handleHeroImageUpload} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer mb-2" />
             <img src={heroImg} alt="Hero" className="w-full h-20 object-cover rounded-xl border border-[#3A1218]" />
           </div>
-          <div className="space-y-2">
-            <div>
-              <label className="block text-xs mb-1 text-zinc-300">العنوان بالعربي</label>
-              <input type="text" value={titleAr} onChange={(e) => setTitleAr(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-2 text-white text-sm" />
+
+          {/* 🌟 مكان تحكم في صورة البوستر الكبيرة الجديدة تحت زرار اطلب دلوقتي */}
+          <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#FFD700]/30">
+            <label className="block text-sm mb-2 text-[#FFD700] font-bold">🖼️ صورة العرض الكبيرة (البوستر تحت زرار اطلب دلوقتي)</label>
+            <input type="file" accept="image/*" onChange={handleBannerImageUpload} className="w-full bg-[#1C0D10] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer mb-2" />
+            <div className="flex items-center gap-4 mt-2">
+              {bannerImg ? (
+                <>
+                  <img src={bannerImg} alt="Banner Preview" className="w-40 h-24 object-cover rounded-xl border border-[#FFD700]" />
+                  <button type="button" onClick={() => setBannerImg('')} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
+                </>
+              ) : (
+                <span className="text-zinc-500 text-xs">لا توجد صورة بوستر مفعلة حالياً. (امسحها أو اتركها فارغة لتختفي تماماً)</span>
+              )}
             </div>
-            <div>
-              <label className="block text-xs mb-1 text-zinc-300">العنوان بالإنجليزي</label>
-              <input type="text" value={titleEn} onChange={(e) => setTitleEn(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-2 text-white text-sm" />
-            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs mb-1 text-zinc-300">العنوان بالعربي</label>
+            <input type="text" value={titleAr} onChange={(e) => setTitleAr(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-2 text-white text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs mb-1 text-zinc-300">العنوان بالإنجليزي</label>
+            <input type="text" value={titleEn} onChange={(e) => setTitleEn(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-2 text-white text-sm" />
           </div>
         </div>
         <button type="submit" className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow">
-          💾 حفظ تعديلات اللوجو والواجهة
+          💾 حفظ تعديلات اللوجو والواجهة وصورة العرض
         </button>
       </form>
 
@@ -984,7 +1040,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
         <h3 className="text-2xl font-bold text-[#FFD700] border-b border-[#3A1218] pb-3">📋 إدارة وترتيب الأصناف حسب الأقسام</h3>
         
         {categories.map(cat => {
-          // 🌟 التعديل التالت: ترتيب الأصناف في لوحة الإدارة 🌟
           const catItems = menuItems.filter(item => item.category === cat.name).sort((a, b) => (a.order || 0) - (b.order || 0));
           
           return (
@@ -1259,7 +1314,7 @@ function App() {
   const [cart, setCart] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [siteSettings, setSiteSettings] = useState({ heroImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
+  const [siteSettings, setSiteSettings] = useState({ heroImage: '', bannerImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [logoClicks, setLogoClicks] = useState(0);
   const [lang, setLang] = useState('ar');
@@ -1534,5 +1589,7 @@ function App() {
     </div>
   );
 }
+
+App
 
 export default App;
