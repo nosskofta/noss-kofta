@@ -74,13 +74,6 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
   const title = lang === 'ar' ? siteSettings.heroTitleAr : siteSettings.heroTitleEn;
   const offerItems = menuItems.filter(item => item.isOffer);
 
-  // جلب صورة البوستر المحفوظة محلياً للعملاء
-  const [customBanner, setCustomBanner] = useState('');
-  useEffect(() => {
-    const savedBanner = localStorage.getItem('noss_kofta_banner');
-    if (savedBanner) setCustomBanner(savedBanner);
-  }, []);
-
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const nextSlide = () => {
@@ -118,11 +111,11 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
             {t.orderNow}
           </Link>
 
-          {/* 🌟 صورة العرض الكبيرة (البوستر تحت زرار اطلب دلوقتي) */}
-          {customBanner && (
+          {/* 🌟 صورة العرض الكبيرة تأتي من السيرفر مباشرة لتظهر على كل الأجهزة */}
+          {siteSettings.bannerImage && (
             <div className="w-full max-w-xl mt-3 px-4">
               <img 
-                src={customBanner} 
+                src={siteSettings.bannerImage} 
                 alt="Banner Offer" 
                 className="w-full h-auto max-h-[320px] object-cover rounded-2xl border-2 border-[#FFD700] shadow-[0_0_30px_rgba(255,215,0,0.4)]" 
               />
@@ -353,10 +346,17 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   }, [isAuthenticated, navigate]);
 
   const [heroImg, setHeroImg] = useState(siteSettings.heroImage);
-  const [bannerImg, setBannerImg] = useState(() => localStorage.getItem('noss_kofta_banner') || '');
+  const [bannerImg, setBannerImg] = useState(siteSettings.bannerImage || '');
   const [titleAr, setTitleAr] = useState(siteSettings.heroTitleAr);
   const [titleEn, setTitleEn] = useState(siteSettings.heroTitleEn);
   const [logoImg, setLogoImg] = useState(siteSettings.logoImage || '');
+
+  useEffect(() => {
+    if (siteSettings.bannerImage) setBannerImg(siteSettings.bannerImage);
+    if (siteSettings.heroImage) setHeroImg(siteSettings.heroImage);
+    if (siteSettings.logoImage) setLogoImg(siteSettings.logoImage);
+    if (siteSettings.heroTitleAr) setTitleAr(siteSettings.heroTitleAr);
+  }, [siteSettings]);
 
   // مناطق التوصيل
   const [deliveryZones, setDeliveryZones] = useState([]);
@@ -438,9 +438,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           canvas.width = width; canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.85);
-          setBannerImg(compressed);
-          localStorage.setItem('noss_kofta_banner', compressed); // 👈 الحفظ الفوري محلياً
+          setBannerImg(canvas.toDataURL('image/jpeg', 0.85));
         };
         img.src = event.target.result;
       };
@@ -474,16 +472,16 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     try {
-      if (bannerImg) {
-        localStorage.setItem('noss_kofta_banner', bannerImg);
-      } else {
-        localStorage.removeItem('noss_kofta_banner');
-      }
-
       const res = await fetch(`${API_BASE}/api/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ heroImage: heroImg, heroTitleAr: titleAr, heroTitleEn: titleEn, logoImage: logoImg })
+        body: JSON.stringify({ 
+          heroImage: heroImg, 
+          bannerImage: bannerImg, // 👈 إرسال صورة البوستر للسيرفر مباشرة لتظهر لكل الأجهزة
+          heroTitleAr: titleAr, 
+          heroTitleEn: titleEn, 
+          logoImage: logoImg 
+        })
       });
       if (res.ok) {
         alert("تم تحديث الواجهة واللوجو وصورة العرض بنجاح! 🚀🔥");
@@ -800,7 +798,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
               {bannerImg ? (
                 <>
                   <img src={bannerImg} alt="Banner Preview" className="w-40 h-24 object-cover rounded-xl border border-[#FFD700]" />
-                  <button type="button" onClick={() => { setBannerImg(''); localStorage.removeItem('noss_kofta_banner'); }} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
+                  <button type="button" onClick={() => setBannerImg('')} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
                 </>
               ) : (
                 <span className="text-zinc-500 text-xs">لا توجد صورة بوستر مفعلة حالياً. (امسحها أو اتركها فارغة لتختفي تماماً)</span>
@@ -1321,7 +1319,7 @@ function App() {
   const [cart, setCart] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [siteSettings, setSiteSettings] = useState({ heroImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
+  const [siteSettings, setSiteSettings] = useState({ heroImage: '', bannerImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [logoClicks, setLogoClicks] = useState(0);
   const [lang, setLang] = useState('ar');
@@ -1352,7 +1350,9 @@ function App() {
     try {
       const res = await fetch(`${API_BASE}/api/settings`);
       const data = await res.json();
-      setSiteSettings(data);
+      if (data) {
+        setSiteSettings(data);
+      }
     } catch (err) {}
   };
 
