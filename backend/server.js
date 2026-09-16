@@ -10,9 +10,12 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+// السطر ده هو اللي هيحل مشكلة الـ Preflight اللي في الصورة
+app.options('*', cors());
 
 const MONGO_URI = "mongodb+srv://noskoftaeg_db_user:F6I5ieUXbGcBiEEt@cluster0.5zgvg7b.mongodb.net/?retryWrites=true&w=majority";
 
