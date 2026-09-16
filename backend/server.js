@@ -1,28 +1,17 @@
 import express from 'express';
 import mongoose from 'mongoose';
+import cors from 'cors';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const app = express();
+
+// 🚨 سحر الـ CORS: مكتبة جاهزة بتفتح كل الأبواب بدون أي تعقيد ولازم تكون في الأول خالص 🚨
+app.use(cors());
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-// 🚨 الحل اليدوي الإجباري لـ CORS (بدون مكتبات) 🚨
-app.use((req, res, next) => {
-  // السماح بمرور الداتا لموقعك
-  res.setHeader('Access-Control-Allow-Origin', 'https://noss-kofta.vercel.app');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
-  res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type, Authorization, Accept, Origin');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  
-  // الموافقة الفورية على أي طلب استكشافي (Preflight) من المتصفح
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  next();
-});
 
 const MONGO_URI = "mongodb+srv://noskoftaeg_db_user:F6I5ieUXbGcBiEEt@cluster0.5zgvg7b.mongodb.net/?retryWrites=true&w=majority";
 
