@@ -62,7 +62,6 @@ const translations = {
   }
 };
 
-// ================= دالة حساب السعر بعد الخصم =================
 const getDiscountedPrice = (price, discountPercent) => {
   if (!discountPercent || discountPercent <= 0) return price;
   return Math.round(price * (1 - discountPercent / 100));
@@ -145,7 +144,6 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                         خصم {item.discount}% 🔥
                       </span>
                     )}
-
                     <div onClick={() => handleOpenItemDetails(item)} className="w-full h-[320px] bg-[#12080A] overflow-hidden relative cursor-pointer">
                       <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
                     </div>
@@ -269,7 +267,6 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                             خصم {item.discount}% 🔥
                           </span>
                         )}
-
                         <div onClick={() => item.type === 'box' ? handleOpenBox(item) : handleOpenItemDetails(item)} className="w-full h-48 object-cover bg-[#12080A] overflow-hidden cursor-pointer">
                           <img src={item.image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta"} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
                         </div>
@@ -472,7 +469,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const [editId, setEditId] = useState(null);
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
-  const [discount, setDiscount] = useState(''); // نسبة الخصم
+  const [discount, setDiscount] = useState(''); 
   const [image, setImage] = useState('');
   const [description, setDescription] = useState('');
   const [extras, setExtras] = useState('');
@@ -592,7 +589,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     const itemData = {
       name,
       price: Number(price),
-      discount: Number(discount) || 0,
+      discount: Number(discount) || 0, // 👈 هنا بنضمن إرسال الخصم للسيرفر صراحة
       image: image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta",
       description,
       extras,
@@ -632,7 +629,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     setEditId(item._id);
     setName(item.name);
     setPrice(item.price);
-    setDiscount(item.discount || '');
+    setDiscount(item.discount !== undefined ? item.discount : ''); // 👈 هنا بنجيب الخصم القديم للمربع
     setImage(item.image);
     setDescription(item.description || '');
     setExtras(item.extras || '');
@@ -799,7 +796,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
         </div>
         <div>
           <label className="block text-sm mb-2 text-[#FFD700]">نسبة الخصم % (اختياري)</label>
-          <input type="number" placeholder="مثال: 10 أو 20" value={discount} onChange={(e) => setDiscount(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" />
+          <input type="number" placeholder="مثال: 20" value={discount} onChange={(e) => setDiscount(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" />
         </div>
         <div>
           <label className="block text-sm mb-2 text-zinc-300">Category *</label>
@@ -980,7 +977,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
                           <h4 className="font-bold text-white">
                             {item.name} 
                             {item.discount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-md font-black mr-2">خصم {item.discount}%</span>}
-                            {item.type === 'box' && <span className="bg-[#800020] text-white text-xs px-2 py-0.5 rounded-md font-black mr-2">بوكس مخصص</span>}
                           </h4>
                           <span className="text-xs text-[#FFD700]">
                             {item.discount > 0 ? `${getDiscountedPrice(item.price, item.discount)} ج (بدل ${item.price})` : `${item.price} ج`}
