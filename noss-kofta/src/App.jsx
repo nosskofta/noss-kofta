@@ -14,7 +14,7 @@ const translations = {
     ourMenu: "المنيو بتاعنا",
     bestOffers: "أفضل العروض",
     seeMore: "رؤية المزيد ➔",
-    hotlineText: "HOTLINE",
+    hotlineText: "الخط الساخن",
     rights: "جميع الحقوق محفوظة © 2026 نص كفتة",
     addToCart: "أضف للسلة",
     customizeBox: "شكل البوكس بمزاجك ⚙️",
@@ -43,6 +43,7 @@ const translations = {
     ourMenu: "Our Menu",
     bestOffers: "Best Offers",
     seeMore: "See More ➔",
+    hotlineText: "HOTLINE",
     addToCart: "Add to Cart",
     customizeBox: "Customize Box ⚙️",
     details: "View Details & Order",
@@ -460,6 +461,30 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
         )
       );
       fetchCategories();
+    } catch (err) {}
+  };
+
+  // 🌟 دالة ترتيب الأصناف (اللي كانت ناقصة) 🌟
+  const handleMoveItem = async (index, direction, catItems) => {
+    const newItems = [...catItems];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= newItems.length) return;
+
+    const temp = newItems[index];
+    newItems[index] = newItems[targetIndex];
+    newItems[targetIndex] = temp;
+
+    try {
+      await Promise.all(
+        newItems.map((itm, idx) => 
+          fetch(`${API_BASE}/api/items/${itm._id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order: idx })
+          })
+        )
+      );
+      fetchItems();
     } catch (err) {}
   };
 
@@ -984,7 +1009,24 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
                         </div>
                       </div>
 
+                      {/* 🌟 زراير ترتيب الأصناف ظهرت هنا أهيه 🌟 */}
                       <div className="flex items-center gap-2">
+                        <button 
+                          type="button" 
+                          onClick={() => handleMoveItem(itemIndex, 'up', catItems)}
+                          disabled={itemIndex === 0}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold ${itemIndex === 0 ? 'bg-[#1C0D10] text-zinc-600 cursor-not-allowed' : 'bg-[#220E13] text-[#FFD700] hover:bg-[#2A080D]'}`}
+                        >
+                          ▲
+                        </button>
+                        <button 
+                          type="button" 
+                          onClick={() => handleMoveItem(itemIndex, 'down', catItems)}
+                          disabled={itemIndex === catItems.length - 1}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold ${itemIndex === catItems.length - 1 ? 'bg-[#1C0D10] text-zinc-600 cursor-not-allowed' : 'bg-[#220E13] text-[#FFD700] hover:bg-[#2A080D]'}`}
+                        >
+                          ▼
+                        </button>
                         <button onClick={() => handleEditItemClick(item)} className="text-[#FFD700] bg-[#800020]/30 px-3.5 py-1.5 rounded-lg text-xs font-bold">✏️ تعديل</button>
                         <button onClick={() => handleDeleteItem(item._id)} className="text-red-400 bg-red-500/10 px-3.5 py-1.5 rounded-lg text-xs font-bold">✕ مسح</button>
                       </div>
@@ -1347,13 +1389,27 @@ function App() {
           </Link>
           
           <ul className="hidden md:flex gap-4 text-base font-bold">
-            <li><Link to="/" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">الرئيسية</Link></li>
-            <li><Link to="/menu" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">المنيو</Link></li>
+            <li><Link to="/" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.home}</Link></li>
+            <li><Link to="/menu" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.menu}</Link></li>
           </ul>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
+            {/* 🌟 الهوت لاين رجع تاني أهو 🌟 */}
+            <div className="hidden md:flex flex-col text-center border-l border-[#3A1218] pl-4 ml-2">
+              <span className="text-[#FFD700] text-[10px] font-black tracking-widest">{t.hotlineText}</span>
+              <span className="text-white font-bold text-sm tracking-wider">01042258982</span>
+            </div>
+            
+            {/* 🌟 زرار اللغة رجع تاني أهو 🌟 */}
+            <button 
+              onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')} 
+              className="bg-[#12080A] text-zinc-300 border border-[#3A1218] px-3 py-2 rounded-xl text-sm font-bold hover:text-white hover:border-[#800020] transition"
+            >
+              {lang === 'ar' ? 'EN' : 'عربي'}
+            </button>
+
             <Link to="/cart" className="flex items-center gap-2 bg-[#800020] text-white px-5 py-2.5 rounded-xl font-bold hover:bg-[#990026] transition shadow-lg">
-              <span>🛒 السلة</span>
+              <span>🛒 {t.cart}</span>
               <span className="bg-[#12080A] text-[#FFD700] px-2 py-0.5 rounded-full text-xs font-black">{cart.length}</span>
             </Link>
           </div>
