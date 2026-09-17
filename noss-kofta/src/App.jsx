@@ -1171,36 +1171,37 @@ const CartPage = ({ cart, setCart, lang }) => {
       return alert("من فضلك اكتب عنوان الاستلام بالتفصيل.");
     }
 
-    // 🌟 توليد رقم الأوردر الفريد (وقت بالثانية + رقم عشوائي عشان ميحصلش تكرار أبداً)
+    // 🌟 توليد رقم الأوردر الفريد 
     const orderId = 'NK-' + Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
 
-    let message = `🔥 أهلاً (نص كفتة)، عندي أوردر جديد!%0A`;
-    message += `🆔 *رقم الأوردر:* #${orderId}%0A%0A`;
-    message += `👤 *الاسم:* ${customerName}%0A`;
-    message += `📞 *التليفون:* ${customerPhone}%0A`;
-    message += `📦 *نوع الاستلام:* ${orderType === 'delivery' ? 'توصيل دليفري 🛵' : 'استلام من الفرع 🏪'}%0A`;
+    // بناء الرسالة باستخدام \n بدل %0A عشان التشفير يشتغل صح
+    let message = `🔥 أهلاً (نص كفتة)، عندي أوردر جديد!\n`;
+    message += `🆔 *رقم الأوردر:* #${orderId}\n\n`;
+    message += `👤 *الاسم:* ${customerName}\n`;
+    message += `📞 *التليفون:* ${customerPhone}\n`;
+    message += `📦 *نوع الاستلام:* ${orderType === 'delivery' ? 'توصيل دليفري 🛵' : 'استلام من الفرع 🏪'}\n`;
     
     if (orderType === 'delivery') {
-      message += `📍 *العنوان:* ${customerAddress}%0A`;
+      message += `📍 *العنوان:* ${customerAddress}\n`;
       if (selectedZone) {
-        message += `🚚 *منطقة التوصيل:* ${selectedZone.name} (${selectedZone.fee} ج)%0A`;
+        message += `🚚 *منطقة التوصيل:* ${selectedZone.name} (${selectedZone.fee} ج)\n`;
       }
     }
 
-    message += `%0A🛒 *الأصناف المطلوبة:*%0A`;
+    message += `\n🛒 *الأصناف المطلوبة:*\n`;
     groupedCart.forEach((item) => {
-      message += `▪️ ${item.quantity}× ${item.name} — (${item.price * item.quantity} ج)%0A`;
+      message += `▪️ ${item.quantity}× ${item.name} — (${item.price * item.quantity} ج)\n`;
     });
 
-    message += `%0A-------------------%0A`;
-    message += `🏷️ *قيمة الأصناف:* ${itemsTotal} ج%0A`;
+    message += `\n-------------------\n`;
+    message += `🏷️ *قيمة الأصناف:* ${itemsTotal} ج\n`;
     if (orderType === 'delivery') {
-      message += `🚚 *سعر التوصيل:* ${deliveryFee} ج%0A`;
+      message += `🚚 *سعر التوصيل:* ${deliveryFee} ج\n`;
     }
-    message += `💰 *الإجمالي النهائي: ${grandTotal} جنيه*%0A`;
+    message += `💰 *الإجمالي النهائي: ${grandTotal} جنيه*\n`;
     
-    // فتح الواتساب
-    const whatsappUrl = `https://wa.me/201042258982?text=${message}`;
+    // 🔴 السر هنا: دالة encodeURIComponent بتعمل تشفير للرقم والشباك والمسافات عشان يتبعتوا كلهم
+    const whatsappUrl = `https://wa.me/201042258982?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, '_blank');
 
     // 🔴 تصفير السلة وإظهار رسالة النجاح للعميل
