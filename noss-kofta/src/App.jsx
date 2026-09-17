@@ -74,7 +74,6 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
   const title = lang === 'ar' ? siteSettings.heroTitleAr : siteSettings.heroTitleEn;
   const offerItems = menuItems.filter(item => item.isOffer);
 
-  // جلب البوستر المحفوظ محلياً
   const [customBanner, setCustomBanner] = useState('');
   useEffect(() => {
     const saved = localStorage.getItem('noss_kofta_banner');
@@ -118,7 +117,6 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
             {t.orderNow}
           </Link>
 
-          {/* 🌟 صورة العرض الكبيرة */}
           {customBanner && (
             <div className="w-full max-w-xl mt-3 px-4">
               <img 
@@ -358,7 +356,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const [titleEn, setTitleEn] = useState(siteSettings.heroTitleEn);
   const [logoImg, setLogoImg] = useState(siteSettings.logoImage || '');
 
-  // مناطق التوصيل
   const [deliveryZones, setDeliveryZones] = useState([]);
   const [zoneName, setZoneName] = useState('');
   const [zoneFee, setZoneFee] = useState('');
@@ -440,7 +437,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           ctx.drawImage(img, 0, 0, width, height);
           const compressed = canvas.toDataURL('image/jpeg', 0.85);
           setBannerImg(compressed);
-          localStorage.setItem('noss_kofta_banner', compressed); // 👈 الحفظ الفوري
+          localStorage.setItem('noss_kofta_banner', compressed);
         };
         img.src = event.target.result;
       };
@@ -1120,6 +1117,9 @@ const CartPage = ({ cart, setCart, lang }) => {
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
 
+  // 🔴 إضافة حالة لحفظ رقم الأوردر بعد ما يتبعت عشان نظهره للعميل
+  const [placedOrderId, setPlacedOrderId] = useState(null);
+
   useEffect(() => {
     fetch(`${API_BASE}/api/zones`)
       .then(res => res.json())
@@ -1171,7 +1171,11 @@ const CartPage = ({ cart, setCart, lang }) => {
       return alert("من فضلك اكتب عنوان الاستلام بالتفصيل.");
     }
 
-    let message = `🔥 أهلاً (نص كفتة)، عندي أوردر جديد:%0A%0A`;
+    // 🌟 توليد رقم الأوردر الفريد (وقت بالثانية + رقم عشوائي عشان ميحصلش تكرار أبداً)
+    const orderId = 'NK-' + Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
+
+    let message = `🔥 أهلاً (نص كفتة)، عندي أوردر جديد!%0A`;
+    message += `🆔 *رقم الأوردر:* #${orderId}%0A%0A`;
     message += `👤 *الاسم:* ${customerName}%0A`;
     message += `📞 *التليفون:* ${customerPhone}%0A`;
     message += `📦 *نوع الاستلام:* ${orderType === 'delivery' ? 'توصيل دليفري 🛵' : 'استلام من الفرع 🏪'}%0A`;
@@ -1195,9 +1199,37 @@ const CartPage = ({ cart, setCart, lang }) => {
     }
     message += `💰 *الإجمالي النهائي: ${grandTotal} جنيه*%0A`;
     
+    // فتح الواتساب
     const whatsappUrl = `https://wa.me/201042258982?text=${message}`;
     window.open(whatsappUrl, '_blank');
+
+    // 🔴 تصفير السلة وإظهار رسالة النجاح للعميل
+    setCart([]);
+    setPlacedOrderId(orderId);
   };
+
+  // 🔴 لو العميل بعت الأوردر، نعرضله الشاشة دي بدل السلة
+  if (placedOrderId) {
+    return (
+      <section className="px-8 py-12 max-w-4xl mx-auto min-h-[60vh] bg-[#12080A] text-white flex flex-col items-center justify-center">
+        <div className="bg-[#1C0D10] border border-[#25D366] rounded-2xl p-10 text-center shadow-[0_0_20px_rgba(37,211,102,0.2)] w-full">
+          <div className="text-7xl mb-4">✅</div>
+          <h2 className="text-3xl font-black text-[#25D366] mb-4">تم إرسال طلبك بنجاح!</h2>
+          <p className="text-xl mb-6 text-zinc-300">رقم الأوردر بتاعك هو:</p>
+          <div className="bg-[#12080A] border-2 border-[#FFD700] text-[#FFD700] text-4xl font-black py-4 px-8 rounded-xl inline-block mb-8 tracking-widest">
+            {placedOrderId}
+          </div>
+          <p className="text-sm text-zinc-400 mb-8">تم تحويلك للواتساب لإرسال الطلب للمطعم.</p>
+          <button 
+            onClick={() => setPlacedOrderId(null)} 
+            className="text-white bg-[#800020] hover:bg-[#990026] px-8 py-3 rounded-xl font-bold transition shadow-lg"
+          >
+            رجوع للسلة
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="px-8 py-12 max-w-4xl mx-auto min-h-screen bg-[#12080A] text-white">
