@@ -151,7 +151,6 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                     key={item._id} 
                     className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative"
                   >
-                    {/* 🌟 شريط الخصم الأصفر */}
                     {item.discount > 0 && (
                       <span className="absolute top-3 right-3 z-10 bg-[#FFD700] text-black text-xs font-black px-3 py-1 rounded-full shadow-lg border border-black/20">
                         خصم {item.discount}% 🔥
@@ -276,7 +275,6 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                         key={item._id} 
                         className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative"
                       >
-                        {/* 🌟 شريط الخصم الأصفر */}
                         {item.discount > 0 && (
                           <span className="absolute top-3 right-3 z-10 bg-[#FFD700] text-black text-xs font-black px-3 py-1 rounded-full shadow-lg border border-black/20">
                             خصم {item.discount}% 🔥
@@ -689,6 +687,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
       if (res.ok) {
         resetForm();
         fetchItems();
+        alert("تم حفظ الصنف بنجاح! 🚀");
       }
     } catch (err) {}
   };
@@ -697,7 +696,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     setEditId(item._id);
     setName(item.name);
     setPrice(item.price);
-    setDiscount(item.discount !== undefined ? item.discount : '');
+    setDiscount(item.discount !== undefined && item.discount !== null ? item.discount : '');
     setImage(item.image);
     setDescription(item.description || '');
     setExtras(item.extras || '');
