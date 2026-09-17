@@ -74,12 +74,6 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
   const title = lang === 'ar' ? siteSettings.heroTitleAr : siteSettings.heroTitleEn;
   const offerItems = menuItems.filter(item => item.isOffer);
 
-  const [customBanner, setCustomBanner] = useState('');
-  useEffect(() => {
-    const saved = localStorage.getItem('noss_kofta_banner');
-    if (saved) setCustomBanner(saved);
-  }, []);
-
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const nextSlide = () => {
@@ -117,10 +111,11 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
             {t.orderNow}
           </Link>
 
-          {customBanner && (
+          {/* الصورة بتظهر هنا لو متخزنة في الداتا بيز */}
+          {siteSettings.promoBannerImage && (
             <div className="w-full max-w-xl mt-3 px-4">
               <img 
-                src={customBanner} 
+                src={siteSettings.promoBannerImage} 
                 alt="Banner Offer" 
                 className="w-full h-auto max-h-[320px] object-cover rounded-2xl border-2 border-[#FFD700] shadow-[0_0_30px_rgba(255,215,0,0.4)]" 
               />
@@ -351,7 +346,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   }, [isAuthenticated, navigate]);
 
   const [heroImg, setHeroImg] = useState(siteSettings.heroImage);
-  const [bannerImg, setBannerImg] = useState(() => localStorage.getItem('noss_kofta_banner') || '');
+  const [bannerImg, setBannerImg] = useState(siteSettings.promoBannerImage || '');
   const [titleAr, setTitleAr] = useState(siteSettings.heroTitleAr);
   const [titleEn, setTitleEn] = useState(siteSettings.heroTitleEn);
   const [logoImg, setLogoImg] = useState(siteSettings.logoImage || '');
@@ -437,7 +432,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
           ctx.drawImage(img, 0, 0, width, height);
           const compressed = canvas.toDataURL('image/jpeg', 0.85);
           setBannerImg(compressed);
-          localStorage.setItem('noss_kofta_banner', compressed);
         };
         img.src = event.target.result;
       };
@@ -471,16 +465,16 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     try {
-      if (bannerImg) {
-        localStorage.setItem('noss_kofta_banner', bannerImg);
-      } else {
-        localStorage.removeItem('noss_kofta_banner');
-      }
-
       const res = await fetch(`${API_BASE}/api/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ heroImage: heroImg, heroTitleAr: titleAr, heroTitleEn: titleEn, logoImage: logoImg })
+        body: JSON.stringify({ 
+          heroImage: heroImg, 
+          heroTitleAr: titleAr, 
+          heroTitleEn: titleEn, 
+          logoImage: logoImg, 
+          promoBannerImage: bannerImg 
+        })
       });
       if (res.ok) {
         alert("تم تحديث الواجهة واللوجو وصورة العرض بنجاح! 🚀🔥");
@@ -797,7 +791,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
               {bannerImg ? (
                 <>
                   <img src={bannerImg} alt="Banner Preview" className="w-40 h-24 object-cover rounded-xl border border-[#FFD700]" />
-                  <button type="button" onClick={() => { setBannerImg(''); localStorage.removeItem('noss_kofta_banner'); }} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
+                  <button type="button" onClick={() => { setBannerImg(''); }} className="bg-red-600/20 text-red-400 px-4 py-2 rounded-xl text-xs font-bold border border-red-500/30">🗑️ إزالة البوستر</button>
                 </>
               ) : (
                 <span className="text-zinc-500 text-xs">لا توجد صورة بوستر مفعلة حالياً.</span>
@@ -1117,7 +1111,6 @@ const CartPage = ({ cart, setCart, lang }) => {
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
 
-  // 🔴 إضافة حالة لحفظ رقم الأوردر بعد ما يتبعت عشان نظهره للعميل
   const [placedOrderId, setPlacedOrderId] = useState(null);
 
   useEffect(() => {
@@ -1171,10 +1164,8 @@ const CartPage = ({ cart, setCart, lang }) => {
       return alert("من فضلك اكتب عنوان الاستلام بالتفصيل.");
     }
 
-    // 🌟 توليد رقم الأوردر الفريد 
     const orderId = 'NK-' + Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
 
-    // بناء الرسالة باستخدام \n بدل %0A عشان التشفير يشتغل صح
     let message = `🔥 أهلاً (نص كفتة)، عندي أوردر جديد!\n`;
     message += `🆔 *رقم الأوردر:* #${orderId}\n\n`;
     message += `👤 *الاسم:* ${customerName}\n`;
@@ -1200,16 +1191,13 @@ const CartPage = ({ cart, setCart, lang }) => {
     }
     message += `💰 *الإجمالي النهائي: ${grandTotal} جنيه*\n`;
     
-    // 🔴 السر هنا: دالة encodeURIComponent بتعمل تشفير للرقم والشباك والمسافات عشان يتبعتوا كلهم
     const whatsappUrl = `https://wa.me/201042258982?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, '_blank');
 
-    // 🔴 تصفير السلة وإظهار رسالة النجاح للعميل
     setCart([]);
     setPlacedOrderId(orderId);
   };
 
-  // 🔴 لو العميل بعت الأوردر، نعرضله الشاشة دي بدل السلة
   if (placedOrderId) {
     return (
       <section className="px-8 py-12 max-w-4xl mx-auto min-h-[60vh] bg-[#12080A] text-white flex flex-col items-center justify-center">
