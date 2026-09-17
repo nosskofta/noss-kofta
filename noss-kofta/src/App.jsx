@@ -111,7 +111,6 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
             {t.orderNow}
           </Link>
 
-          {/* الصورة بتظهر هنا لو متخزنة في الداتا بيز */}
           {siteSettings.promoBannerImage && (
             <div className="w-full max-w-xl mt-3 px-4">
               <img 
@@ -152,8 +151,9 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                     key={item._id} 
                     className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative"
                   >
+                    {/* 🌟 شريط الخصم الأصفر */}
                     {item.discount > 0 && (
-                      <span className="absolute top-3 right-3 z-10 bg-red-600 text-white text-xs font-black px-3 py-1 rounded-full shadow-lg">
+                      <span className="absolute top-3 right-3 z-10 bg-[#FFD700] text-black text-xs font-black px-3 py-1 rounded-full shadow-lg border border-black/20">
                         خصم {item.discount}% 🔥
                       </span>
                     )}
@@ -163,14 +163,14 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                     <div className="p-4 flex items-center justify-between bg-[#220E13] border-t border-[#3A1218]">
                       <div>
                         <h4 className="font-bold text-lg text-white">{item.name}</h4>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 mt-1">
                           {item.discount > 0 ? (
                             <>
-                              <span className="text-zinc-500 line-through text-sm">{item.price} ج</span>
+                              <span className="text-zinc-400 line-through text-sm font-bold">{item.price} ج</span>
                               <span className="text-[#FFD700] font-black text-lg">{finalPrice} ج</span>
                             </>
                           ) : (
-                            <span className="text-[#FFD700] font-black">{item.price} ج</span>
+                            <span className="text-[#FFD700] font-black text-lg">{item.price} ج</span>
                           )}
                         </div>
                       </div>
@@ -276,8 +276,9 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                         key={item._id} 
                         className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative"
                       >
+                        {/* 🌟 شريط الخصم الأصفر */}
                         {item.discount > 0 && (
-                          <span className="absolute top-3 right-3 z-10 bg-red-600 text-white text-xs font-black px-3 py-1 rounded-full shadow-lg">
+                          <span className="absolute top-3 right-3 z-10 bg-[#FFD700] text-black text-xs font-black px-3 py-1 rounded-full shadow-lg border border-black/20">
                             خصم {item.discount}% 🔥
                           </span>
                         )}
@@ -291,7 +292,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                           <div className="flex items-center gap-3 mb-4 mt-auto">
                             {item.discount > 0 ? (
                               <>
-                                <span className="text-zinc-500 line-through text-lg">{item.price} ج</span>
+                                <span className="text-zinc-400 line-through text-base font-bold">{item.price} ج</span>
                                 <span className="text-[#FFD700] text-2xl font-black">{finalPrice} ج</span>
                               </>
                             ) : (
@@ -1058,7 +1059,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
                         <div>
                           <h4 className="font-bold text-white">
                             {item.name} 
-                            {item.discount > 0 && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-md font-black mr-2">خصم {item.discount}%</span>}
+                            {item.discount > 0 && <span className="bg-[#FFD700] text-black text-xs px-2 py-0.5 rounded-md font-black mr-2">خصم {item.discount}%</span>}
                           </h4>
                           <span className="text-xs text-[#FFD700]">
                             {item.discount > 0 ? `${getDiscountedPrice(item.price, item.discount)} ج (بدل ${item.price})` : `${item.price} ج`}
@@ -1526,7 +1527,7 @@ function App() {
                         <span className="font-bold">{sz.name}</span>
                         {selectedItemDetail.discount > 0 ? (
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-zinc-500 line-through">{sz.price} ج</span>
+                            <span className="text-xs text-zinc-400 line-through font-bold">{sz.price} ج</span>
                             <span className="text-sm font-black text-[#FFD700]">{finalSzPrice} ج</span>
                           </div>
                         ) : (
