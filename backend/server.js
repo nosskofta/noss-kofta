@@ -12,7 +12,6 @@ app.use((req, res, next) => {
   res.header("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
   
-  // لو الطلب استكشافي (Preflight) من المتصفح، رد عليه فوراً بالقبول 200
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
@@ -37,7 +36,7 @@ const Category = mongoose.model('Category', categorySchema);
 const itemSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
-  discount: { type: Number, default: 0 }, // 👈 تمت الإضافة بنجاح هنا
+  discount: { type: Number, default: 0 }, // 👈 حقل الخصم موجود أهو
   image: { type: String },
   description: { type: String },
   extras: { type: String },
@@ -52,7 +51,6 @@ const itemSchema = new mongoose.Schema({
 });
 const Item = mongoose.model('Item', itemSchema);
 
-// جدول مناطق التوصيل وأسعارها
 const zoneSchema = new mongoose.Schema({
   name: { type: String, required: true },
   fee: { type: Number, required: true }
@@ -68,7 +66,6 @@ const settingsSchema = new mongoose.Schema({
 });
 const Settings = mongoose.model('Settings', settingsSchema);
 
-// إعدادات الموقع
 app.get('/api/settings', async (req, res) => {
   try {
     let settings = await Settings.findOne();
@@ -94,7 +91,6 @@ app.put('/api/settings', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// مناطق التوصيل
 app.get('/api/zones', async (req, res) => {
   try {
     const zones = await DeliveryZone.find();
@@ -117,7 +113,6 @@ app.delete('/api/zones/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// الأقسام
 app.get('/api/categories', async (req, res) => {
   try {
     const cats = await Category.find().sort({ order: 1, _id: 1 });
@@ -148,7 +143,6 @@ app.delete('/api/categories/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// الأصناف
 app.get('/api/items', async (req, res) => {
   try {
     const items = await Item.find().sort({ order: 1, _id: 1 });
@@ -167,7 +161,8 @@ app.post('/api/items', async (req, res) => {
 
 app.put('/api/items/:id', async (req, res) => {
   try {
-    const updatedItem = await Item.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    // 🔴 خليت المونجوز يعمل استبدال صريح للخصم عشان ميطيرش
+    const updatedItem = await Item.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
     res.json(updatedItem);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
