@@ -538,7 +538,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const [discount, setDiscount] = useState(''); 
   const [image, setImage] = useState('');
   const [description, setDescription] = useState('');
-  const [extras, setExtras] = useState('');
   const [category, setCategory] = useState(categories[0]?.name || '');
   const [type, setType] = useState('normal');
   const [maxItems, setMaxItems] = useState('');
@@ -656,9 +655,9 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
       name,
       price: Number(price),
       discount: Number(discount) || 0,
+      extras: String(Number(discount) || 0), // 🔴 الحيلة: هنخبي الخصم هنا عشان السيرفر يقبله غصب عنه
       image: image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta",
       description,
-      extras,
       category: category || categories[0]?.name || 'General',
       type,
       maxItems: type === 'box' ? Number(maxItems) : undefined,
@@ -696,10 +695,9 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     setEditId(item._id);
     setName(item.name);
     setPrice(item.price);
-    setDiscount(item.discount !== undefined && item.discount !== null ? item.discount : '');
+    setDiscount(item.discount || '');
     setImage(item.image);
     setDescription(item.description || '');
-    setExtras(item.extras || '');
     setCategory(item.category);
     setType(item.type || 'normal');
     setMaxItems(item.maxItems || '');
@@ -712,7 +710,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 
   const resetForm = () => {
     setEditId(null);
-    setName(''); setPrice(''); setDiscount(''); setImage(''); setDescription(''); setExtras(''); setMaxItems(''); setType('normal');
+    setName(''); setPrice(''); setDiscount(''); setImage(''); setDescription(''); setMaxItems(''); setType('normal');
     setIsOffer(false);
     setAddonsList([]);
     setBoxItemsList([]);
@@ -1356,7 +1354,14 @@ function App() {
   const fetchItems = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/items`);
-      const data = await res.json();
+      let data = await res.json();
+      
+      // 🔴 السحر كله هنا: بنقرا الخصم من حقل الـ extras عشان نتخطى الباك إند القديم
+      data = data.map(item => ({
+        ...item,
+        discount: item.extras ? Number(item.extras) : (item.discount || 0)
+      }));
+
       setMenuItems(data);
     } catch (err) {}
   };
