@@ -152,7 +152,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                     className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative"
                   >
                     {item.discount > 0 && (
-                      <span className="absolute top-3 right-3 z-10 bg-[#FFD700] text-black text-lg font-black px-3 py-1 rounded-full shadow-lg border border-black/20">
+                      <span className="absolute top-3 right-3 z-10 bg-[#FFD700] text-black text-sm font-black px-3 py-1 rounded-full shadow-lg border border-black/20">
                         خصم {item.discount}% 🔥
                       </span>
                     )}
