@@ -115,7 +115,7 @@ const itemSchema = new mongoose.Schema({
       price: Number
     }
   ]
-});
+}, { strict: false }); // 👈 ده التعديل الوحيد: إيقاف الوضع الصارم عشان يقبل أي حقول جديدة فوراً
 
 const Item = mongoose.model('Item', itemSchema);
 
