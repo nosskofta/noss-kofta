@@ -153,7 +153,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                   >
                     {item.discount > 0 && (
                       <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-r from-[#FFD700] via-[#FFE55C] to-[#FFD700] text-black text-center py-2 font-black text-base md:text-lg shadow-xl border-b-2 border-black/20 tracking-wider">
-                        🔥 خصم حصري {item.discount}% على المنيو 🔥
+                        🔥 خصم  {item.discount}%  🔥
                       </div>
                     )}
                     <div onClick={() => handleOpenItemDetails(item)} className="w-full h-[320px] bg-[#12080A] overflow-hidden relative cursor-pointer">
