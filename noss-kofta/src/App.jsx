@@ -149,12 +149,12 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                 return (
                   <div 
                     key={item._id} 
-                    className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative"
+                    className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative pt-8"
                   >
                     {item.discount > 0 && (
-                      <span className="absolute top-3 right-3 z-10 bg-[#FFD700] text-black text-base font-black px-3 py-1 rounded-full shadow-lg border border-black/20">
-                        خصم {item.discount}% 🔥
-                      </span>
+                      <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-r from-[#FFD700] via-[#FFE55C] to-[#FFD700] text-black text-center py-2 font-black text-base md:text-lg shadow-xl border-b-2 border-black/20 tracking-wider">
+                        🔥 خصم حصري {item.discount}% على المنيو 🔥
+                      </div>
                     )}
                     <div onClick={() => handleOpenItemDetails(item)} className="w-full h-[320px] bg-[#12080A] overflow-hidden relative cursor-pointer">
                       <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
@@ -186,17 +186,17 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                           }} className="text-[#FFD700] font-black px-2 hover:text-white">-</button>
                           <span className="font-black text-white">{quantity}</span>
                           <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="text-[#FFD700] font-black px-2 hover:text-white">+</button>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })}
           </div>
-        ) : (
-          <div className="text-center text-zinc-500 py-10">لا توجد عروض رئيسية مضافة حالياً.</div>
-        )}
+        </div>
+      ) : (
+        <div className="text-center text-zinc-500 py-10">لا توجد عروض رئيسية مضافة حالياً.</div>
+      )}
       </section>
     </div>
   );
@@ -273,12 +273,12 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                     return (
                       <div 
                         key={item._id} 
-                        className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative"
+                        className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative pt-8"
                       >
                         {item.discount > 0 && (
-                          <span className="absolute top-3 right-3 z-10 bg-[#FFD700] text-black text-xs font-black px-3 py-1 rounded-full shadow-lg border border-black/20">
-                            خصم {item.discount}% 🔥
-                          </span>
+                          <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-r from-[#FFD700] via-[#FFE55C] to-[#FFD700] text-black text-center py-2 font-black text-base md:text-lg shadow-xl border-b-2 border-black/20 tracking-wider">
+                            🔥 خصم حصري {item.discount}% على المنيو 🔥
+                          </div>
                         )}
                         <div onClick={() => item.type === 'box' ? handleOpenBox(item) : handleOpenItemDetails(item)} className="w-full h-48 object-cover bg-[#12080A] overflow-hidden cursor-pointer">
                           <img src={item.image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta"} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
@@ -299,13 +299,13 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                           </div>
                           
                           {item.type === 'box' ? (
-                            <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow">
+                              <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow">
                               {t.customizeBox}
-                            </button>
+                              </button>
                           ) : (
-                            quantity === 0 ? (
-                              <button onClick={() => handleOpenItemDetails(item)} className="w-full border-2 border-[#800020] text-[#FFD700] font-bold py-2.5 rounded-xl hover:bg-[#800020] hover:text-white transition shadow">
-                                {t.details} 🛒
+                              quantity === 0 ? (
+                                <button onClick={() => handleOpenItemDetails(item)} className="w-full border-2 border-[#800020] text-[#FFD700] font-bold py-2.5 rounded-xl hover:bg-[#800020] hover:text-white transition shadow">
+                                  {t.details} 🛒
                               </button>
                             ) : (
                               <div className="flex items-center justify-between bg-[#12080A] border border-[#800020] rounded-xl px-3 py-2">
@@ -319,18 +319,18 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                                   <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white">+</button>
                                 </div>
                               </div>
-                            )
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                        )
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  )}
     </section>
   );
 };
@@ -856,97 +856,97 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
                 </button>
                 <button onClick={() => handleEditCategoryClick(cat)} className="text-[#FFD700] bg-[#800020]/20 px-3 py-1.5 rounded-lg text-xs font-bold">✏️</button>
                 <button onClick={() => handleDeleteCategory(cat._id)} className="text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg text-xs font-bold">✕</button>
-              </div>
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
-      
-      <form onSubmit={handleSaveItem} className="bg-[#1C0D10] p-6 rounded-2xl border border-[#3A1218] mb-8 grid grid-cols-1 md:grid-cols-2 gap-4 shadow-xl">
-        <h3 className="md:col-span-2 text-xl font-bold text-[#FFD700] mb-2">{t.itemManage}</h3>
-        <div>
-          <label className="block text-sm mb-2 text-zinc-300">Item Name *</label>
-          <input type="text" required value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Name" />
-        </div>
-        <div>
-          <label className="block text-sm mb-2 text-zinc-300">Price *</label>
-          <input type="number" required value={price} onChange={(e) => setPrice(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Price" />
-        </div>
-        <div>
-          <label className="block text-sm mb-2 text-[#FFD700]">نسبة الخصم % (اختياري)</label>
-          <input type="number" placeholder="مثال: 20" value={discount} onChange={(e) => setDiscount(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" />
-        </div>
-        <div>
-          <label className="block text-sm mb-2 text-zinc-300">Category *</label>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white">
-            {categories.map(cat => (
-              <option key={cat._id} value={cat.name}>{cat.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm mb-2 text-zinc-300">Image</label>
-          <input type="file" accept="image/*" onChange={handleImageUpload} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer" />
-        </div>
+    </div>
+  
+    <form onSubmit={handleSaveItem} className="bg-[#1C0D10] p-6 rounded-2xl border border-[#3A1218] mb-8 grid grid-cols-1 md:grid-cols-2 gap-4 shadow-xl">
+      <h3 className="md:col-span-2 text-xl font-bold text-[#FFD700] mb-2">{t.itemManage}</h3>
+      <div>
+        <label className="block text-sm mb-2 text-zinc-300">Item Name *</label>
+        <input type="text" required value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Name" />
+      </div>
+      <div>
+        <label className="block text-sm mb-2 text-zinc-300">Price *</label>
+        <input type="number" required value={price} onChange={(e) => setPrice(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Price" />
+      </div>
+      <div>
+        <label className="block text-sm mb-2 text-[#FFD700]">نسبة الخصم % (اختياري)</label>
+        <input type="number" placeholder="مثال: 20" value={discount} onChange={(e) => setDiscount(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" />
+      </div>
+      <div>
+        <label className="block text-sm mb-2 text-zinc-300">Category *</label>
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white">
+          {categories.map(cat => (
+            <option key={cat._id} value={cat.name}>{cat.name}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="block text-sm mb-2 text-zinc-300">Image</label>
+        <input type="file" accept="image/*" onChange={handleImageUpload} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer" />
+      </div>
 
-        <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/30 flex items-center gap-3">
-          <input 
-            type="checkbox" 
-            id="isOfferCheck" 
-            checked={isOffer} 
-            onChange={(e) => setIsOffer(e.target.checked)}
-            className="w-5 h-5 accent-[#800020] cursor-pointer" 
-          />
-          <label htmlFor="isOfferCheck" className="text-[#FFD700] font-bold cursor-pointer">
-            🔥 عرض في الصفحة الرئيسية (اجعل هذا الصنف يظهر كعرض متحرك في الواجهة)
-          </label>
-        </div>
+      <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/30 flex items-center gap-3">
+        <input 
+          type="checkbox" 
+          id="isOfferCheck" 
+          checked={isOffer} 
+          onChange={(e) => setIsOffer(e.target.checked)}
+          className="w-5 h-5 accent-[#800020] cursor-pointer" 
+        />
+        <label htmlFor="isOfferCheck" className="text-[#FFD700] font-bold cursor-pointer">
+          🔥 عرض في الصفحة الرئيسية (اجعل هذا الصنف يظهر كعرض متحرك في الواجهة)
+        </label>
+      </div>
 
+      <div>
+        <label className="block text-sm mb-2 text-zinc-300">Type</label>
+        <select value={type} onChange={(e) => setType(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white">
+          <option value="normal">Normal (سندوتش أو وجبة عادية)</option>
+          <option value="box">Box (بوكس مخصص قابل للاختيار)</option>
+        </select>
+      </div>
+
+      {type === 'box' && (
         <div>
-          <label className="block text-sm mb-2 text-zinc-300">Type</label>
-          <select value={type} onChange={(e) => setType(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white">
-            <option value="normal">Normal (سندوتش أو وجبة عادية)</option>
-            <option value="box">Box (بوكس مخصص قابل للاختيار)</option>
-          </select>
+          <label className="block text-sm mb-2 text-[#FFD700]">Max Items in Box *</label>
+          <input type="number" value={maxItems} onChange={(e) => setMaxItems(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" placeholder="3" />
         </div>
+      )}
 
-        {type === 'box' && (
-          <div>
-            <label className="block text-sm mb-2 text-[#FFD700]">Max Items in Box *</label>
-            <input type="number" value={maxItems} onChange={(e) => setMaxItems(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" placeholder="3" />
-          </div>
-        )}
-
-        {type === 'box' && (
-          <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/50">
-            <label className="block text-sm mb-2 text-[#FFD700] font-bold">📦 أسماء المكونات التي تظهر داخل البوكس</label>
-            <div className="flex gap-2 mb-3">
-              <input 
-                type="text" 
-                placeholder="اسم المكون" 
-                value={boxItemNameInput} 
-                onChange={(e) => setBoxItemNameInput(e.target.value)}
-                className="flex-1 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
-              />
-              <button type="button" onClick={handleAddBoxItemName} className="bg-[#800020] text-white px-5 rounded-xl font-bold text-sm hover:bg-[#990026]">
-                ➕ إضافة
-              </button>
-            </div>
-
-            {boxItemsList.length > 0 && (
-              <div className="space-y-2 mt-2">
-                {boxItemsList.map((bItem, index) => (
-                  <div key={index} className="flex justify-between items-center bg-[#12080A] px-3 py-2 rounded-xl border border-[#3A1218] text-sm">
-                    <span className="text-[#FFD700] font-bold">{bItem.name}</span>
-                    <button type="button" onClick={() => handleRemoveBoxItemName(index)} className="text-red-400 font-bold text-xs">✕ مسح</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
+      {type === 'box' && (
         <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/50">
+          <label className="block text-sm mb-2 text-[#FFD700] font-bold">📦 أسماء المكونات التي تظهر داخل البوكس</label>
+          <div className="flex gap-2 mb-3">
+            <input 
+              type="text" 
+              placeholder="اسم المكون" 
+              value={boxItemNameInput} 
+              onChange={(e) => setBoxItemNameInput(e.target.value)}
+              className="flex-1 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
+            />
+            <button type="button" onClick={handleAddBoxItemName} className="bg-[#800020] text-white px-5 rounded-xl font-bold text-sm hover:bg-[#990026]">
+              ➕ إضافة
+            </button>
+          </div>
+
+          {boxItemsList.length > 0 && (
+            <div className="space-y-2 mt-2">
+              {boxItemsList.map((bItem, index) => (
+                <div key={index} className="flex justify-between items-center bg-[#12080A] px-3 py-2 rounded-xl border border-[#3A1218] text-sm">
+                  <span className="text-[#FFD700] font-bold">{bItem.name}</span>
+                  <button type="button" onClick={() => handleRemoveBoxItemName(index)} className="text-red-400 font-bold text-xs">✕ مسح</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/50">
           <label className="block text-sm mb-2 text-[#FFD700] font-bold">⚖️ أحجام الصنف وأسعارها (مثل: كيلو، نص، ربع)</label>
           <div className="flex gap-2 mb-3">
             <input 
@@ -978,9 +978,9 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
               ))}
             </div>
           )}
-        </div>
+      </div>
 
-        <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#3A1218]">
+      <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#3A1218]">
           <label className="block text-sm mb-2 text-[#FFD700] font-bold">✨ الإضافات الاختيارية</label>
           <div className="flex gap-2 mb-3">
             <input 
@@ -1012,14 +1012,14 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
               ))}
             </div>
           )}
-        </div>
+      </div>
 
-        <div className="md:col-span-2">
+      <div className="md:col-span-2">
           <label className="block text-sm mb-2 text-[#FFD700] font-bold">Description *</label>
           <textarea rows="3" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Description..." />
-        </div>
+      </div>
 
-        <div className="md:col-span-2 mt-4 flex gap-4">
+      <div className="md:col-span-2 mt-4 flex gap-4">
           <button type="submit" className="flex-1 bg-[#800020] text-white font-bold py-3.5 rounded-xl hover:bg-[#990026] transition shadow">
             {editId ? t.save : t.addItem}
           </button>
@@ -1028,71 +1028,71 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
               {t.cancel}
             </button>
           )}
-        </div>
-      </form>
+      </div>
+    </form>
 
-      <div className="space-y-10 mt-10">
-        <h3 className="text-2xl font-bold text-[#FFD700] border-b border-[#3A1218] pb-3">📋 إدارة وترتيب الأصناف حسب الأقسام</h3>
+    <div className="space-y-10 mt-10">
+      <h3 className="text-2xl font-bold text-[#FFD700] border-b border-[#3A1218] pb-3">📋 إدارة وترتيب الأصناف حسب الأقسام</h3>
         
-        {categories.map(cat => {
-          const catItems = menuItems.filter(item => item.category === cat.name).sort((a, b) => (a.order || 0) - (b.order || 0));
+      {categories.map(cat => {
+        const catItems = menuItems.filter(item => item.category === cat.name).sort((a, b) => (a.order || 0) - (b.order || 0));
           
-          return (
-            <div key={cat._id} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-6 shadow-xl">
-              <h4 className="text-xl font-black text-[#FFD700] mb-4 border-r-4 border-[#800020] pr-3">
-                📁 قسم: {cat.name} ({catItems.length} صنف)
-              </h4>
+        return (
+          <div key={cat._id} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-6 shadow-xl">
+            <h4 className="text-xl font-black text-[#FFD700] mb-4 border-r-4 border-[#800020] pr-3">
+              📁 قسم: {cat.name} ({catItems.length} صنف)
+            </h4>
 
-              {catItems.length === 0 ? (
-                <p className="text-zinc-500 text-sm">لا توجد أصناف في هذا القسم حالياً.</p>
-              ) : (
-                <div className="space-y-3">
-                  {catItems.map((item, itemIndex) => (
-                    <div key={item._id} className="bg-[#12080A] border border-[#3A1218] p-3.5 rounded-xl flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <span className="text-zinc-500 font-bold text-sm">#{itemIndex + 1}</span>
-                        <img src={item.image} alt="" className="w-14 h-10 object-cover rounded-lg bg-[#1C0D10]" />
-                        <div>
-                          <h4 className="font-bold text-white">
-                            {item.name} 
-                            {item.discount > 0 && <span className="bg-[#FFD700] text-black text-xs px-2 py-0.5 rounded-md font-black mr-2">خصم {item.discount}%</span>}
-                          </h4>
-                          <span className="text-xs text-[#FFD700]">
-                            {item.discount > 0 ? `${getDiscountedPrice(item.price, item.discount)} ج (بدل ${item.price})` : `${item.price} ج`}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button 
-                          type="button" 
-                          onClick={() => handleMoveItem(itemIndex, 'up', catItems)}
-                          disabled={itemIndex === 0}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold ${itemIndex === 0 ? 'bg-[#1C0D10] text-zinc-600 cursor-not-allowed' : 'bg-[#220E13] text-[#FFD700] hover:bg-[#2A080D]'}`}
-                        >
-                          ▲
-                        </button>
-                        <button 
-                          type="button" 
-                          onClick={() => handleMoveItem(itemIndex, 'down', catItems)}
-                          disabled={itemIndex === catItems.length - 1}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold ${itemIndex === catItems.length - 1 ? 'bg-[#1C0D10] text-zinc-600 cursor-not-allowed' : 'bg-[#220E13] text-[#FFD700] hover:bg-[#2A080D]'}`}
-                        >
-                          ▼
-                        </button>
-                        <button onClick={() => handleEditItemClick(item)} className="text-[#FFD700] bg-[#800020]/30 px-3.5 py-1.5 rounded-lg text-xs font-bold">✏️ تعديل</button>
-                        <button onClick={() => handleDeleteItem(item._id)} className="text-red-400 bg-red-500/10 px-3.5 py-1.5 rounded-lg text-xs font-bold">✕ مسح</button>
+            {catItems.length === 0 ? (
+              <p className="text-zinc-500 text-sm">لا توجد أصناف في هذا القسم حالياً.</p>
+            ) : (
+              <div className="space-y-3">
+                {catItems.map((item, itemIndex) => (
+                  <div key={item._id} className="bg-[#12080A] border border-[#3A1218] p-3.5 rounded-xl flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <span className="text-zinc-500 font-bold text-sm">#{itemIndex + 1}</span>
+                      <img src={item.image} alt="" className="w-14 h-10 object-cover rounded-lg bg-[#1C0D10]" />
+                      <div>
+                        <h4 className="font-bold text-white">
+                          {item.name} 
+                          {item.discount > 0 && <span className="bg-[#FFD700] text-black text-xs px-2 py-0.5 rounded-md font-black mr-2">خصم {item.discount}%</span>}
+                        </h4>
+                        <span className="text-xs text-[#FFD700]">
+                          {item.discount > 0 ? `${getDiscountedPrice(item.price, item.discount)} ج (بدل ${item.price})` : `${item.price} ج`}
+                        </span>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
+
+                    <div className="flex items-center gap-2">
+                      <button 
+                        type="button" 
+                        onClick={() => handleMoveItem(itemIndex, 'up', catItems)}
+                        disabled={itemIndex === 0}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold ${itemIndex === 0 ? 'bg-[#1C0D10] text-zinc-600 cursor-not-allowed' : 'bg-[#220E13] text-[#FFD700] hover:bg-[#2A080D]'}`}
+                      >
+                        ▲
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => handleMoveItem(itemIndex, 'down', catItems)}
+                        disabled={itemIndex === catItems.length - 1}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold ${itemIndex === catItems.length - 1 ? 'bg-[#1C0D10] text-zinc-600 cursor-not-allowed' : 'bg-[#220E13] text-[#FFD700] hover:bg-[#2A080D]'}`}
+                      >
+                        ▼
+                      </button>
+                      <button onClick={() => handleEditItemClick(item)} className="text-[#FFD700] bg-[#800020]/30 px-3.5 py-1.5 rounded-lg text-xs font-bold">✏️ تعديل</button>
+                      <button onClick={() => handleDeleteItem(item._id)} className="text-red-400 bg-red-500/10 px-3.5 py-1.5 rounded-lg text-xs font-bold">✕ مسح</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  </section>
+);
 };
 
 // ================= 4. صفحة السلة وإدخال بيانات التوصيل =================
@@ -1257,78 +1257,78 @@ const CartPage = ({ cart, setCart, lang }) => {
               {orderType === 'delivery' && (
                 <div className="flex justify-between"><span>سعر التوصيل:</span><span className="font-bold text-[#FFD700]">{deliveryFee} ج</span></div>
               )}
-            </div>
-
-            <div className="mt-4 pt-4 border-t-2 border-[#800020] flex justify-between items-center">
-              <span className="text-lg font-bold">{t.total}</span>
-              <span className="text-2xl font-black text-[#FFD700]">{grandTotal} جنيه</span>
-            </div>
           </div>
 
-          <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] flex flex-col justify-between shadow-xl">
-            <div className="space-y-4">
-              <h3 className="text-xl font-bold text-[#FFD700] mb-2">بيانات التوصيل والاستلام</h3>
-              
-              <div className="grid grid-cols-2 gap-3 mb-2">
-                <button 
-                  type="button"
-                  onClick={() => setOrderType('delivery')}
-                  className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'delivery' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
-                >
-                  🛵 توصيل دليفري
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setOrderType('pickup')}
-                  className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'pickup' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
-                >
-                  🏪 استلام من الفرع
-                </button>
-              </div>
-
-              <div>
-                <label className="block text-xs text-zinc-300 mb-1">الاسم الكامل *</label>
-                <input type="text" placeholder="اكتب اسمك..." value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-300 mb-1">رقم التليفون (11 رقم) *</label>
-                <input type="text" maxLength="11" placeholder="010xxxxxxxx" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-wider" />
-              </div>
-
-              {orderType === 'delivery' && (
-                <>
-                  <div>
-                    <label className="block text-xs text-zinc-300 mb-1">اختر منطقة التوصيل *</label>
-                    <select 
-                      value={selectedZone ? selectedZone._id : ''}
-                      onChange={(e) => {
-                        const zone = deliveryZones.find(z => z._id === e.target.value);
-                        setSelectedZone(zone);
-                      }}
-                      className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm cursor-pointer"
-                    >
-                      {deliveryZones.map(zone => (
-                        <option key={zone._id} value={zone._id}>
-                          {zone.name} ({zone.fee} جنيه)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-zinc-300 mb-1">العنوان بالتفصيل *</label>
-                    <textarea rows="2" placeholder="الشارع، رقم العمارة، الدور..." value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
-                  </div>
-                </>
-              )}
-            </div>
-
-            <button onClick={sendOrderToWhatsApp} className="w-full bg-[#25D366] text-black font-black text-lg py-4 rounded-xl hover:bg-[#20bd5a] transition mt-6 flex items-center justify-center gap-2 shadow-lg cursor-pointer">
-              {t.whatsappOrder}
-            </button>
+          <div className="mt-4 pt-4 border-t-2 border-[#800020] flex justify-between items-center">
+            <span className="text-lg font-bold">{t.total}</span>
+            <span className="text-2xl font-black text-[#FFD700]">{grandTotal} جنيه</span>
           </div>
         </div>
-      )}
+
+        <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] flex flex-col justify-between shadow-xl">
+          <div className="space-y-4">
+            <h3 className="text-xl font-bold text-[#FFD700] mb-2">بيانات التوصيل والاستلام</h3>
+            
+            <div className="grid grid-cols-2 gap-3 mb-2">
+              <button 
+                type="button"
+                onClick={() => setOrderType('delivery')}
+                className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'delivery' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
+              >
+                🛵 توصيل دليفري
+              </button>
+              <button 
+                type="button"
+                onClick={() => setOrderType('pickup')}
+                className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'pickup' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
+              >
+                🏪 استلام من الفرع
+              </button>
+          </div>
+
+          <div>
+            <label className="block text-xs text-zinc-300 mb-1">الاسم الكامل *</label>
+            <input type="text" placeholder="اكتب اسمك..." value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-zinc-300 mb-1">رقم التليفون (11 رقم) *</label>
+            <input type="text" maxLength="11" placeholder="010xxxxxxxx" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-wider" />
+          </div>
+
+          {orderType === 'delivery' && (
+            <>
+              <div>
+                <label className="block text-xs text-zinc-300 mb-1">اختر منطقة التوصيل *</label>
+                <select 
+                  value={selectedZone ? selectedZone._id : ''}
+                  onChange={(e) => {
+                    const zone = deliveryZones.find(z => z._id === e.target.value);
+                    setSelectedZone(zone);
+                  }}
+                  className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm cursor-pointer"
+                >
+                  {deliveryZones.map(zone => (
+                    <option key={zone._id} value={zone._id}>
+                      {zone.name} ({zone.fee} جنيه)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-zinc-300 mb-1">العنوان بالتفصيل *</label>
+                <textarea rows="2" placeholder="الشارع، رقم العمارة، الدور..." value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
+              </div>
+            </>
+          )}
+        </div>
+
+        <button onClick={sendOrderToWhatsApp} className="w-full bg-[#25D366] text-black font-black text-lg py-4 rounded-xl hover:bg-[#20bd5a] transition mt-6 flex items-center justify-center gap-2 shadow-lg cursor-pointer">
+          {t.whatsappOrder}
+        </button>
+      </div>
+    </div>
+  )}
     </section>
   );
 };
@@ -1355,7 +1355,6 @@ function App() {
       const res = await fetch(`${API_BASE}/api/items`);
       let data = await res.json();
       
-      // الخصم بيتقري مباشرة من حقل discount اللي راجع من الـ API
       data = data.map(item => ({
         ...item,
         discount: Number(item.discount) || 0
@@ -1518,7 +1517,7 @@ function App() {
           <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl">
             <button onClick={() => setSelectedItemDetail(null)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button>
             <h3 className="text-3xl font-black text-white mb-4">{selectedItemDetail.name}</h3>
-            
+             
             {selectedItemDetail.sizes && selectedItemDetail.sizes.length > 0 && (
               <div className="mb-6 space-y-3">
                 <h4 className="text-sm font-bold text-[#FFD700]">اختر الحجم:</h4>
@@ -1547,7 +1546,7 @@ function App() {
               <div className="mb-6 space-y-3">
                 <h4 className="text-sm font-bold text-[#FFD700]">✨ الإضافات الاختيارية:</h4>
                 <div className="flex flex-col gap-3">
-                  
+                   
                   <label className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${!selectedAddon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
                     <div className="flex items-center gap-3">
                       <input type="radio" name="addon" checked={!selectedAddon} onChange={() => setSelectedAddon(null)} className="hidden" />
@@ -1586,7 +1585,7 @@ function App() {
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl">
             <button onClick={() => setIsBoxModalOpen(false)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button>
-            
+             
             <h3 className="text-3xl font-black text-[#FFD700] mb-1">{activeBox.name}</h3>
             <p className="text-zinc-300 mb-6 border-b border-[#3A1218] pb-4 text-sm">
               اختر {activeBox.maxItems} أصناف. 
