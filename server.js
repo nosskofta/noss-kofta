@@ -24,6 +24,7 @@ const Category = mongoose.model('Category', categorySchema);
 const itemSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
+  discount: { type: Number, default: 0, min: 0, max: 100 },
   image: { type: String },
   description: { type: String },
   extras: { type: String },
@@ -37,6 +38,17 @@ const itemSchema = new mongoose.Schema({
   sizes: [{ name: String, price: Number }]
 });
 const Item = mongoose.model('Item', itemSchema);
+// إضافة discount = 0 تلقائيًا للأصناف القديمة التي لا تحتوي على حقل الخصم
+Item.updateMany(
+  { discount: { $exists: false } },
+  { $set: { discount: 0 } }
+)
+  .then(result => {
+    console.log(`✅ تم تحديث ${result.modifiedCount} صنف وإضافة discount = 0`);
+  })
+  .catch(err => {
+    console.log("❌ خطأ في تحديث الخصومات القديمة:", err);
+  });
 
 // جدول مناطق التوصيل وأسعارها
 const zoneSchema = new mongoose.Schema({
