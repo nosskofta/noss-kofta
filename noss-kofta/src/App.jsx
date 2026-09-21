@@ -655,7 +655,6 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
       name,
       price: Number(price),
       discount: Number(discount) || 0,
-      extras: String(Number(discount) || 0), // 🔴 الحيلة: هنخبي الخصم هنا عشان السيرفر يقبله غصب عنه
       image: image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta",
       description,
       category: category || categories[0]?.name || 'General',
@@ -1356,10 +1355,10 @@ function App() {
       const res = await fetch(`${API_BASE}/api/items`);
       let data = await res.json();
       
-      // 🔴 السحر كله هنا: بنقرا الخصم من حقل الـ extras عشان نتخطى الباك إند القديم
+      // الخصم بيتقري مباشرة من حقل discount اللي راجع من الـ API
       data = data.map(item => ({
         ...item,
-        discount: item.extras ? Number(item.extras) : (item.discount || 0)
+        discount: Number(item.discount) || 0
       }));
 
       setMenuItems(data);
