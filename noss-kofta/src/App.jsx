@@ -1348,6 +1348,9 @@ function App() {
   const [selectedSize, setSelectedSize] = useState(null);
   const [selectedAddon, setSelectedAddon] = useState(null);
 
+  // 🔴 حالة التحميل الجديدة
+  const [isLoading, setIsLoading] = useState(true);
+
   const t = translations[lang];
 
   const fetchItems = async () => {
@@ -1380,10 +1383,23 @@ function App() {
     } catch (err) {}
   };
 
+  // 🔴 دمج التحميل عشان البيانات تيجي مع بعض والشاشة تقفل
   useEffect(() => {
-    fetchItems();
-    fetchCategories();
-    fetchSettings();
+    const fetchAllData = async () => {
+      setIsLoading(true);
+      try {
+        await Promise.all([
+          fetchItems(),
+          fetchCategories(),
+          fetchSettings()
+        ]);
+      } catch (err) {
+        console.error("Error fetching data:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchAllData();
   }, []);
 
   const handleSecretLogoClick = () => {
@@ -1465,6 +1481,16 @@ function App() {
     setSelectedItemDetail(null); setSelectedSize(null); setSelectedAddon(null);
   };
 
+  // 🔴 شاشة التحميل بألوان نص كفتة
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#12080A] flex flex-col items-center justify-center text-white" dir="rtl">
+        <div className="w-16 h-16 border-4 border-[#800020] border-t-transparent rounded-full animate-spin mb-6"></div>
+        <h2 className="text-[#FFD700] font-black text-2xl italic tracking-wider animate-pulse">جاري تجهيز المنيو... 🔥</h2>
+      </div>
+    );
+  }
+
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#12080A] text-white font-sans flex flex-col justify-between relative">
       <nav className="bg-[#1C0D10] border-b border-[#800020]/60 sticky top-0 z-50 shadow-2xl">
@@ -1517,7 +1543,7 @@ function App() {
           <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl">
             <button onClick={() => setSelectedItemDetail(null)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button>
             <h3 className="text-3xl font-black text-white mb-4">{selectedItemDetail.name}</h3>
-             
+              
             {selectedItemDetail.sizes && selectedItemDetail.sizes.length > 0 && (
               <div className="mb-6 space-y-3">
                 <h4 className="text-sm font-bold text-[#FFD700]">اختر الحجم:</h4>
@@ -1546,7 +1572,7 @@ function App() {
               <div className="mb-6 space-y-3">
                 <h4 className="text-sm font-bold text-[#FFD700]">✨ الإضافات الاختيارية:</h4>
                 <div className="flex flex-col gap-3">
-                   
+                    
                   <label className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${!selectedAddon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
                     <div className="flex items-center gap-3">
                       <input type="radio" name="addon" checked={!selectedAddon} onChange={() => setSelectedAddon(null)} className="hidden" />
@@ -1585,7 +1611,7 @@ function App() {
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl">
             <button onClick={() => setIsBoxModalOpen(false)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button>
-             
+              
             <h3 className="text-3xl font-black text-[#FFD700] mb-1">{activeBox.name}</h3>
             <p className="text-zinc-300 mb-6 border-b border-[#3A1218] pb-4 text-sm">
               اختر {activeBox.maxItems} أصناف. 
