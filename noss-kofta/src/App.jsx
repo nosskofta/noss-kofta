@@ -1348,7 +1348,7 @@ function App() {
   const [selectedSize, setSelectedSize] = useState(null);
   const [selectedAddon, setSelectedAddon] = useState(null);
 
-  // 🔴 حالة التحميل الجديدة
+  // حالة التحميل الجديدة
   const [isLoading, setIsLoading] = useState(true);
 
   const t = translations[lang];
@@ -1383,7 +1383,7 @@ function App() {
     } catch (err) {}
   };
 
-  // 🔴 دمج التحميل عشان البيانات تيجي مع بعض والشاشة تقفل
+  // دمج التحميل عشان البيانات تيجي مع بعض والشاشة تقفل
   useEffect(() => {
     const fetchAllData = async () => {
       setIsLoading(true);
@@ -1448,7 +1448,15 @@ function App() {
         .map(([name, count]) => `${name}: ${count}`)
         .join(', ');
 
-      const customBoxItem = { ...activeBox, name: `${activeBox.name} (${detailsStr})` };
+      // 🔴 هنا تم التعديل: حساب السعر النهائي للبوكس بعد الخصم
+      const finalBoxPrice = getDiscountedPrice(activeBox.price, activeBox.discount);
+
+      const customBoxItem = { 
+        ...activeBox, 
+        name: `${activeBox.name} (${detailsStr})`, 
+        price: finalBoxPrice 
+      };
+      
       setCart([...cart, customBoxItem]);
       setIsBoxModalOpen(false);
     }
@@ -1481,7 +1489,7 @@ function App() {
     setSelectedItemDetail(null); setSelectedSize(null); setSelectedAddon(null);
   };
 
-  // 🔴 شاشة التحميل بألوان نص كفتة
+  // شاشة التحميل بألوان نص كفتة
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#12080A] flex flex-col items-center justify-center text-white" dir="rtl">
@@ -1634,7 +1642,7 @@ function App() {
             </div>
 
             <button onClick={handleAddBoxToCart} disabled={totalSelected !== activeBox.maxItems} className={`w-full py-4 rounded-xl font-black text-lg transition ${totalSelected === activeBox.maxItems ? 'bg-[#800020] text-white hover:bg-[#990026] cursor-pointer shadow-lg' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
-              Add to Cart
+              أضف للسلة • {getDiscountedPrice(activeBox.price, activeBox.discount)} ج
             </button>
           </div>
         </div>
