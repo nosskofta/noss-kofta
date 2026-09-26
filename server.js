@@ -22,8 +22,6 @@ mongoose.connect(MONGO_URI)
   .then(async () => {
     console.log("🔥 تم الاتصال بقاعدة البيانات MongoDB بنجاح!");
 
-    // إضافة discount = 0 تلقائيًا للأصناف القديمة
-    // التي لا تحتوي على حقل discount
     try {
       const result = await Item.updateMany(
         { discount: { $exists: false } },
@@ -115,7 +113,7 @@ const itemSchema = new mongoose.Schema({
       price: Number
     }
   ]
-}, { strict: false }); // 👈 ده التعديل الوحيد: إيقاف الوضع الصارم عشان يقبل أي حقول جديدة فوراً
+}, { strict: false });
 
 const Item = mongoose.model('Item', itemSchema);
 
@@ -165,6 +163,27 @@ const settingsSchema = new mongoose.Schema({
 });
 
 const Settings = mongoose.model('Settings', settingsSchema);
+
+// =========================
+// Orders (شاشة الكاشير)
+// =========================
+
+const orderSchema = new mongoose.Schema({
+  orderId: { type: String, required: true, unique: true },
+  customerName: { type: String, required: true },
+  customerPhone: { type: String, required: true },
+  orderType: { type: String, required: true },
+  customerAddress: { type: String },
+  zoneName: { type: String },
+  deliveryFee: { type: Number, default: 0 },
+  items: { type: Array, required: true },
+  itemsTotal: { type: Number, required: true },
+  grandTotal: { type: Number, required: true },
+  status: { type: String, default: 'pending' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Order = mongoose.model('Order', orderSchema);
 
 // =========================
 // Settings Routes
@@ -355,7 +374,6 @@ app.get('/api/items', async (req, res) => {
   }
 });
 
-// إضافة صنف جديد
 app.post('/api/items', async (req, res) => {
   try {
     const count = await Item.countDocuments({
@@ -371,21 +389,14 @@ app.post('/api/items', async (req, res) => {
 
     const savedItem = await newItem.save();
 
-    console.log(
-      `✅ Item created: ${savedItem.name} | discount: ${savedItem.discount}%`
-    );
-
     res.json(savedItem);
   } catch (err) {
-    console.error("❌ Create item error:", err);
-
     res.status(500).json({
       error: err.message
     });
   }
 });
 
-// تعديل صنف
 app.put('/api/items/:id', async (req, res) => {
   try {
     const updatedItem = await Item.findByIdAndUpdate(
@@ -401,14 +412,8 @@ app.put('/api/items/:id', async (req, res) => {
       }
     );
 
-    console.log(
-      `✅ Item updated: ${updatedItem.name} | discount: ${updatedItem.discount}%`
-    );
-
     res.json(updatedItem);
   } catch (err) {
-    console.error("❌ Update item error:", err);
-
     res.status(500).json({
       error: err.message
     });
@@ -426,6 +431,47 @@ app.delete('/api/items/:id', async (req, res) => {
     res.status(500).json({
       error: err.message
     });
+  }
+});
+
+// =========================
+// Orders Routes (شاشة الكاشير)
+// =========================
+
+// استقبال وحفظ أوردر جديد
+app.post('/api/orders', async (req, res) => {
+  try {
+    const newOrder = new Order(req.body);
+    const savedOrder = await newOrder.save();
+    console.log(`✅ New order saved: #${savedOrder.orderId}`);
+    res.status(201).json(savedOrder);
+  } catch (err) {
+    console.error("❌ Save order error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// جلب كل الأوردرات لشاشة الكاشير
+app.get('/api/orders', async (req, res) => {
+  try {
+    const orders = await Order.find().sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// تحديث حالة الأوردر (مكتمل / قيد التنفيذ)
+app.put('/api/orders/:id', async (req, res) => {
+  try {
+    const updatedOrder = await Order.findOneAndUpdate(
+      { $or: [{ _id: req.params.id }, { orderId: req.params.id }] },
+      { status: req.body.status },
+      { new: true }
+    );
+    res.json(updatedOrder);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
