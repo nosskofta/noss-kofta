@@ -9,7 +9,6 @@ const translations = {
     menu: "المنيو",
     cart: "السلة",
     admin: "لوحة الإدارة",
-    cashier: "شاشة الكاشير",
     all: "الكل",
     orderNow: "اطلب دلوقتي",
     ourMenu: "المنيو بتاعنا",
@@ -39,7 +38,6 @@ const translations = {
     menu: "Menu",
     cart: "Cart",
     admin: "Admin",
-    cashier: "Cashier",
     all: "All",
     orderNow: "Order Now",
     ourMenu: "Our Menu",
@@ -1097,7 +1095,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 );
 };
 
-// ================= 4. صفحة السلة وإدخال بيانات التوصيل (مربوطة بالحفظ الفوري) =================
+// ================= 4. صفحة السلة وإدخال بيانات التوصيل =================
 const CartPage = ({ cart, setCart, lang }) => {
   const t = translations[lang];
   const itemsTotal = cart.reduce((sum, item) => sum + item.price, 0);
@@ -1179,18 +1177,21 @@ const CartPage = ({ cart, setCart, lang }) => {
       status: 'pending'
     };
 
-    // 1. حفظ الأوردر في الداتابيز للسيرفر (عشان يظهر فوري لشاشة الكاشير)
+    // إرسال الأوردر للسيرفر مع إظهار تنبيه لو السيرفر مش مستجيب
     try {
-      await fetch(`${API_BASE}/api/orders`, {
+      const response = await fetch(`${API_BASE}/api/orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(orderPayload)
       });
+      
+      if (!response.ok) {
+        console.warn("Server responded with error when saving order, but WhatsApp will still open.");
+      }
     } catch (err) {
-      console.error("Error saving order to database:", err);
+      console.error("Network error while saving order to database:", err);
     }
 
-    // 2. تجهيز رسالة الواتساب وفتحها
     let message = `🔥 أهلاً (نص كفتة)، عندي أوردر جديد!\n`;
     message += `🆔 *رقم الأوردر:* #${orderId}\n\n`;
     message += `👤 *الاسم:* ${customerName}\n`;
@@ -1228,7 +1229,7 @@ const CartPage = ({ cart, setCart, lang }) => {
       <section className="px-8 py-12 max-w-4xl mx-auto min-h-[60vh] bg-[#12080A] text-white flex flex-col items-center justify-center">
         <div className="bg-[#1C0D10] border border-[#25D366] rounded-2xl p-10 text-center shadow-[0_0_20px_rgba(37,211,102,0.2)] w-full">
           <div className="text-7xl mb-4">✅</div>
-          <h2 className="text-3xl font-black text-[#25D366] mb-4">تم إرسال طلبك بنجاح وحفظه في النظام!</h2>
+          <h2 className="text-3xl font-black text-[#25D366] mb-4">تم إرسال طلبك بنجاح!</h2>
           <p className="text-xl mb-6 text-zinc-300">رقم الأوردر بتاعك هو:</p>
           <div className="bg-[#12080A] border-2 border-[#FFD700] text-[#FFD700] text-4xl font-black py-4 px-8 rounded-xl inline-block mb-8 tracking-widest">
             {placedOrderId}
@@ -1361,7 +1362,7 @@ const CartPage = ({ cart, setCart, lang }) => {
   );
 };
 
-// ================= 5. شاشة الكاشير المستقلة (برابط /cashier) =================
+// ================= 5. شاشة الكاشير المستقلة (سرية تماماً) =================
 const CashierDashboard = () => {
   const [isAuth, setIsAuth] = useState(false);
   const [passInput, setPassInput] = useState('');
@@ -1389,7 +1390,7 @@ const CashierDashboard = () => {
   useEffect(() => {
     if (isAuth) {
       fetchOrders();
-      const interval = setInterval(fetchOrders, 5000); // تحديث تلقائي كل 5 ثواني
+      const interval = setInterval(fetchOrders, 5000);
       return () => clearInterval(interval);
     }
   }, [isAuth]);
@@ -1436,7 +1437,7 @@ const CashierDashboard = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {orders.length === 0 ? (
-          <p className="text-zinc-500 text-center col-span-full py-20 text-xl">لا توجد أوردرات جديدة حالياً... ⏳</p>
+          <p className="text-zinc-500 text-center col-span-full py-20 text-xl">لا توجد أوردرات مسجلة في قاعدة البيانات حتى الآن... ⏳</p>
         ) : (
           orders.map((ord) => (
             <div key={ord._id || ord.orderId} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5 shadow-xl flex flex-col justify-between">
@@ -1671,7 +1672,6 @@ function App() {
           <ul className="hidden md:flex gap-4 text-base font-bold">
             <li><Link to="/" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.home}</Link></li>
             <li><Link to="/menu" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.menu}</Link></li>
-            <li><Link to="/cashier" className="bg-[#12080A] hover:bg-[#800020] text-[#FFD700] hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.cashier}</Link></li>
           </ul>
 
           <div className="flex items-center gap-4">
