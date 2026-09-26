@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom';
 
 const API_BASE = 'https://noss-kofta-production-d57f.up.railway.app';
@@ -22,7 +22,7 @@ const translations = {
     emptyCart: "السلة فارغة",
     backToMenu: "ارجع للمنيو واختار أكلتك",
     total: "الإجمالي:",
-    whatsappOrder: "📲 تأكيد وإرسال الطلب",
+    whatsappOrder: "📲 ابعت الطلب واتساب",
     delete: "مسح",
     edit: "تعديل",
     save: "حفظ",
@@ -50,7 +50,7 @@ const translations = {
     emptyCart: "Cart is Empty",
     backToMenu: "Back to menu to choose your meal",
     total: "Total:",
-    whatsappOrder: "📲 Confirm & Send Order",
+    whatsappOrder: "📲 Send Order via WhatsApp",
     delete: "Delete",
     edit: "Edit",
     save: "Save",
@@ -102,7 +102,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
           style={{ backgroundImage: `url(${siteSettings.heroImage})` }}
         ></div>
         <div className="absolute inset-0 bg-gradient-to-t from-[#12080A] via-[#12080A]/50 to-transparent"></div>
-
+        
         <div className="relative z-10 text-center px-4 max-w-4xl mx-auto flex flex-col items-center">
           <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FFD700] via-[#E6C687] to-[#C5A059] drop-shadow-[0_5px_5px_rgba(0,0,0,0.9)] mb-4">
             {title}
@@ -173,7 +173,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                           )}
                         </div>
                       </div>
-
+                      
                       {quantity === 0 ? (
                         <button onClick={() => handleOpenItemDetails(item)} className="bg-[#800020] text-white px-4 py-2 rounded-xl font-bold text-sm shadow hover:bg-[#990026] transition">
                           أضف للسلة 🛒
@@ -214,7 +214,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
   return (
     <section className="px-8 py-12 max-w-7xl mx-auto min-h-screen relative bg-[#12080A] text-white">
       <h2 className="text-3xl font-bold text-[#FFD700] mb-6 border-b border-[#3A1218] pb-4">{t.ourMenu}</h2>
-
+      
       <div className="flex gap-3 overflow-x-auto pb-4 mb-12 scrollbar-none sticky top-20 bg-[#12080A]/95 py-3 z-30 backdrop-blur-md">
         <button
           onClick={() => setSelectedCategory(lang === 'ar' ? 'الكل' : 'All')}
@@ -247,7 +247,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
         <div className="space-y-16">
           {categoriesToShow.map(cat => {
             const catItems = menuItems.filter(item => item.category === cat.name).sort((a, b) => (a.order || 0) - (b.order || 0));
-
+            
             if (catItems.length === 0 && selectedCategory !== 'الكل' && selectedCategory !== 'All') {
               return (
                 <div key={cat._id} className="border-b border-[#3A1218] pb-10">
@@ -286,7 +286,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                         <div className="p-4 flex-1 flex flex-col bg-[#1C0D10]">
                           <h3 className="text-xl font-bold mb-1 text-white">{item.name}</h3>
                           <p className="text-xs text-zinc-400 mb-2 line-clamp-2">{item.description || "..."}</p>
-
+                          
                           <div className="flex items-center gap-3 mb-4 mt-auto">
                             {item.discount > 0 ? (
                               <>
@@ -297,7 +297,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                               <span className="text-[#FFD700] text-2xl font-black">{item.price} ج</span>
                             )}
                           </div>
-
+                          
                           {item.type === 'box' ? (
                               <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow">
                               {t.customizeBox}
@@ -542,7 +542,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const [type, setType] = useState('normal');
   const [maxItems, setMaxItems] = useState('');
   const [isOffer, setIsOffer] = useState(false);
-
+  
   const [addonName, setAddonName] = useState('');
   const [addonPrice, setAddonPrice] = useState('');
   const [addonsList, setAddonsList] = useState([]);
@@ -624,6 +624,29 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
       const res = await fetch(`${API_BASE}/api/categories/${id}`, { method: 'DELETE' });
       if (res.ok) fetchCategories();
     } catch (err) {}
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width; let height = img.height;
+          const MAX_WIDTH = 800; const MAX_HEIGHT = 800;
+          if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } }
+          else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
+          canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          setImage(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSaveItem = async (e) => {
@@ -838,7 +861,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
         ))}
       </div>
     </div>
-
+  
     <form onSubmit={handleSaveItem} className="bg-[#1C0D10] p-6 rounded-2xl border border-[#3A1218] mb-8 grid grid-cols-1 md:grid-cols-2 gap-4 shadow-xl">
       <h3 className="md:col-span-2 text-xl font-bold text-[#FFD700] mb-2">{t.itemManage}</h3>
       <div>
@@ -1010,10 +1033,10 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 
     <div className="space-y-10 mt-10">
       <h3 className="text-2xl font-bold text-[#FFD700] border-b border-[#3A1218] pb-3">📋 إدارة وترتيب الأصناف حسب الأقسام</h3>
-
+        
       {categories.map(cat => {
         const catItems = menuItems.filter(item => item.category === cat.name).sort((a, b) => (a.order || 0) - (b.order || 0));
-
+          
         return (
           <div key={cat._id} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-6 shadow-xl">
             <h4 className="text-xl font-black text-[#FFD700] mb-4 border-r-4 border-[#800020] pr-3">
@@ -1072,70 +1095,123 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 );
 };
 
-// ================= 4. صفحة السلة (المرتبطة بالسيرفر) =================
+// ================= 4. صفحة السلة وإدخال بيانات التوصيل =================
 const CartPage = ({ cart, setCart, lang }) => {
   const t = translations[lang];
   const itemsTotal = cart.reduce((sum, item) => sum + item.price, 0);
+
   const [orderType, setOrderType] = useState('delivery');
   const [deliveryZones, setDeliveryZones] = useState([]);
   const [selectedZone, setSelectedZone] = useState(null);
+
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
+
   const [placedOrderId, setPlacedOrderId] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/zones`).then(res => res.json()).then(data => { setDeliveryZones(data); if (data.length > 0) setSelectedZone(data[0]); }).catch(err => {});
+    fetch(`${API_BASE}/api/zones`)
+      .then(res => res.json())
+      .then(data => {
+        setDeliveryZones(data);
+        if (data.length > 0) setSelectedZone(data[0]);
+      })
+      .catch(err => {});
   }, []);
 
   const groupedCart = cart.reduce((acc, item) => {
     const existing = acc.find(i => i.name === item.name);
-    if (existing) { existing.quantity += 1; } else { acc.push({ ...item, quantity: 1 }); }
+    if (existing) {
+      existing.quantity += 1;
+    } else {
+      acc.push({ ...item, quantity: 1 });
+    }
     return acc;
   }, []);
 
   const deliveryFee = orderType === 'delivery' && selectedZone ? selectedZone.fee : 0;
   const grandTotal = itemsTotal + deliveryFee;
 
-  const handleIncrease = (itemName) => { const itemToAdd = cart.find(i => i.name === itemName); if (itemToAdd) setCart([...cart, { ...itemToAdd }]); };
-  const handleDecrease = (itemName) => { const indexToRemove = cart.findIndex(i => i.name === itemName); if (indexToRemove !== -1) { const newCart = [...cart]; newCart.splice(indexToRemove, 1); setCart(newCart); } };
-  const handleRemoveCompletely = (itemName) => setCart(cart.filter(i => i.name !== itemName));
+  const handleIncrease = (itemName) => {
+    const itemToAdd = cart.find(i => i.name === itemName);
+    if (itemToAdd) setCart([...cart, { ...itemToAdd }]);
+  };
 
-  const submitOrderToDashboard = async () => {
+  const handleDecrease = (itemName) => {
+    const indexToRemove = cart.findIndex(i => i.name === itemName);
+    if (indexToRemove !== -1) {
+      const newCart = [...cart];
+      newCart.splice(indexToRemove, 1);
+      setCart(newCart);
+    }
+  };
+
+  const handleRemoveCompletely = (itemName) => {
+    setCart(cart.filter(i => i.name !== itemName));
+  };
+
+  const sendOrderToWhatsApp = () => {
     if (cart.length === 0) return alert("السلة فارغة!");
     if (!customerName.trim()) return alert("من فضلك اكتب اسمك الكامل.");
-    if (!customerPhone.trim() || customerPhone.length !== 11 || isNaN(customerPhone)) return alert("رقم التليفون غير صحيح.");
-    if (orderType === 'delivery' && !customerAddress.trim()) return alert("من فضلك اكتب عنوان الاستلام بالتفصيل.");
+    if (!customerPhone.trim() || customerPhone.length !== 11 || isNaN(customerPhone)) {
+      return alert("من فضلك اكتب رقم تليفون صحيح مكون من 11 رقم.");
+    }
+    if (orderType === 'delivery' && !customerAddress.trim()) {
+      return alert("من فضلك اكتب عنوان الاستلام بالتفصيل.");
+    }
 
-    setIsSubmitting(true);
     const orderId = 'NK-' + Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
-    
-    const orderData = {
-      orderId, customerName, customerPhone, customerAddress: orderType === 'delivery' ? customerAddress : '',
-      orderType: orderType === 'delivery' ? 'توصيل دليفري' : 'استلام من الفرع',
-      zoneName: orderType === 'delivery' && selectedZone ? selectedZone.name : '',
-      deliveryFee, items: groupedCart, itemsTotal, grandTotal, status: 'جديد'
-    };
 
-    try {
-      const res = await fetch(`${API_BASE}/api/orders`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(orderData)
-      });
-      if (res.ok) { setCart([]); setPlacedOrderId(orderId); }
-    } catch (err) { alert("حدث خطأ أثناء إرسال الطلب، جرب مرة تانية."); }
-    setIsSubmitting(false);
+    let message = `🔥 أهلاً (نص كفتة)، عندي أوردر جديد!\n`;
+    message += `🆔 *رقم الأوردر:* #${orderId}\n\n`;
+    message += `👤 *الاسم:* ${customerName}\n`;
+    message += `📞 *التليفون:* ${customerPhone}\n`;
+    message += `📦 *نوع الاستلام:* ${orderType === 'delivery' ? 'توصيل دليفري 🛵' : 'استلام من الفرع 🏪'}\n`;
+    
+    if (orderType === 'delivery') {
+      message += `📍 *العنوان:* ${customerAddress}\n`;
+      if (selectedZone) {
+        message += `🚚 *منطقة التوصيل:* ${selectedZone.name} (${selectedZone.fee} ج)\n`;
+      }
+    }
+
+    message += `\n🛒 *الأصناف المطلوبة:*\n`;
+    groupedCart.forEach((item) => {
+      message += `▪️ ${item.quantity}× ${item.name} — (${item.price * item.quantity} ج)\n`;
+    });
+
+    message += `\n-------------------\n`;
+    message += `🏷️ *قيمة الأصناف:* ${itemsTotal} ج\n`;
+    if (orderType === 'delivery') {
+      message += `🚚 *سعر التوصيل:* ${deliveryFee} ج\n`;
+    }
+    message += `💰 *الإجمالي النهائي: ${grandTotal} جنيه*\n`;
+    
+    const whatsappUrl = `https://wa.me/201042258982?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
+
+    setCart([]);
+    setPlacedOrderId(orderId);
   };
 
   if (placedOrderId) {
     return (
       <section className="px-8 py-12 max-w-4xl mx-auto min-h-[60vh] bg-[#12080A] text-white flex flex-col items-center justify-center">
         <div className="bg-[#1C0D10] border border-[#25D366] rounded-2xl p-10 text-center shadow-[0_0_20px_rgba(37,211,102,0.2)] w-full">
-          <div className="text-7xl mb-4">✅</div><h2 className="text-3xl font-black text-[#25D366] mb-4">تم إرسال طلبك للمطعم بنجاح!</h2>
+          <div className="text-7xl mb-4">✅</div>
+          <h2 className="text-3xl font-black text-[#25D366] mb-4">تم إرسال طلبك بنجاح!</h2>
           <p className="text-xl mb-6 text-zinc-300">رقم الأوردر بتاعك هو:</p>
-          <div className="bg-[#12080A] border-2 border-[#FFD700] text-[#FFD700] text-4xl font-black py-4 px-8 rounded-xl inline-block mb-8 tracking-widest">{placedOrderId}</div>
-          <p className="text-sm text-zinc-400 mb-8">جاري تجهيز الأوردر وهنكلمك قريباً جداً.</p>
-          <button onClick={() => setPlacedOrderId(null)} className="text-white bg-[#800020] hover:bg-[#990026] px-8 py-3 rounded-xl font-bold transition shadow-lg">رجوع للرئيسية</button>
+          <div className="bg-[#12080A] border-2 border-[#FFD700] text-[#FFD700] text-4xl font-black py-4 px-8 rounded-xl inline-block mb-8 tracking-widest">
+            {placedOrderId}
+          </div>
+          <p className="text-sm text-zinc-400 mb-8">تم تحويلك للواتساب لإرسال الطلب للمطعم.</p>
+          <button 
+            onClick={() => setPlacedOrderId(null)} 
+            className="text-white bg-[#800020] hover:bg-[#990026] px-8 py-3 rounded-xl font-bold transition shadow-lg"
+          >
+            رجوع للسلة
+          </button>
         </div>
       </section>
     );
@@ -1144,8 +1220,13 @@ const CartPage = ({ cart, setCart, lang }) => {
   return (
     <section className="px-8 py-12 max-w-4xl mx-auto min-h-screen bg-[#12080A] text-white">
       <h2 className="text-3xl font-bold text-[#FFD700] mb-8 border-b border-[#3A1218] pb-4">{t.cart}</h2>
+      
       {cart.length === 0 ? (
-        <div className="border border-[#3A1218] bg-[#1C0D10] rounded-2xl p-10 text-center shadow-xl"><div className="text-zinc-600 text-6xl mb-4">🛒</div><h2 className="text-2xl font-bold text-zinc-400 mb-4">{t.emptyCart}</h2><Link to="/menu" className="text-[#FFD700] underline hover:text-white">{t.backToMenu}</Link></div>
+        <div className="border border-[#3A1218] bg-[#1C0D10] rounded-2xl p-10 text-center shadow-xl">
+          <div className="text-zinc-600 text-6xl mb-4">🛒</div>
+          <h2 className="text-2xl font-bold text-zinc-400 mb-4">{t.emptyCart}</h2>
+          <Link to="/menu" className="text-[#FFD700] underline hover:text-white">{t.backToMenu}</Link>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] shadow-xl">
@@ -1153,90 +1234,101 @@ const CartPage = ({ cart, setCart, lang }) => {
             <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
               {groupedCart.map((item, index) => (
                 <div key={index} className="flex justify-between items-center border-b border-[#3A1218] pb-3">
-                  <div><h4 className="text-base font-bold text-white">{item.name}</h4><p className="text-[#FFD700] font-bold text-sm">{item.price * item.quantity} ج</p></div>
+                  <div>
+                    <h4 className="text-base font-bold text-white">{item.name}</h4>
+                    <p className="text-[#FFD700] font-bold text-sm">{item.price * item.quantity} ج</p>
+                  </div>
+                  
                   <div className="flex items-center gap-3">
-                    <div className="flex items-center bg-[#12080A] border border-[#3A1218] rounded-xl px-2 py-1 gap-3"><button onClick={() => handleDecrease(item.name)} className="text-[#FFD700] font-black text-lg hover:text-white">-</button><span className="font-black text-white">{item.quantity}</span><button onClick={() => handleIncrease(item.name)} className="text-[#FFD700] font-black text-lg hover:text-white">+</button></div>
+                    <div className="flex items-center bg-[#12080A] border border-[#3A1218] rounded-xl px-2 py-1 gap-3">
+                      <button onClick={() => handleDecrease(item.name)} className="text-[#FFD700] font-black text-lg hover:text-white">-</button>
+                      <span className="font-black text-white">{item.quantity}</span>
+                      <button onClick={() => handleIncrease(item.name)} className="text-[#FFD700] font-black text-lg hover:text-white">+</button>
+                    </div>
+                    
                     <button onClick={() => handleRemoveCompletely(item.name)} className="text-red-400 bg-red-500/10 px-2.5 py-1.5 rounded-lg text-xs font-bold hover:bg-red-500/20">❌</button>
                   </div>
                 </div>
               ))}
             </div>
-            <div className="mt-6 pt-4 border-t border-[#3A1218] space-y-2 text-sm text-zinc-300"><div className="flex justify-between"><span>سعر الأصناف:</span><span className="font-bold text-white">{itemsTotal} ج</span></div>{orderType === 'delivery' && (<div className="flex justify-between"><span>سعر التوصيل:</span><span className="font-bold text-[#FFD700]">{deliveryFee} ج</span></div>)}</div>
-            <div className="mt-4 pt-4 border-t-2 border-[#800020] flex justify-between items-center"><span className="text-lg font-bold">{t.total}</span><span className="text-2xl font-black text-[#FFD700]">{grandTotal} جنيه</span></div>
-          </div>
-          <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] flex flex-col justify-between shadow-xl">
-            <div className="space-y-4">
-              <h3 className="text-xl font-bold text-[#FFD700] mb-2">بيانات التوصيل والاستلام</h3>
-              <div className="grid grid-cols-2 gap-3 mb-2"><button type="button" onClick={() => setOrderType('delivery')} className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'delivery' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}>🛵 توصيل دليفري</button><button type="button" onClick={() => setOrderType('pickup')} className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'pickup' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}>🏪 استلام من الفرع</button></div>
-              <div><label className="block text-xs text-zinc-300 mb-1">الاسم الكامل *</label><input type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" /></div>
-              <div><label className="block text-xs text-zinc-300 mb-1">رقم التليفون (11 رقم) *</label><input type="text" maxLength="11" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-wider" /></div>
+            
+            <div className="mt-6 pt-4 border-t border-[#3A1218] space-y-2 text-sm text-zinc-300">
+              <div className="flex justify-between"><span>سعر الأصناف:</span><span className="font-bold text-white">{itemsTotal} ج</span></div>
               {orderType === 'delivery' && (
-                <><div><label className="block text-xs text-zinc-300 mb-1">منطقة التوصيل *</label><select value={selectedZone ? selectedZone._id : ''} onChange={(e) => setSelectedZone(deliveryZones.find(z => z._id === e.target.value))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm">{deliveryZones.map(z => <option key={z._id} value={z._id}>{z.name} ({z.fee} ج)</option>)}</select></div><div><label className="block text-xs text-zinc-300 mb-1">العنوان بالتفصيل *</label><textarea rows="2" value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" /></div></>
+                <div className="flex justify-between"><span>سعر التوصيل:</span><span className="font-bold text-[#FFD700]">{deliveryFee} ج</span></div>
               )}
-            </div>
-            <button disabled={isSubmitting} onClick={submitOrderToDashboard} className="w-full bg-[#800020] text-white font-black text-lg py-4 rounded-xl hover:bg-[#990026] transition mt-6 flex items-center justify-center gap-2 shadow-lg cursor-pointer">
-              {isSubmitting ? "جاري الإرسال..." : t.whatsappOrder}
-            </button>
+          </div>
+
+          <div className="mt-4 pt-4 border-t-2 border-[#800020] flex justify-between items-center">
+            <span className="text-lg font-bold">{t.total}</span>
+            <span className="text-2xl font-black text-[#FFD700]">{grandTotal} جنيه</span>
           </div>
         </div>
-      )}
-    </section>
-  );
-};
 
-// ================= 5. شاشة الكاشير (Live Dashboard) =================
-const CashierDashboard = ({ isCashierAuthenticated }) => {
-  const navigate = useNavigate();
-  const [orders, setOrders] = useState([]);
-  const lastOrderCount = useRef(0);
-
-  useEffect(() => { if (!isCashierAuthenticated) navigate('/menu'); }, [isCashierAuthenticated, navigate]);
-
-  const fetchOrders = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/orders`);
-      const data = await res.json();
-      if (data.length > lastOrderCount.current && lastOrderCount.current !== 0) {
-        const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-        audio.play().catch(e => console.log('Audio error:', e));
-      }
-      lastOrderCount.current = data.length;
-      setOrders(data);
-    } catch (err) {}
-  };
-
-  useEffect(() => {
-    fetchOrders(); 
-    const interval = setInterval(fetchOrders, 5000); 
-    return () => clearInterval(interval);
-  }, []);
-
-  const updateStatus = async (id, newStatus) => {
-    try { await fetch(`${API_BASE}/api/orders/${id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus }) }); fetchOrders(); } catch (err) {}
-  };
-
-  const statusColors = { "جديد": "bg-green-600 animate-pulse", "جاري التجهيز": "bg-yellow-600", "دليفري": "bg-blue-600", "تم التسليم": "bg-zinc-600", "ملغي": "bg-red-600" };
-
-  return (
-    <section className="px-8 py-8 min-h-screen bg-[#12080A] text-white">
-      <div className="flex justify-between items-center mb-6 border-b border-[#3A1218] pb-4"><h2 className="text-3xl font-black text-[#FFD700]">🔔 شاشة الكاشير (Live)</h2><div className="flex items-center gap-3"><div className="w-3 h-3 bg-green-500 rounded-full animate-ping"></div><span className="text-zinc-300 font-bold text-sm">بيتحدث تلقائي...</span></div></div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {orders.map(order => (
-          <div key={order._id} className={`bg-[#1C0D10] border-2 ${order.status === 'جديد' ? 'border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]' : 'border-[#3A1218]'} rounded-2xl p-5 flex flex-col`}>
-            <div className="flex justify-between items-start mb-4 border-b border-[#3A1218] pb-3"><div><h3 className="text-xl font-black text-[#FFD700]">#{order.orderId}</h3><span className="text-xs text-zinc-400">{new Date(order.createdAt).toLocaleTimeString('ar-EG')}</span></div><span className={`px-3 py-1 text-xs font-bold rounded-lg text-white ${statusColors[order.status]}`}>{order.status}</span></div>
-            <div className="mb-4 space-y-1 text-sm text-zinc-300 flex-1"><p><strong className="text-white">العميل:</strong> {order.customerName}</p><p><strong className="text-white">تليفون:</strong> {order.customerPhone}</p><p><strong className="text-white">النوع:</strong> <span className={order.orderType === 'توصيل دليفري' ? 'text-blue-400' : 'text-purple-400'}>{order.orderType}</span></p>{order.orderType === 'توصيل دليفري' && <p><strong className="text-white">العنوان:</strong> {order.zoneName} - {order.customerAddress}</p>}</div>
-            <div className="bg-[#12080A] rounded-xl p-3 border border-[#3A1218] mb-4 h-32 overflow-y-auto">{order.items.map((item, idx) => (<div key={idx} className="flex justify-between text-sm mb-1 pb-1 border-b border-[#3A1218]/50 last:border-0"><span className="font-bold text-white">{item.quantity}× {item.name}</span><span className="text-[#FFD700]">{item.price * item.quantity} ج</span></div>))}</div>
-            <div className="flex justify-between items-center mb-4"><span className="text-lg font-bold">الإجمالي:</span><span className="text-2xl font-black text-[#FFD700]">{order.grandTotal} جنيه</span></div>
-            <div className="flex flex-wrap gap-2 mt-auto pt-4 border-t border-[#3A1218]">
-              {order.status === 'جديد' && <button onClick={() => updateStatus(order._id, 'جاري التجهيز')} className="flex-1 bg-yellow-600 text-white py-2 rounded-lg font-bold text-sm">بدء التجهيز</button>}
-              {order.status === 'جاري التجهيز' && order.orderType === 'توصيل دليفري' && <button onClick={() => updateStatus(order._id, 'دليفري')} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-bold text-sm">خرج للدليفري</button>}
-              {(order.status === 'جاري التجهيز' || order.status === 'دليفري') && <button onClick={() => updateStatus(order._id, 'تم التسليم')} className="flex-1 bg-zinc-600 text-white py-2 rounded-lg font-bold text-sm">تم التسليم</button>}
-              {order.status === 'جديد' && <button onClick={() => updateStatus(order._id, 'ملغي')} className="bg-red-600 text-white px-3 py-2 rounded-lg font-bold text-sm">إلغاء</button>}
-            </div>
+        <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] flex flex-col justify-between shadow-xl">
+          <div className="space-y-4">
+            <h3 className="text-xl font-bold text-[#FFD700] mb-2">بيانات التوصيل والاستلام</h3>
+            
+            <div className="grid grid-cols-2 gap-3 mb-2">
+              <button 
+                type="button"
+                onClick={() => setOrderType('delivery')}
+                className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'delivery' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
+              >
+                🛵 توصيل دليفري
+              </button>
+              <button 
+                type="button"
+                onClick={() => setOrderType('pickup')}
+                className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'pickup' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
+              >
+                🏪 استلام من الفرع
+              </button>
           </div>
-        ))}
-        {orders.length === 0 && <p className="text-zinc-500 col-span-3 text-center py-10">مفيش أوردرات لسه...</p>}
+
+          <div>
+            <label className="block text-xs text-zinc-300 mb-1">الاسم الكامل *</label>
+            <input type="text" placeholder="اكتب اسمك..." value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
+          </div>
+          <div>
+            <label className="block text-xs text-zinc-300 mb-1">رقم التليفون (11 رقم) *</label>
+            <input type="text" maxLength="11" placeholder="010xxxxxxxx" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-wider" />
+          </div>
+
+          {orderType === 'delivery' && (
+            <>
+              <div>
+                <label className="block text-xs text-zinc-300 mb-1">اختر منطقة التوصيل *</label>
+                <select 
+                  value={selectedZone ? selectedZone._id : ''}
+                  onChange={(e) => {
+                    const zone = deliveryZones.find(z => z._id === e.target.value);
+                    setSelectedZone(zone);
+                  }}
+                  className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm cursor-pointer"
+                >
+                  {deliveryZones.map(zone => (
+                    <option key={zone._id} value={zone._id}>
+                      {zone.name} ({zone.fee} جنيه)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-zinc-300 mb-1">العنوان بالتفصيل *</label>
+                <textarea rows="2" placeholder="الشارع، رقم العمارة، الدور..." value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
+              </div>
+            </>
+          )}
+        </div>
+
+        <button onClick={sendOrderToWhatsApp} className="w-full bg-[#25D366] text-black font-black text-lg py-4 rounded-xl hover:bg-[#20bd5a] transition mt-6 flex items-center justify-center gap-2 shadow-lg cursor-pointer">
+          {t.whatsappOrder}
+        </button>
       </div>
+    </div>
+  )}
     </section>
   );
 };
@@ -1248,38 +1340,80 @@ function App() {
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [siteSettings, setSiteSettings] = useState({ heroImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
-  
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isCashierAuthenticated, setIsCashierAuthenticated] = useState(false);
-  
-  const [adminClicks, setAdminClicks] = useState(0);
-  const [cashierClicks, setCashierClicks] = useState(0);
+  const [logoClicks, setLogoClicks] = useState(0);
   const [lang, setLang] = useState('ar');
+
   const [selectedItemDetail, setSelectedItemDetail] = useState(null);
   const [selectedSize, setSelectedSize] = useState(null);
   const [selectedAddon, setSelectedAddon] = useState(null);
+
+  // حالة التحميل الجديدة
   const [isLoading, setIsLoading] = useState(true);
+
   const t = translations[lang];
 
-  const fetchItems = async () => { try { const res = await fetch(`${API_BASE}/api/items`); let data = await res.json(); data = data.map(item => ({ ...item, discount: Number(item.discount) || 0 })); setMenuItems(data); } catch (err) {} };
-  const fetchCategories = async () => { try { const res = await fetch(`${API_BASE}/api/categories`); setCategories(await res.json()); } catch (err) {} };
-  const fetchSettings = async () => { try { const res = await fetch(`${API_BASE}/api/settings`); setSiteSettings(await res.json()); } catch (err) {} };
+  const fetchItems = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/items`);
+      let data = await res.json();
+      
+      data = data.map(item => ({
+        ...item,
+        discount: Number(item.discount) || 0
+      }));
 
-  useEffect(() => { const fetchAllData = async () => { setIsLoading(true); try { await Promise.all([ fetchItems(), fetchCategories(), fetchSettings() ]); } catch (err) {} finally { setIsLoading(false); } }; fetchAllData(); }, []);
-
-  // زرار الإدارة (3 ضغطات على اللوجو)
-  const handleAdminLogoClick = () => {
-    setAdminClicks(prev => {
-      if (prev + 1 === 3) { const pass = window.prompt("🔒 Admin Password:"); if (pass === "15926") { setIsAuthenticated(true); navigate('/secret-admin-dashboard'); } return 0; }
-      return prev + 1;
-    });
+      setMenuItems(data);
+    } catch (err) {}
   };
 
-  // زرار الكاشير (4 ضغطات على الفوتر تحت)
-  const handleCashierFooterClick = () => {
-    setCashierClicks(prev => {
-      if (prev + 1 === 4) { const pass = window.prompt("🔔 Cashier Password:"); if (pass === "0000") { setIsCashierAuthenticated(true); navigate('/cashier'); } return 0; }
-      return prev + 1;
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/categories`);
+      const data = await res.json();
+      setCategories(data);
+    } catch (err) {}
+  };
+
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/settings`);
+      const data = await res.json();
+      setSiteSettings(data);
+    } catch (err) {}
+  };
+
+  // دمج التحميل عشان البيانات تيجي مع بعض والشاشة تقفل
+  useEffect(() => {
+    const fetchAllData = async () => {
+      setIsLoading(true);
+      try {
+        await Promise.all([
+          fetchItems(),
+          fetchCategories(),
+          fetchSettings()
+        ]);
+      } catch (err) {
+        console.error("Error fetching data:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchAllData();
+  }, []);
+
+  const handleSecretLogoClick = () => {
+    setLogoClicks(prev => {
+      const newCount = prev + 1;
+      if (newCount === 3) {
+        const pass = window.prompt("🔒 Admin Password:");
+        if (pass === "15926") {
+          setIsAuthenticated(true);
+          navigate('/secret-admin-dashboard');
+        } else if (pass !== null) { alert("Wrong password!"); }
+        return 0;
+      }
+      return newCount;
     });
   };
 
@@ -1287,29 +1421,118 @@ function App() {
   const [activeBox, setActiveBox] = useState(null);
   const [boxSelections, setBoxSelections] = useState({});
 
-  const handleOpenBox = (boxItem) => { setActiveBox(boxItem); const init = {}; if (boxItem.boxItems) { boxItem.boxItems.forEach(b => { init[b.name] = 0; }); } setBoxSelections(init); setIsBoxModalOpen(true); };
+  const handleOpenBox = (boxItem) => {
+    setActiveBox(boxItem);
+    const initialSelections = {};
+    if (boxItem.boxItems && boxItem.boxItems.length > 0) {
+      boxItem.boxItems.forEach(b => { initialSelections[b.name] = 0; });
+    }
+    setBoxSelections(initialSelections);
+    setIsBoxModalOpen(true);
+  };
+
   const totalSelected = Object.values(boxSelections).reduce((a, b) => a + b, 0);
-  const handleUpdateSelection = (name, op) => { if (op === 'add' && totalSelected < activeBox.maxItems) setBoxSelections({ ...boxSelections, [name]: boxSelections[name] + 1 }); else if (op === 'remove' && boxSelections[name] > 0) setBoxSelections({ ...boxSelections, [name]: boxSelections[name] - 1 }); };
-  const handleAddBoxToCart = () => { if (totalSelected === activeBox.maxItems) { const details = Object.entries(boxSelections).filter(([_, c]) => c > 0).map(([n, c]) => `${n}: ${c}`).join(', '); const finalP = getDiscountedPrice(activeBox.price, activeBox.discount); setCart([...cart, { ...activeBox, name: `${activeBox.name} (${details})`, price: finalP }]); setIsBoxModalOpen(false); } };
-  const handleOpenItemDetailsModal = (item) => { const finalP = getDiscountedPrice(item.price, item.discount); const hasSz = item.sizes?.length > 0; const hasAd = item.addons?.length > 0; if (hasSz || hasAd) { setSelectedItemDetail(item); setSelectedSize(hasSz ? item.sizes[0] : null); setSelectedAddon(null); } else { setCart([...cart, { ...item, price: finalP }]); } };
+
+  const handleUpdateSelection = (name, operation) => {
+    if (operation === 'add' && totalSelected < activeBox.maxItems) {
+      setBoxSelections({ ...boxSelections, [name]: boxSelections[name] + 1 });
+    } else if (operation === 'remove' && boxSelections[name] > 0) {
+      setBoxSelections({ ...boxSelections, [name]: boxSelections[name] - 1 });
+    }
+  };
+
+  const handleAddBoxToCart = () => {
+    if (totalSelected === activeBox.maxItems) {
+      const detailsStr = Object.entries(boxSelections)
+        .filter(([_, count]) => count > 0)
+        .map(([name, count]) => `${name}: ${count}`)
+        .join(', ');
+
+      // 🔴 هنا تم التعديل: حساب السعر النهائي للبوكس بعد الخصم
+      const finalBoxPrice = getDiscountedPrice(activeBox.price, activeBox.discount);
+
+      const customBoxItem = { 
+        ...activeBox, 
+        name: `${activeBox.name} (${detailsStr})`, 
+        price: finalBoxPrice 
+      };
+      
+      setCart([...cart, customBoxItem]);
+      setIsBoxModalOpen(false);
+    }
+  };
+
+  const handleOpenItemDetailsModal = (item) => {
+    const finalPrice = getDiscountedPrice(item.price, item.discount);
+    const hasSizes = item.sizes && item.sizes.length > 0;
+    const hasAddons = item.addons && item.addons.length > 0;
+    if (hasSizes || hasAddons) {
+      setSelectedItemDetail(item);
+      setSelectedSize(hasSizes ? item.sizes[0] : null);
+      setSelectedAddon(null);
+    } else {
+      setCart([...cart, { ...item, price: finalPrice }]);
+    }
+  };
+
   const basePrice = selectedSize ? selectedSize.price : (selectedItemDetail ? selectedItemDetail.price : 0);
   const currentItemTotalPrice = getDiscountedPrice(basePrice, selectedItemDetail?.discount) + (selectedAddon ? selectedAddon.price : 0);
-  const handleAddCustomizedItemToCart = () => { if (!selectedItemDetail) return; let n = selectedItemDetail.name; if (selectedSize) n += ` (${selectedSize.name})`; if (selectedAddon) n += ` - ${selectedAddon.name}`; setCart([...cart, { ...selectedItemDetail, name: n, price: currentItemTotalPrice }]); setSelectedItemDetail(null); setSelectedSize(null); setSelectedAddon(null); };
 
-  if (isLoading) return (<div className="min-h-screen bg-[#12080A] flex flex-col items-center justify-center text-white" dir="rtl"><div className="w-16 h-16 border-4 border-[#800020] border-t-transparent rounded-full animate-spin mb-6"></div><h2 className="text-[#FFD700] font-black text-2xl italic tracking-wider animate-pulse">جاري تجهيز المنيو... 🔥</h2></div>);
+  const handleAddCustomizedItemToCart = () => {
+    if (!selectedItemDetail) return;
+    let itemName = selectedItemDetail.name;
+    if (selectedSize) itemName += ` (${selectedSize.name})`;
+    if (selectedAddon) itemName += ` - ${selectedAddon.name}`;
+
+    const finalItem = { ...selectedItemDetail, name: itemName, price: currentItemTotalPrice };
+    setCart([...cart, finalItem]);
+    setSelectedItemDetail(null); setSelectedSize(null); setSelectedAddon(null);
+  };
+
+  // شاشة التحميل بألوان نص كفتة
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#12080A] flex flex-col items-center justify-center text-white" dir="rtl">
+        <div className="w-16 h-16 border-4 border-[#800020] border-t-transparent rounded-full animate-spin mb-6"></div>
+        <h2 className="text-[#FFD700] font-black text-2xl italic tracking-wider animate-pulse">جاري تجهيز المنيو... 🔥</h2>
+      </div>
+    );
+  }
 
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#12080A] text-white font-sans flex flex-col justify-between relative">
       <nav className="bg-[#1C0D10] border-b border-[#800020]/60 sticky top-0 z-50 shadow-2xl">
         <div className="flex items-center justify-between px-8 py-3">
-          <Link to="/" onClick={handleAdminLogoClick} className="flex items-center cursor-pointer select-none">
-            {siteSettings.logoImage ? <img src={siteSettings.logoImage} alt="Logo" style={{ height: '75px', width: 'auto' }} className="object-contain" /> : <span className="text-3xl font-black text-[#FFD700] tracking-tighter">نص كفتة <span className="text-white text-sm">🔥</span></span>}
+          <Link to="/" className="flex items-center cursor-pointer select-none">
+            {siteSettings.logoImage ? (
+              <img src={siteSettings.logoImage} alt="Logo" style={{ height: '75px', width: 'auto' }} className="object-contain" />
+            ) : (
+              <span className="text-3xl font-black text-[#FFD700] tracking-tighter">نص كفتة <span className="text-white text-sm">🔥</span></span>
+            )}
           </Link>
-          <ul className="hidden md:flex gap-4 text-base font-bold"><li><Link to="/" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.home}</Link></li><li><Link to="/menu" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.menu}</Link></li></ul>
+          
+          <ul className="hidden md:flex gap-4 text-base font-bold">
+            <li><Link to="/" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.home}</Link></li>
+            <li><Link to="/menu" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.menu}</Link></li>
+          </ul>
+
           <div className="flex items-center gap-4">
-            <div className="hidden md:flex flex-col text-center border-l border-[#3A1218] pl-4 ml-2"><span className="text-[#FFD700] text-[10px] font-black tracking-widest">{t.hotlineText}</span><span className="text-white font-bold text-sm tracking-wider">01042258982</span></div>
-            <button onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')} className="bg-[#12080A] text-zinc-300 border border-[#3A1218] px-3 py-2 rounded-xl text-sm font-bold hover:text-white hover:border-[#800020] transition">{lang === 'ar' ? 'EN' : 'عربي'}</button>
-            <Link to="/cart" className="flex items-center gap-2 bg-[#800020] text-white px-5 py-2.5 rounded-xl font-bold hover:bg-[#990026] transition shadow-lg"><span>🛒 {t.cart}</span><span className="bg-[#12080A] text-[#FFD700] px-2 py-0.5 rounded-full text-xs font-black">{cart.length}</span></Link>
+            <div className="hidden md:flex flex-col text-center border-l border-[#3A1218] pl-4 ml-2">
+              <span className="text-[#FFD700] text-[10px] font-black tracking-widest">{t.hotlineText}</span>
+              <span className="text-white font-bold text-sm tracking-wider">01042258982</span>
+            </div>
+            
+            <button 
+              onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')} 
+              className="bg-[#12080A] text-zinc-300 border border-[#3A1218] px-3 py-2 rounded-xl text-sm font-bold hover:text-white hover:border-[#800020] transition"
+            >
+              {lang === 'ar' ? 'EN' : 'عربي'}
+            </button>
+
+            <Link to="/cart" className="flex items-center gap-2 bg-[#800020] text-white px-5 py-2.5 rounded-xl font-bold hover:bg-[#990026] transition shadow-lg">
+              <span>🛒 {t.cart}</span>
+              <span className="bg-[#12080A] text-[#FFD700] px-2 py-0.5 rounded-full text-xs font-black">{cart.length}</span>
+            </Link>
           </div>
         </div>
       </nav>
@@ -1320,26 +1543,74 @@ function App() {
           <Route path="/menu" element={<MenuPage menuItems={menuItems} categories={categories} lang={lang} handleOpenBox={handleOpenBox} handleOpenItemDetails={handleOpenItemDetailsModal} cart={cart} setCart={setCart} />} />
           <Route path="/secret-admin-dashboard" element={<AdminDashboard menuItems={menuItems} categories={categories} siteSettings={siteSettings} lang={lang} fetchItems={fetchItems} fetchCategories={fetchCategories} fetchSettings={fetchSettings} isAuthenticated={isAuthenticated} />} />
           <Route path="/cart" element={<CartPage cart={cart} setCart={setCart} lang={lang} />} />
-          <Route path="/cashier" element={<CashierDashboard isCashierAuthenticated={isCashierAuthenticated} />} />
         </Routes>
       </div>
 
       {selectedItemDetail && (
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl">
-            <button onClick={() => setSelectedItemDetail(null)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button><h3 className="text-3xl font-black text-white mb-4">{selectedItemDetail.name}</h3>
-            {selectedItemDetail.sizes?.length > 0 && (
-              <div className="mb-6 space-y-3"><h4 className="text-sm font-bold text-[#FFD700]">اختر الحجم:</h4><div className="grid grid-cols-2 gap-3">
-                {selectedItemDetail.sizes.map((sz, idx) => { const fP = getDiscountedPrice(sz.price, selectedItemDetail.discount); return (<div key={idx} onClick={() => setSelectedSize(sz)} className={`p-3 rounded-xl border cursor-pointer flex flex-col items-center justify-center transition ${selectedSize === sz ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}><span className="font-bold">{sz.name}</span>{selectedItemDetail.discount > 0 ? (<div className="flex items-center gap-2 mt-1"><span className="text-xs text-zinc-400 line-through font-bold">{sz.price} ج</span><span className="text-sm font-black text-[#FFD700]">{fP} ج</span></div>) : (<span className="text-sm font-black text-[#FFD700]">{sz.price} ج</span>)}</div>); })}
-              </div></div>
+            <button onClick={() => setSelectedItemDetail(null)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button>
+            <h3 className="text-3xl font-black text-white mb-4">{selectedItemDetail.name}</h3>
+              
+            {selectedItemDetail.sizes && selectedItemDetail.sizes.length > 0 && (
+              <div className="mb-6 space-y-3">
+                <h4 className="text-sm font-bold text-[#FFD700]">اختر الحجم:</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  {selectedItemDetail.sizes.map((sz, idx) => {
+                    const finalSzPrice = getDiscountedPrice(sz.price, selectedItemDetail.discount);
+                    return (
+                      <div key={idx} onClick={() => setSelectedSize(sz)} className={`p-3 rounded-xl border cursor-pointer flex flex-col items-center justify-center transition ${selectedSize === sz ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
+                        <span className="font-bold">{sz.name}</span>
+                        {selectedItemDetail.discount > 0 ? (
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-zinc-400 line-through font-bold">{sz.price} ج</span>
+                            <span className="text-sm font-black text-[#FFD700]">{finalSzPrice} ج</span>
+                          </div>
+                        ) : (
+                          <span className="text-sm font-black text-[#FFD700]">{sz.price} ج</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
-            {selectedItemDetail.addons?.length > 0 && (
-              <div className="mb-6 space-y-3"><h4 className="text-sm font-bold text-[#FFD700]">✨ الإضافات الاختيارية:</h4><div className="flex flex-col gap-3">
-                <label className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${!selectedAddon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}><div className="flex items-center gap-3"><input type="radio" name="addon" checked={!selectedAddon} onChange={() => setSelectedAddon(null)} className="hidden" /><div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${!selectedAddon ? 'border-[#FFD700]' : 'border-[#3A1218]'}`}>{!selectedAddon && <div className="w-2.5 h-2.5 bg-[#FFD700] rounded-full"></div>}</div><span className="font-bold text-sm">بدون إضافات</span></div><span className="text-sm font-black">+0 ج</span></label>
-                {selectedItemDetail.addons.map((addon, idx) => (<label key={idx} className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${selectedAddon === addon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}><div className="flex items-center gap-3"><input type="radio" name="addon" checked={selectedAddon === addon} onChange={() => setSelectedAddon(addon)} className="hidden" /><div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedAddon === addon ? 'border-[#FFD700]' : 'border-[#3A1218]'}`}>{selectedAddon === addon && <div className="w-2.5 h-2.5 bg-[#FFD700] rounded-full"></div>}</div><span className="font-bold text-sm">{addon.name}</span></div><span className="text-sm font-black text-[#FFD700]">+{addon.price} ج</span></label>))}
-              </div></div>
+
+            {selectedItemDetail.addons && selectedItemDetail.addons.length > 0 && (
+              <div className="mb-6 space-y-3">
+                <h4 className="text-sm font-bold text-[#FFD700]">✨ الإضافات الاختيارية:</h4>
+                <div className="flex flex-col gap-3">
+                    
+                  <label className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${!selectedAddon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
+                    <div className="flex items-center gap-3">
+                      <input type="radio" name="addon" checked={!selectedAddon} onChange={() => setSelectedAddon(null)} className="hidden" />
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${!selectedAddon ? 'border-[#FFD700]' : 'border-[#3A1218]'}`}>
+                        {!selectedAddon && <div className="w-2.5 h-2.5 bg-[#FFD700] rounded-full"></div>}
+                      </div>
+                      <span className="font-bold text-sm">بدون إضافات</span>
+                    </div>
+                    <span className="text-sm font-black">+0 ج</span>
+                  </label>
+
+                  {selectedItemDetail.addons.map((addon, idx) => (
+                    <label key={idx} className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${selectedAddon === addon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
+                      <div className="flex items-center gap-3">
+                        <input type="radio" name="addon" checked={selectedAddon === addon} onChange={() => setSelectedAddon(addon)} className="hidden" />
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedAddon === addon ? 'border-[#FFD700]' : 'border-[#3A1218]'}`}>
+                          {selectedAddon === addon && <div className="w-2.5 h-2.5 bg-[#FFD700] rounded-full"></div>}
+                        </div>
+                        <span className="font-bold text-sm">{addon.name}</span>
+                      </div>
+                      <span className="text-sm font-black text-[#FFD700]">+{addon.price} ج</span>
+                    </label>
+                  ))}
+
+                </div>
+              </div>
             )}
-            <button onClick={handleAddCustomizedItemToCart} className="w-full bg-[#800020] text-white font-black py-4 rounded-xl hover:bg-[#990026] transition text-lg shadow-lg">أضف للسلة • {currentItemTotalPrice} ج</button>
+            <button onClick={handleAddCustomizedItemToCart} className="w-full bg-[#800020] text-white font-black py-4 rounded-xl hover:bg-[#990026] transition text-lg shadow-lg">
+              أضف للسلة • {currentItemTotalPrice} ج
+            </button>
           </div>
         </div>
       )}
@@ -1347,16 +1618,37 @@ function App() {
       {isBoxModalOpen && activeBox && (
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl">
-            <button onClick={() => setIsBoxModalOpen(false)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button><h3 className="text-3xl font-black text-[#FFD700] mb-1">{activeBox.name}</h3><p className="text-zinc-300 mb-6 border-b border-[#3A1218] pb-4 text-sm">اختر {activeBox.maxItems} أصناف. <span className={`block mt-1 font-bold text-base ${totalSelected === activeBox.maxItems ? 'text-green-400' : 'text-[#FFD700]'}`}>تم اختيار: ({totalSelected} / {activeBox.maxItems})</span></p>
+            <button onClick={() => setIsBoxModalOpen(false)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button>
+              
+            <h3 className="text-3xl font-black text-[#FFD700] mb-1">{activeBox.name}</h3>
+            <p className="text-zinc-300 mb-6 border-b border-[#3A1218] pb-4 text-sm">
+              اختر {activeBox.maxItems} أصناف. 
+              <span className={`block mt-1 font-bold text-base ${totalSelected === activeBox.maxItems ? 'text-green-400' : 'text-[#FFD700]'}`}>
+                تم اختيار: ({totalSelected} / {activeBox.maxItems})
+              </span>
+            </p>
+
             <div className="space-y-4 mb-8 max-h-[50vh] overflow-y-auto pr-1">
-              {activeBox.boxItems?.map((bItem, idx) => (<div key={idx} className="flex justify-between items-center bg-[#12080A] p-3.5 rounded-xl border border-[#3A1218]"><span className="font-bold text-base text-white">{bItem.name}</span><div className="flex items-center gap-4"><button onClick={() => handleUpdateSelection(bItem.name, 'remove')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">-</button><span className="text-xl w-4 text-center font-black text-white">{boxSelections[bItem.name] || 0}</span><button onClick={() => handleUpdateSelection(bItem.name, 'add')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">+</button></div></div>))}
+              {activeBox.boxItems && activeBox.boxItems.map((bItem, idx) => (
+                <div key={idx} className="flex justify-between items-center bg-[#12080A] p-3.5 rounded-xl border border-[#3A1218]">
+                  <span className="font-bold text-base text-white">{bItem.name}</span>
+                  <div className="flex items-center gap-4">
+                    <button onClick={() => handleUpdateSelection(bItem.name, 'remove')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">-</button>
+                    <span className="text-xl w-4 text-center font-black text-white">{boxSelections[bItem.name] || 0}</span>
+                    <button onClick={() => handleUpdateSelection(bItem.name, 'add')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">+</button>
+                  </div>
+                </div>
+              ))}
             </div>
-            <button onClick={handleAddBoxToCart} disabled={totalSelected !== activeBox.maxItems} className={`w-full py-4 rounded-xl font-black text-lg transition ${totalSelected === activeBox.maxItems ? 'bg-[#800020] text-white hover:bg-[#990026] cursor-pointer shadow-lg' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>أضف للسلة • {getDiscountedPrice(activeBox.price, activeBox.discount)} ج</button>
+
+            <button onClick={handleAddBoxToCart} disabled={totalSelected !== activeBox.maxItems} className={`w-full py-4 rounded-xl font-black text-lg transition ${totalSelected === activeBox.maxItems ? 'bg-[#800020] text-white hover:bg-[#990026] cursor-pointer shadow-lg' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
+              أضف للسلة • {getDiscountedPrice(activeBox.price, activeBox.discount)} ج
+            </button>
           </div>
         </div>
       )}
 
-      <footer onClick={handleCashierFooterClick} className="bg-[#1C0D10] border-t border-[#3A1218] mt-20 text-zinc-400 py-6 text-center text-xs cursor-default select-none">
+      <footer onClick={handleSecretLogoClick} className="bg-[#1C0D10] border-t border-[#3A1218] mt-20 text-zinc-400 py-6 text-center text-xs cursor-default select-none">
         جميع الحقوق محفوظة © 2026 نص كفتة
       </footer>
     </div>
