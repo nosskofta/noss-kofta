@@ -9,6 +9,7 @@ const translations = {
     menu: "المنيو",
     cart: "السلة",
     admin: "لوحة الإدارة",
+    cashier: "شاشة الكاشير",
     all: "الكل",
     orderNow: "اطلب دلوقتي",
     ourMenu: "المنيو بتاعنا",
@@ -38,6 +39,7 @@ const translations = {
     menu: "Menu",
     cart: "Cart",
     admin: "Admin",
+    cashier: "Cashier",
     all: "All",
     orderNow: "Order Now",
     ourMenu: "Our Menu",
@@ -186,17 +188,17 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                           }} className="text-[#FFD700] font-black px-2 hover:text-white">-</button>
                           <span className="font-black text-white">{quantity}</span>
                           <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="text-[#FFD700] font-black px-2 hover:text-white">+</button>
-                      </div>
-                    )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="text-center text-zinc-500 py-10">لا توجد عروض رئيسية مضافة حالياً.</div>
-      )}
+        ) : (
+          <div className="text-center text-zinc-500 py-10">لا توجد عروض رئيسية مضافة حالياً.</div>
+        )}
       </section>
     </div>
   );
@@ -299,13 +301,13 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                           </div>
                           
                           {item.type === 'box' ? (
-                              <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow">
+                            <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow">
                               {t.customizeBox}
-                              </button>
+                            </button>
                           ) : (
-                              quantity === 0 ? (
-                                <button onClick={() => handleOpenItemDetails(item)} className="w-full border-2 border-[#800020] text-[#FFD700] font-bold py-2.5 rounded-xl hover:bg-[#800020] hover:text-white transition shadow">
-                                  {t.details} 🛒
+                            quantity === 0 ? (
+                              <button onClick={() => handleOpenItemDetails(item)} className="w-full border-2 border-[#800020] text-[#FFD700] font-bold py-2.5 rounded-xl hover:bg-[#800020] hover:text-white transition shadow">
+                                {t.details} 🛒
                               </button>
                             ) : (
                               <div className="flex items-center justify-between bg-[#12080A] border border-[#800020] rounded-xl px-3 py-2">
@@ -319,18 +321,18 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                                   <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white">+</button>
                                 </div>
                               </div>
-                        )
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  )}
+                            )
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 };
@@ -856,180 +858,180 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
                 </button>
                 <button onClick={() => handleEditCategoryClick(cat)} className="text-[#FFD700] bg-[#800020]/20 px-3 py-1.5 rounded-lg text-xs font-bold">✏️</button>
                 <button onClick={() => handleDeleteCategory(cat._id)} className="text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg text-xs font-bold">✕</button>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  
-    <form onSubmit={handleSaveItem} className="bg-[#1C0D10] p-6 rounded-2xl border border-[#3A1218] mb-8 grid grid-cols-1 md:grid-cols-2 gap-4 shadow-xl">
-      <h3 className="md:col-span-2 text-xl font-bold text-[#FFD700] mb-2">{t.itemManage}</h3>
-      <div>
-        <label className="block text-sm mb-2 text-zinc-300">Item Name *</label>
-        <input type="text" required value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Name" />
-      </div>
-      <div>
-        <label className="block text-sm mb-2 text-zinc-300">Price *</label>
-        <input type="number" required value={price} onChange={(e) => setPrice(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Price" />
-      </div>
-      <div>
-        <label className="block text-sm mb-2 text-[#FFD700]">نسبة الخصم % (اختياري)</label>
-        <input type="number" placeholder="مثال: 20" value={discount} onChange={(e) => setDiscount(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" />
-      </div>
-      <div>
-        <label className="block text-sm mb-2 text-zinc-300">Category *</label>
-        <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white">
-          {categories.map(cat => (
-            <option key={cat._id} value={cat.name}>{cat.name}</option>
           ))}
-        </select>
+        </div>
       </div>
-      <div>
-        <label className="block text-sm mb-2 text-zinc-300">Image</label>
-        <input type="file" accept="image/*" onChange={handleImageUpload} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer" />
-      </div>
-
-      <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/30 flex items-center gap-3">
-        <input 
-          type="checkbox" 
-          id="isOfferCheck" 
-          checked={isOffer} 
-          onChange={(e) => setIsOffer(e.target.checked)}
-          className="w-5 h-5 accent-[#800020] cursor-pointer" 
-        />
-        <label htmlFor="isOfferCheck" className="text-[#FFD700] font-bold cursor-pointer">
-          🔥 عرض في الصفحة الرئيسية (اجعل هذا الصنف يظهر كعرض متحرك في الواجهة)
-        </label>
-      </div>
-
-      <div>
-        <label className="block text-sm mb-2 text-zinc-300">Type</label>
-        <select value={type} onChange={(e) => setType(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white">
-          <option value="normal">Normal (سندوتش أو وجبة عادية)</option>
-          <option value="box">Box (بوكس مخصص قابل للاختيار)</option>
-        </select>
-      </div>
-
-      {type === 'box' && (
+    
+      <form onSubmit={handleSaveItem} className="bg-[#1C0D10] p-6 rounded-2xl border border-[#3A1218] mb-8 grid grid-cols-1 md:grid-cols-2 gap-4 shadow-xl">
+        <h3 className="md:col-span-2 text-xl font-bold text-[#FFD700] mb-2">{t.itemManage}</h3>
         <div>
-          <label className="block text-sm mb-2 text-[#FFD700]">Max Items in Box *</label>
-          <input type="number" value={maxItems} onChange={(e) => setMaxItems(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" placeholder="3" />
+          <label className="block text-sm mb-2 text-zinc-300">Item Name *</label>
+          <input type="text" required value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Name" />
         </div>
-      )}
+        <div>
+          <label className="block text-sm mb-2 text-zinc-300">Price *</label>
+          <input type="number" required value={price} onChange={(e) => setPrice(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Price" />
+        </div>
+        <div>
+          <label className="block text-sm mb-2 text-[#FFD700]">نسبة الخصم % (اختياري)</label>
+          <input type="number" placeholder="مثال: 20" value={discount} onChange={(e) => setDiscount(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" />
+        </div>
+        <div>
+          <label className="block text-sm mb-2 text-zinc-300">Category *</label>
+          <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white">
+            {categories.map(cat => (
+              <option key={cat._id} value={cat.name}>{cat.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm mb-2 text-zinc-300">Image</label>
+          <input type="file" accept="image/*" onChange={handleImageUpload} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-1 text-white text-sm cursor-pointer" />
+        </div>
 
-      {type === 'box' && (
+        <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/30 flex items-center gap-3">
+          <input 
+            type="checkbox" 
+            id="isOfferCheck" 
+            checked={isOffer} 
+            onChange={(e) => setIsOffer(e.target.checked)}
+            className="w-5 h-5 accent-[#800020] cursor-pointer" 
+          />
+          <label htmlFor="isOfferCheck" className="text-[#FFD700] font-bold cursor-pointer">
+            🔥 عرض في الصفحة الرئيسية (اجعل هذا الصنف يظهر كعرض متحرك في الواجهة)
+          </label>
+        </div>
+
+        <div>
+          <label className="block text-sm mb-2 text-zinc-300">Type</label>
+          <select value={type} onChange={(e) => setType(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white">
+            <option value="normal">Normal (سندوتش أو وجبة عادية)</option>
+            <option value="box">Box (بوكس مخصص قابل للاختيار)</option>
+          </select>
+        </div>
+
+        {type === 'box' && (
+          <div>
+            <label className="block text-sm mb-2 text-[#FFD700]">Max Items in Box *</label>
+            <input type="number" value={maxItems} onChange={(e) => setMaxItems(e.target.value)} className="w-full bg-[#12080A] border border-[#800020] rounded-xl p-3 text-white" placeholder="3" />
+          </div>
+        )}
+
+        {type === 'box' && (
+          <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/50">
+            <label className="block text-sm mb-2 text-[#FFD700] font-bold">📦 أسماء المكونات التي تظهر داخل البوكس</label>
+            <div className="flex gap-2 mb-3">
+              <input 
+                type="text" 
+                placeholder="اسم المكون" 
+                value={boxItemNameInput} 
+                onChange={(e) => setBoxItemNameInput(e.target.value)}
+                className="flex-1 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
+              />
+              <button type="button" onClick={handleAddBoxItemName} className="bg-[#800020] text-white px-5 rounded-xl font-bold text-sm hover:bg-[#990026]">
+                ➕ إضافة
+              </button>
+            </div>
+
+            {boxItemsList.length > 0 && (
+              <div className="space-y-2 mt-2">
+                {boxItemsList.map((bItem, index) => (
+                  <div key={index} className="flex justify-between items-center bg-[#12080A] px-3 py-2 rounded-xl border border-[#3A1218] text-sm">
+                    <span className="text-[#FFD700] font-bold">{bItem.name}</span>
+                    <button type="button" onClick={() => handleRemoveBoxItemName(index)} className="text-red-400 font-bold text-xs">✕ مسح</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/50">
-          <label className="block text-sm mb-2 text-[#FFD700] font-bold">📦 أسماء المكونات التي تظهر داخل البوكس</label>
-          <div className="flex gap-2 mb-3">
-            <input 
-              type="text" 
-              placeholder="اسم المكون" 
-              value={boxItemNameInput} 
-              onChange={(e) => setBoxItemNameInput(e.target.value)}
-              className="flex-1 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
-            />
-            <button type="button" onClick={handleAddBoxItemName} className="bg-[#800020] text-white px-5 rounded-xl font-bold text-sm hover:bg-[#990026]">
-              ➕ إضافة
-            </button>
-          </div>
-
-          {boxItemsList.length > 0 && (
-            <div className="space-y-2 mt-2">
-              {boxItemsList.map((bItem, index) => (
-                <div key={index} className="flex justify-between items-center bg-[#12080A] px-3 py-2 rounded-xl border border-[#3A1218] text-sm">
-                  <span className="text-[#FFD700] font-bold">{bItem.name}</span>
-                  <button type="button" onClick={() => handleRemoveBoxItemName(index)} className="text-red-400 font-bold text-xs">✕ مسح</button>
-                </div>
-              ))}
+            <label className="block text-sm mb-2 text-[#FFD700] font-bold">⚖️ أحجام الصنف وأسعارها (مثل: كيلو، نص، ربع)</label>
+            <div className="flex gap-2 mb-3">
+              <input 
+                type="text" 
+                placeholder="اسم الحجم (مثل: كيلو)" 
+                value={sizeNameInput} 
+                onChange={(e) => setSizeNameInput(e.target.value)}
+                className="flex-1 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
+              />
+              <input 
+                type="number" 
+                placeholder="السعر (مثل: 400)" 
+                value={sizePriceInput} 
+                onChange={(e) => setSizePriceInput(e.target.value)}
+                className="w-32 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
+              />
+              <button type="button" onClick={handleAddSize} className="bg-[#800020] text-white px-4 rounded-xl font-bold text-sm hover:bg-[#990026]">
+                ➕ إضافة حجم
+              </button>
             </div>
-          )}
+
+            {sizesList.length > 0 && (
+              <div className="space-y-2 mt-2">
+                {sizesList.map((sz, index) => (
+                  <div key={index} className="flex justify-between items-center bg-[#12080A] px-3 py-2 rounded-xl border border-[#3A1218] text-sm">
+                    <span className="text-[#FFD700] font-bold">{sz.name} — {sz.price} ج</span>
+                    <button type="button" onClick={() => handleRemoveSize(index)} className="text-red-400 font-bold text-xs">✕ مسح</button>
+                  </div>
+                ))}
+              </div>
+            )}
         </div>
-      )}
 
-      <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#800020]/50">
-          <label className="block text-sm mb-2 text-[#FFD700] font-bold">⚖️ أحجام الصنف وأسعارها (مثل: كيلو، نص، ربع)</label>
-          <div className="flex gap-2 mb-3">
-            <input 
-              type="text" 
-              placeholder="اسم الحجم (مثل: كيلو)" 
-              value={sizeNameInput} 
-              onChange={(e) => setSizeNameInput(e.target.value)}
-              className="flex-1 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
-            />
-            <input 
-              type="number" 
-              placeholder="السعر (مثل: 400)" 
-              value={sizePriceInput} 
-              onChange={(e) => setSizePriceInput(e.target.value)}
-              className="w-32 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
-            />
-            <button type="button" onClick={handleAddSize} className="bg-[#800020] text-white px-4 rounded-xl font-bold text-sm hover:bg-[#990026]">
-              ➕ إضافة حجم
-            </button>
-          </div>
-
-          {sizesList.length > 0 && (
-            <div className="space-y-2 mt-2">
-              {sizesList.map((sz, index) => (
-                <div key={index} className="flex justify-between items-center bg-[#12080A] px-3 py-2 rounded-xl border border-[#3A1218] text-sm">
-                  <span className="text-[#FFD700] font-bold">{sz.name} — {sz.price} ج</span>
-                  <button type="button" onClick={() => handleRemoveSize(index)} className="text-red-400 font-bold text-xs">✕ مسح</button>
-                </div>
-              ))}
+        <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#3A1218]">
+            <label className="block text-sm mb-2 text-[#FFD700] font-bold">✨ الإضافات الاختيارية</label>
+            <div className="flex gap-2 mb-3">
+              <input 
+                type="text" 
+                placeholder="اسم الإضافة (مثلاً: إضافة بطاطس)" 
+                value={addonName} 
+                onChange={(e) => setAddonName(e.target.value)}
+                className="flex-1 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
+              />
+              <input 
+                type="number" 
+                placeholder="السعر (مثلاً: 10)" 
+                value={addonPrice} 
+                onChange={(e) => setAddonPrice(e.target.value)}
+                className="w-32 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
+              />
+              <button type="button" onClick={handleAddAddon} className="bg-[#800020] text-white px-4 rounded-xl font-bold text-sm hover:bg-[#990026]">
+                ➕ إضافة
+              </button>
             </div>
-          )}
-      </div>
 
-      <div className="md:col-span-2 bg-[#12080A] p-4 rounded-xl border border-[#3A1218]">
-          <label className="block text-sm mb-2 text-[#FFD700] font-bold">✨ الإضافات الاختيارية</label>
-          <div className="flex gap-2 mb-3">
-            <input 
-              type="text" 
-              placeholder="اسم الإضافة (مثلاً: إضافة بطاطس)" 
-              value={addonName} 
-              onChange={(e) => setAddonName(e.target.value)}
-              className="flex-1 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
-            />
-            <input 
-              type="number" 
-              placeholder="السعر (مثلاً: 10)" 
-              value={addonPrice} 
-              onChange={(e) => setAddonPrice(e.target.value)}
-              className="w-32 bg-[#1C0D10] border border-[#3A1218] rounded-xl p-2.5 text-white text-sm"
-            />
-            <button type="button" onClick={handleAddAddon} className="bg-[#800020] text-white px-4 rounded-xl font-bold text-sm hover:bg-[#990026]">
-              ➕ إضافة
+            {addonsList.length > 0 && (
+              <div className="space-y-2 mt-2">
+                {addonsList.map((addon, index) => (
+                  <div key={index} className="flex justify-between items-center bg-[#12080A] px-3 py-2 rounded-xl border border-[#3A1218] text-sm">
+                    <span>{addon.name} (+{addon.price} ج)</span>
+                    <button type="button" onClick={() => handleRemoveAddon(index)} className="text-red-400 font-bold text-xs">✕ مسح</button>
+                  </div>
+                ))}
+              </div>
+            )}
+        </div>
+
+        <div className="md:col-span-2">
+            <label className="block text-sm mb-2 text-[#FFD700] font-bold">Description *</label>
+            <textarea rows="3" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Description..." />
+        </div>
+
+        <div className="md:col-span-2 mt-4 flex gap-4">
+            <button type="submit" className="flex-1 bg-[#800020] text-white font-bold py-3.5 rounded-xl hover:bg-[#990026] transition shadow">
+              {editId ? t.save : t.addItem}
             </button>
-          </div>
-
-          {addonsList.length > 0 && (
-            <div className="space-y-2 mt-2">
-              {addonsList.map((addon, index) => (
-                <div key={index} className="flex justify-between items-center bg-[#12080A] px-3 py-2 rounded-xl border border-[#3A1218] text-sm">
-                  <span>{addon.name} (+{addon.price} ج)</span>
-                  <button type="button" onClick={() => handleRemoveAddon(index)} className="text-red-400 font-bold text-xs">✕ مسح</button>
-                </div>
-              ))}
-            </div>
-          )}
-      </div>
-
-      <div className="md:col-span-2">
-          <label className="block text-sm mb-2 text-[#FFD700] font-bold">Description *</label>
-          <textarea rows="3" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Description..." />
-      </div>
-
-      <div className="md:col-span-2 mt-4 flex gap-4">
-          <button type="submit" className="flex-1 bg-[#800020] text-white font-bold py-3.5 rounded-xl hover:bg-[#990026] transition shadow">
-            {editId ? t.save : t.addItem}
-          </button>
-          {editId && (
-            <button type="button" onClick={resetForm} className="bg-zinc-700 text-white px-6 rounded-xl font-bold">
-              {t.cancel}
-            </button>
-          )}
-      </div>
-    </form>
+            {editId && (
+              <button type="button" onClick={resetForm} className="bg-zinc-700 text-white px-6 rounded-xl font-bold">
+                {t.cancel}
+              </button>
+            )}
+        </div>
+      </form>
 
     <div className="space-y-10 mt-10">
       <h3 className="text-2xl font-bold text-[#FFD700] border-b border-[#3A1218] pb-3">📋 إدارة وترتيب الأصناف حسب الأقسام</h3>
@@ -1095,7 +1097,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 );
 };
 
-// ================= 4. صفحة السلة وإدخال بيانات التوصيل =================
+// ================= 4. صفحة السلة وإدخال بيانات التوصيل (مربوطة بالحفظ الفوري) =================
 const CartPage = ({ cart, setCart, lang }) => {
   const t = translations[lang];
   const itemsTotal = cart.reduce((sum, item) => sum + item.price, 0);
@@ -1151,7 +1153,7 @@ const CartPage = ({ cart, setCart, lang }) => {
     setCart(cart.filter(i => i.name !== itemName));
   };
 
-  const sendOrderToWhatsApp = () => {
+  const sendOrderToWhatsApp = async () => {
     if (cart.length === 0) return alert("السلة فارغة!");
     if (!customerName.trim()) return alert("من فضلك اكتب اسمك الكامل.");
     if (!customerPhone.trim() || customerPhone.length !== 11 || isNaN(customerPhone)) {
@@ -1163,6 +1165,32 @@ const CartPage = ({ cart, setCart, lang }) => {
 
     const orderId = 'NK-' + Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
 
+    const orderPayload = {
+      orderId,
+      customerName,
+      customerPhone,
+      orderType,
+      customerAddress: orderType === 'delivery' ? customerAddress : 'استلام من الفرع',
+      zoneName: orderType === 'delivery' && selectedZone ? selectedZone.name : 'استلام من الفرع',
+      deliveryFee: orderType === 'delivery' ? deliveryFee : 0,
+      items: groupedCart,
+      itemsTotal,
+      grandTotal,
+      status: 'pending'
+    };
+
+    // 1. حفظ الأوردر في الداتابيز للسيرفر (عشان يظهر فوري لشاشة الكاشير)
+    try {
+      await fetch(`${API_BASE}/api/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderPayload)
+      });
+    } catch (err) {
+      console.error("Error saving order to database:", err);
+    }
+
+    // 2. تجهيز رسالة الواتساب وفتحها
     let message = `🔥 أهلاً (نص كفتة)، عندي أوردر جديد!\n`;
     message += `🆔 *رقم الأوردر:* #${orderId}\n\n`;
     message += `👤 *الاسم:* ${customerName}\n`;
@@ -1200,7 +1228,7 @@ const CartPage = ({ cart, setCart, lang }) => {
       <section className="px-8 py-12 max-w-4xl mx-auto min-h-[60vh] bg-[#12080A] text-white flex flex-col items-center justify-center">
         <div className="bg-[#1C0D10] border border-[#25D366] rounded-2xl p-10 text-center shadow-[0_0_20px_rgba(37,211,102,0.2)] w-full">
           <div className="text-7xl mb-4">✅</div>
-          <h2 className="text-3xl font-black text-[#25D366] mb-4">تم إرسال طلبك بنجاح!</h2>
+          <h2 className="text-3xl font-black text-[#25D366] mb-4">تم إرسال طلبك بنجاح وحفظه في النظام!</h2>
           <p className="text-xl mb-6 text-zinc-300">رقم الأوردر بتاعك هو:</p>
           <div className="bg-[#12080A] border-2 border-[#FFD700] text-[#FFD700] text-4xl font-black py-4 px-8 rounded-xl inline-block mb-8 tracking-widest">
             {placedOrderId}
@@ -1333,6 +1361,139 @@ const CartPage = ({ cart, setCart, lang }) => {
   );
 };
 
+// ================= 5. شاشة الكاشير المستقلة (برابط /cashier) =================
+const CashierDashboard = () => {
+  const [isAuth, setIsAuth] = useState(false);
+  const [passInput, setPassInput] = useState('');
+  const [orders, setOrders] = useState([]);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (passInput === "15926") {
+      setIsAuth(true);
+    } else {
+      alert("كلمة المرور غير صحيحة!");
+    }
+  };
+
+  const fetchOrders = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/orders`);
+      const data = await res.json();
+      setOrders(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuth) {
+      fetchOrders();
+      const interval = setInterval(fetchOrders, 5000); // تحديث تلقائي كل 5 ثواني
+      return () => clearInterval(interval);
+    }
+  }, [isAuth]);
+
+  const updateOrderStatus = async (orderId, newStatus) => {
+    try {
+      await fetch(`${API_BASE}/api/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      fetchOrders();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  if (!isAuth) {
+    return (
+      <div className="min-h-screen bg-[#12080A] flex items-center justify-center p-4">
+        <form onSubmit={handleLogin} className="bg-[#1C0D10] border border-[#800020] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
+          <h2 className="text-2xl font-black text-[#FFD700] mb-6">🔒 دخول شاشة الكاشير</h2>
+          <input 
+            type="password" 
+            placeholder="اكتب كلمة المرور..." 
+            value={passInput} 
+            onChange={(e) => setPassInput(e.target.value)}
+            className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-6 text-lg tracking-widest"
+          />
+          <button type="submit" className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow">
+            دخول النظام
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  return (
+    <section className="px-8 py-12 max-w-7xl mx-auto min-h-screen bg-[#12080A] text-white">
+      <div className="flex justify-between items-center mb-8 border-b border-[#3A1218] pb-4">
+        <h2 className="text-3xl font-bold text-[#FFD700]">🖥️ شاشة الكاشير - متابعة الأوردرات الفورية</h2>
+        <button onClick={fetchOrders} className="bg-[#800020] px-4 py-2 rounded-xl text-sm font-bold text-white">🔄 تحديث</button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {orders.length === 0 ? (
+          <p className="text-zinc-500 text-center col-span-full py-20 text-xl">لا توجد أوردرات جديدة حالياً... ⏳</p>
+        ) : (
+          orders.map((ord) => (
+            <div key={ord._id || ord.orderId} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5 shadow-xl flex flex-col justify-between">
+              <div>
+                <div className="flex justify-between items-center mb-3 border-b border-[#3A1218] pb-2">
+                  <span className="font-black text-[#FFD700] text-lg">#{ord.orderId}</span>
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${ord.status === 'completed' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                    {ord.status === 'completed' ? 'مكتمل ✅' : 'قيد التنفيذ ⏳'}
+                  </span>
+                </div>
+
+                <div className="text-sm space-y-1 mb-4 text-zinc-300">
+                  <p>👤 <strong className="text-white">{ord.customerName}</strong></p>
+                  <p>📞 <strong className="text-white">{ord.customerPhone}</strong></p>
+                  <p>📦 <strong className="text-white">{ord.orderType === 'delivery' ? `توصيل (${ord.zoneName})` : 'استلام من الفرع'}</strong></p>
+                  {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.customerAddress}</span></p>}
+                </div>
+
+                <div className="bg-[#12080A] p-3 rounded-xl border border-[#3A1218] mb-4 space-y-1.5 max-h-40 overflow-y-auto">
+                  {ord.items && ord.items.map((it, idx) => (
+                    <div key={idx} className="flex justify-between text-xs">
+                      <span className="text-white font-medium">{it.quantity}× {it.name}</span>
+                      <span className="text-[#FFD700]">{it.price * it.quantity} ج</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center pt-3 border-t border-[#3A1218] mb-4 text-sm font-bold">
+                  <span>الإجمالي:</span>
+                  <span className="text-[#FFD700] text-lg font-black">{ord.grandTotal} ج</span>
+                </div>
+
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => updateOrderStatus(ord._id || ord.orderId, 'completed')}
+                    className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-xl text-xs font-bold transition"
+                  >
+                    إنهاء الأوردر ✅
+                  </button>
+                  <button 
+                    onClick={() => updateOrderStatus(ord._id || ord.orderId, 'pending')}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-2 rounded-xl text-xs font-bold transition"
+                  >
+                    معلق ⏳
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+};
+
 // ================= التطبيق الرئيسي =================
 function App() {
   const navigate = useNavigate();
@@ -1348,7 +1509,6 @@ function App() {
   const [selectedSize, setSelectedSize] = useState(null);
   const [selectedAddon, setSelectedAddon] = useState(null);
 
-  // حالة التحميل الجديدة
   const [isLoading, setIsLoading] = useState(true);
 
   const t = translations[lang];
@@ -1383,7 +1543,6 @@ function App() {
     } catch (err) {}
   };
 
-  // دمج التحميل عشان البيانات تيجي مع بعض والشاشة تقفل
   useEffect(() => {
     const fetchAllData = async () => {
       setIsLoading(true);
@@ -1448,7 +1607,6 @@ function App() {
         .map(([name, count]) => `${name}: ${count}`)
         .join(', ');
 
-      // 🔴 هنا تم التعديل: حساب السعر النهائي للبوكس بعد الخصم
       const finalBoxPrice = getDiscountedPrice(activeBox.price, activeBox.discount);
 
       const customBoxItem = { 
@@ -1489,7 +1647,6 @@ function App() {
     setSelectedItemDetail(null); setSelectedSize(null); setSelectedAddon(null);
   };
 
-  // شاشة التحميل بألوان نص كفتة
   if (isLoading) {
     return (
       <div className="min-h-screen bg-[#12080A] flex flex-col items-center justify-center text-white" dir="rtl">
@@ -1514,6 +1671,7 @@ function App() {
           <ul className="hidden md:flex gap-4 text-base font-bold">
             <li><Link to="/" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.home}</Link></li>
             <li><Link to="/menu" className="bg-[#12080A] hover:bg-[#800020] text-zinc-300 hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.menu}</Link></li>
+            <li><Link to="/cashier" className="bg-[#12080A] hover:bg-[#800020] text-[#FFD700] hover:text-white border border-[#3A1218] px-6 py-2 rounded-xl transition shadow">{t.cashier}</Link></li>
           </ul>
 
           <div className="flex items-center gap-4">
@@ -1542,6 +1700,7 @@ function App() {
           <Route path="/" element={<HomePage lang={lang} siteSettings={siteSettings} menuItems={menuItems} handleOpenItemDetails={handleOpenItemDetailsModal} cart={cart} setCart={setCart} />} />
           <Route path="/menu" element={<MenuPage menuItems={menuItems} categories={categories} lang={lang} handleOpenBox={handleOpenBox} handleOpenItemDetails={handleOpenItemDetailsModal} cart={cart} setCart={setCart} />} />
           <Route path="/secret-admin-dashboard" element={<AdminDashboard menuItems={menuItems} categories={categories} siteSettings={siteSettings} lang={lang} fetchItems={fetchItems} fetchCategories={fetchCategories} fetchSettings={fetchSettings} isAuthenticated={isAuthenticated} />} />
+          <Route path="/cashier" element={<CashierDashboard />} />
           <Route path="/cart" element={<CartPage cart={cart} setCart={setCart} lang={lang} />} />
         </Routes>
       </div>
