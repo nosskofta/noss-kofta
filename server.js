@@ -159,6 +159,11 @@ const settingsSchema = new mongoose.Schema({
   logoImage: {
     type: String,
     default: ''
+  },
+
+  promoBannerImage: {
+    type: String,
+    default: ''
   }
 });
 
@@ -225,6 +230,11 @@ app.put('/api/settings', async (req, res) => {
         req.body.logoImage !== undefined
           ? req.body.logoImage
           : settings.logoImage;
+
+      settings.promoBannerImage =
+        req.body.promoBannerImage !== undefined
+          ? req.body.promoBannerImage
+          : settings.promoBannerImage;
     }
 
     await settings.save();
@@ -464,8 +474,12 @@ app.get('/api/orders', async (req, res) => {
 // تحديث حالة الأوردر (مكتمل / قيد التنفيذ)
 app.put('/api/orders/:id', async (req, res) => {
   try {
+    const query = mongoose.Types.ObjectId.isValid(req.params.id)
+      ? { $or: [{ _id: req.params.id }, { orderId: req.params.id }] }
+      : { orderId: req.params.id };
+
     const updatedOrder = await Order.findOneAndUpdate(
-      { $or: [{ _id: req.params.id }, { orderId: req.params.id }] },
+      query,
       { status: req.body.status },
       { new: true }
     );

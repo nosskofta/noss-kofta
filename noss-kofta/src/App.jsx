@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom';
 
 const API_BASE = 'https://noss-kofta-production-d57f.up.railway.app';
@@ -1161,6 +1161,9 @@ const CartPage = ({ cart, setCart, lang }) => {
       return alert("من فضلك اكتب عنوان الاستلام بالتفصيل.");
     }
 
+    // نفتح نافذة الواتساب فوراً (قبل أي انتظار) عشان المتصفح مايحجبهاش
+    const waWindow = window.open('', '_blank');
+
     const orderId = 'NK-' + Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
 
     const orderPayload = {
@@ -1177,7 +1180,7 @@ const CartPage = ({ cart, setCart, lang }) => {
       status: 'pending'
     };
 
-    // إرسال الأوردر للسيرفر مع إظهار تنبيه لو السيرفر مش مستجيب
+    // إرسال الأوردر لشاشة الكاشير (السيرفر)
     try {
       const response = await fetch(`${API_BASE}/api/orders`, {
         method: 'POST',
@@ -1218,7 +1221,11 @@ const CartPage = ({ cart, setCart, lang }) => {
     message += `💰 *الإجمالي النهائي: ${grandTotal} جنيه*\n`;
     
     const whatsappUrl = `https://wa.me/201042258982?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
+    if (waWindow) {
+      waWindow.location.href = whatsappUrl;
+    } else {
+      window.location.href = whatsappUrl;
+    }
 
     setCart([]);
     setPlacedOrderId(orderId);
@@ -1368,9 +1375,40 @@ const CashierDashboard = () => {
   const [passInput, setPassInput] = useState('');
   const [orders, setOrders] = useState([]);
 
+  const audioCtxRef = useRef(null);
+  const knownIdsRef = useRef(null); // null = أول تحميل (من غير صوت)
+
+  // الصوت: 3 نغمات متتالية
+  const playBeep = () => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    const beep = (start, freq) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const t0 = ctx.currentTime + start;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.8, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
+      osc.start(t0);
+      osc.stop(t0 + 0.45);
+    };
+    beep(0, 880);
+    beep(0.5, 1100);
+    beep(1.0, 880);
+  };
+
   const handleLogin = (e) => {
     e.preventDefault();
     if (passInput === "15926") {
+      // لازم نفتح الصوت من ضغطة المستخدم، المتصفح بيمنعه غير كده
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      audioCtxRef.current = new AudioCtx();
+      audioCtxRef.current.resume();
       setIsAuth(true);
     } else {
       alert("كلمة المرور غير صحيحة!");
@@ -1381,6 +1419,14 @@ const CashierDashboard = () => {
     try {
       const res = await fetch(`${API_BASE}/api/orders`);
       const data = await res.json();
+      if (!Array.isArray(data)) return;
+
+      const currentIds = new Set(data.map(o => o._id));
+      if (knownIdsRef.current !== null) {
+        const hasNew = data.some(o => !knownIdsRef.current.has(o._id));
+        if (hasNew) playBeep();
+      }
+      knownIdsRef.current = currentIds;
       setOrders(data);
     } catch (err) {
       console.error(err);
@@ -1390,7 +1436,7 @@ const CashierDashboard = () => {
   useEffect(() => {
     if (isAuth) {
       fetchOrders();
-      const interval = setInterval(fetchOrders, 5000);
+      const interval = setInterval(fetchOrders, 3000);
       return () => clearInterval(interval);
     }
   }, [isAuth]);
@@ -1407,6 +1453,8 @@ const CashierDashboard = () => {
       console.error(err);
     }
   };
+
+  const pendingCount = orders.filter(o => o.status !== 'completed').length;
 
   if (!isAuth) {
     return (
@@ -1430,9 +1478,19 @@ const CashierDashboard = () => {
 
   return (
     <section className="px-8 py-12 max-w-7xl mx-auto min-h-screen bg-[#12080A] text-white">
-      <div className="flex justify-between items-center mb-8 border-b border-[#3A1218] pb-4">
-        <h2 className="text-3xl font-bold text-[#FFD700]">🖥️ شاشة الكاشير - متابعة الأوردرات الفورية</h2>
-        <button onClick={fetchOrders} className="bg-[#800020] px-4 py-2 rounded-xl text-sm font-bold text-white">🔄 تحديث</button>
+      <div className="flex flex-wrap gap-3 justify-between items-center mb-8 border-b border-[#3A1218] pb-4">
+        <h2 className="text-3xl font-bold text-[#FFD700]">
+          🖥️ شاشة الكاشير
+          {pendingCount > 0 && (
+            <span className="bg-red-600 text-white text-base px-3 py-1 rounded-full mr-3 animate-pulse">
+              {pendingCount} قيد التنفيذ
+            </span>
+          )}
+        </h2>
+        <div className="flex gap-2">
+          <button onClick={playBeep} className="bg-zinc-800 px-4 py-2 rounded-xl text-sm font-bold text-white">🔊 تجربة الصوت</button>
+          <button onClick={fetchOrders} className="bg-[#800020] px-4 py-2 rounded-xl text-sm font-bold text-white">🔄 تحديث</button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1440,7 +1498,7 @@ const CashierDashboard = () => {
           <p className="text-zinc-500 text-center col-span-full py-20 text-xl">لا توجد أوردرات مسجلة في قاعدة البيانات حتى الآن... ⏳</p>
         ) : (
           orders.map((ord) => (
-            <div key={ord._id || ord.orderId} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5 shadow-xl flex flex-col justify-between">
+            <div key={ord._id || ord.orderId} className={`bg-[#1C0D10] border rounded-2xl p-5 shadow-xl flex flex-col justify-between ${ord.status === 'completed' ? 'border-[#3A1218]' : 'border-yellow-500/60'}`}>
               <div>
                 <div className="flex justify-between items-center mb-3 border-b border-[#3A1218] pb-2">
                   <span className="font-black text-[#FFD700] text-lg">#{ord.orderId}</span>
@@ -1454,6 +1512,7 @@ const CashierDashboard = () => {
                   <p>📞 <strong className="text-white">{ord.customerPhone}</strong></p>
                   <p>📦 <strong className="text-white">{ord.orderType === 'delivery' ? `توصيل (${ord.zoneName})` : 'استلام من الفرع'}</strong></p>
                   {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.customerAddress}</span></p>}
+                  {ord.createdAt && <p>🕒 <span className="text-zinc-400 text-xs">{new Date(ord.createdAt).toLocaleString('ar-EG')}</span></p>}
                 </div>
 
                 <div className="bg-[#12080A] p-3 rounded-xl border border-[#3A1218] mb-4 space-y-1.5 max-h-40 overflow-y-auto">
