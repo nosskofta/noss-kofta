@@ -1460,6 +1460,69 @@ const CashierDashboard = () => {
     return () => clearInterval(ringInterval);
   }, [isAuth, hasNewOrders]);
 
+  // كارت الأوردر (بيتستخدم في القسمين)
+  const renderOrderCard = (ord) => (
+        <div key={ord._id || ord.orderId} className={`bg-[#1C0D10] border rounded-2xl p-5 shadow-xl flex flex-col justify-between ${ord.status === 'completed' ? 'border-[#3A1218]' : ord.status === 'accepted' ? 'border-yellow-500/60' : 'border-red-500 animate-pulse'}`}>
+          <div>
+            <div className="flex justify-between items-center mb-3 border-b border-[#3A1218] pb-2">
+              <span className="font-black text-[#FFD700] text-lg">#{ord.orderId}</span>
+              <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${ord.status === 'completed' ? 'bg-green-500/20 text-green-400' : ord.status === 'accepted' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
+                {ord.status === 'completed' ? 'مكتمل ✅' : ord.status === 'accepted' ? 'قيد التحضير 👨‍🍳' : 'جديد 🔔'}
+              </span>
+            </div>
+
+            <div className="text-sm space-y-1 mb-4 text-zinc-300">
+              <p>👤 <strong className="text-white">{ord.customerName}</strong></p>
+              <p>📞 <strong className="text-white">{ord.customerPhone}</strong></p>
+              <p>📦 <strong className="text-white">{ord.orderType === 'delivery' ? `توصيل (${ord.zoneName})` : 'استلام من الفرع'}</strong></p>
+              {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.customerAddress}</span></p>}
+              {ord.createdAt && <p>🕒 <span className="text-zinc-400 text-xs">{new Date(ord.createdAt).toLocaleString('ar-EG')}</span></p>}
+            </div>
+
+            <div className="bg-[#12080A] p-3 rounded-xl border border-[#3A1218] mb-4 space-y-1.5 max-h-40 overflow-y-auto">
+              {ord.items && ord.items.map((it, idx) => (
+                <div key={idx} className="flex justify-between text-xs">
+                  <span className="text-white font-medium">{it.quantity}× {it.name}</span>
+                  <span className="text-[#FFD700]">{it.price * it.quantity} ج</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex justify-between items-center pt-3 border-t border-[#3A1218] mb-4 text-sm font-bold">
+              <span>الإجمالي:</span>
+              <span className="text-[#FFD700] text-lg font-black">{ord.grandTotal} ج</span>
+            </div>
+
+            <div className="flex gap-2">
+              {ord.status === 'pending' && (
+                <button
+                  onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')}
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl text-sm font-black transition shadow-lg"
+                >
+                  ✅ قبول الأوردر (إيقاف الصوت)
+                </button>
+              )}
+              {ord.status === 'accepted' && (
+                <button
+                  onClick={() => updateOrderStatus(ord._id || ord.orderId, 'completed')}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold transition"
+                >
+                  🏁 إنهاء الأوردر (تم التسليم)
+                </button>
+              )}
+              {ord.status === 'completed' && (
+                <span className="flex-1 text-center text-green-400 text-xs font-bold py-2">تم تسليم الأوردر</span>
+              )}
+            </div>
+          </div>
+        </div>
+  );
+
+  const activeOrders = orders.filter(o => o.status !== 'completed');
+  const doneOrders = orders.filter(o => o.status === 'completed');
+
   if (!isAuth) {
     return (
       <div className="min-h-screen bg-[#12080A] flex items-center justify-center p-4">
@@ -1502,70 +1565,39 @@ const CashierDashboard = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {orders.length === 0 ? (
-          <p className="text-zinc-500 text-center col-span-full py-20 text-xl">لا توجد أوردرات مسجلة في قاعدة البيانات حتى الآن... ⏳</p>
-        ) : (
-          orders.map((ord) => (
-            <div key={ord._id || ord.orderId} className={`bg-[#1C0D10] border rounded-2xl p-5 shadow-xl flex flex-col justify-between ${ord.status === 'completed' ? 'border-[#3A1218]' : ord.status === 'accepted' ? 'border-yellow-500/60' : 'border-red-500 animate-pulse'}`}>
-              <div>
-                <div className="flex justify-between items-center mb-3 border-b border-[#3A1218] pb-2">
-                  <span className="font-black text-[#FFD700] text-lg">#{ord.orderId}</span>
-                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${ord.status === 'completed' ? 'bg-green-500/20 text-green-400' : ord.status === 'accepted' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
-                    {ord.status === 'completed' ? 'مكتمل ✅' : ord.status === 'accepted' ? 'قيد التحضير 👨‍🍳' : 'جديد 🔔'}
-                  </span>
-                </div>
-
-                <div className="text-sm space-y-1 mb-4 text-zinc-300">
-                  <p>👤 <strong className="text-white">{ord.customerName}</strong></p>
-                  <p>📞 <strong className="text-white">{ord.customerPhone}</strong></p>
-                  <p>📦 <strong className="text-white">{ord.orderType === 'delivery' ? `توصيل (${ord.zoneName})` : 'استلام من الفرع'}</strong></p>
-                  {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.customerAddress}</span></p>}
-                  {ord.createdAt && <p>🕒 <span className="text-zinc-400 text-xs">{new Date(ord.createdAt).toLocaleString('ar-EG')}</span></p>}
-                </div>
-
-                <div className="bg-[#12080A] p-3 rounded-xl border border-[#3A1218] mb-4 space-y-1.5 max-h-40 overflow-y-auto">
-                  {ord.items && ord.items.map((it, idx) => (
-                    <div key={idx} className="flex justify-between text-xs">
-                      <span className="text-white font-medium">{it.quantity}× {it.name}</span>
-                      <span className="text-[#FFD700]">{it.price * it.quantity} ج</span>
-                    </div>
-                  ))}
-                </div>
+      {orders.length === 0 ? (
+        <p className="text-zinc-500 text-center py-20 text-xl">لا توجد أوردرات مسجلة في قاعدة البيانات حتى الآن... ⏳</p>
+      ) : (
+        <>
+          {/* ===== الأوردرات النشطة ===== */}
+          <div className="mb-12">
+            <h3 className="text-2xl font-black text-[#FFD700] mb-5 border-r-4 border-red-500 pr-3">
+              🔥 الأوردرات النشطة ({activeOrders.length})
+            </h3>
+            {activeOrders.length === 0 ? (
+              <p className="text-zinc-500 text-center py-10 bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات نشطة حالياً ✨</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {activeOrders.map(renderOrderCard)}
               </div>
+            )}
+          </div>
 
-              <div>
-                <div className="flex justify-between items-center pt-3 border-t border-[#3A1218] mb-4 text-sm font-bold">
-                  <span>الإجمالي:</span>
-                  <span className="text-[#FFD700] text-lg font-black">{ord.grandTotal} ج</span>
-                </div>
-
-                <div className="flex gap-2">
-                  {ord.status === 'pending' && (
-                    <button
-                      onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')}
-                      className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl text-sm font-black transition shadow-lg"
-                    >
-                      ✅ قبول الأوردر (إيقاف الصوت)
-                    </button>
-                  )}
-                  {ord.status === 'accepted' && (
-                    <button
-                      onClick={() => updateOrderStatus(ord._id || ord.orderId, 'completed')}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold transition"
-                    >
-                      🏁 إنهاء الأوردر (تم التسليم)
-                    </button>
-                  )}
-                  {ord.status === 'completed' && (
-                    <span className="flex-1 text-center text-green-400 text-xs font-bold py-2">تم تسليم الأوردر</span>
-                  )}
-                </div>
+          {/* ===== أرشيف الأوردرات المنتهية ===== */}
+          <div>
+            <h3 className="text-2xl font-black text-zinc-300 mb-5 border-r-4 border-green-500 pr-3">
+              📦 أرشيف الأوردرات المنتهية ({doneOrders.length})
+            </h3>
+            {doneOrders.length === 0 ? (
+              <p className="text-zinc-500 text-center py-10 bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات منتهية بعد.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-80">
+                {doneOrders.map(renderOrderCard)}
               </div>
-            </div>
-          ))
-        )}
-      </div>
+            )}
+          </div>
+        </>
+      )}
     </section>
   );
 };
