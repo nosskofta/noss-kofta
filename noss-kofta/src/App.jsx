@@ -1376,7 +1376,6 @@ const CashierDashboard = () => {
   const [orders, setOrders] = useState([]);
 
   const audioCtxRef = useRef(null);
-  const knownIdsRef = useRef(null); // null = أول تحميل (من غير صوت)
 
   // الصوت: 3 نغمات متتالية
   const playBeep = () => {
@@ -1421,12 +1420,6 @@ const CashierDashboard = () => {
       const data = await res.json();
       if (!Array.isArray(data)) return;
 
-      const currentIds = new Set(data.map(o => o._id));
-      if (knownIdsRef.current !== null) {
-        const hasNew = data.some(o => !knownIdsRef.current.has(o._id));
-        if (hasNew) playBeep();
-      }
-      knownIdsRef.current = currentIds;
       setOrders(data);
     } catch (err) {
       console.error(err);
@@ -1454,7 +1447,18 @@ const CashierDashboard = () => {
     }
   };
 
-  const pendingCount = orders.filter(o => o.status !== 'completed').length;
+  // pending = جديد (لسه ماتقبلش) | accepted = اتقبل وقيد التحضير | completed = مكتمل
+  const newCount = orders.filter(o => o.status === 'pending').length;
+  const preparingCount = orders.filter(o => o.status === 'accepted').length;
+  const hasNewOrders = newCount > 0;
+
+  // الصوت يفضل يرن لحد ما كل الأوردرات الجديدة تتقبل
+  useEffect(() => {
+    if (!isAuth || !hasNewOrders) return;
+    playBeep();
+    const ringInterval = setInterval(playBeep, 2500);
+    return () => clearInterval(ringInterval);
+  }, [isAuth, hasNewOrders]);
 
   if (!isAuth) {
     return (
@@ -1481,9 +1485,14 @@ const CashierDashboard = () => {
       <div className="flex flex-wrap gap-3 justify-between items-center mb-8 border-b border-[#3A1218] pb-4">
         <h2 className="text-3xl font-bold text-[#FFD700]">
           🖥️ شاشة الكاشير
-          {pendingCount > 0 && (
+          {newCount > 0 && (
             <span className="bg-red-600 text-white text-base px-3 py-1 rounded-full mr-3 animate-pulse">
-              {pendingCount} قيد التنفيذ
+              🔔 {newCount} جديد
+            </span>
+          )}
+          {preparingCount > 0 && (
+            <span className="bg-yellow-500/20 text-yellow-400 text-base px-3 py-1 rounded-full mr-2">
+              {preparingCount} قيد التحضير
             </span>
           )}
         </h2>
@@ -1498,12 +1507,12 @@ const CashierDashboard = () => {
           <p className="text-zinc-500 text-center col-span-full py-20 text-xl">لا توجد أوردرات مسجلة في قاعدة البيانات حتى الآن... ⏳</p>
         ) : (
           orders.map((ord) => (
-            <div key={ord._id || ord.orderId} className={`bg-[#1C0D10] border rounded-2xl p-5 shadow-xl flex flex-col justify-between ${ord.status === 'completed' ? 'border-[#3A1218]' : 'border-yellow-500/60'}`}>
+            <div key={ord._id || ord.orderId} className={`bg-[#1C0D10] border rounded-2xl p-5 shadow-xl flex flex-col justify-between ${ord.status === 'completed' ? 'border-[#3A1218]' : ord.status === 'accepted' ? 'border-yellow-500/60' : 'border-red-500 animate-pulse'}`}>
               <div>
                 <div className="flex justify-between items-center mb-3 border-b border-[#3A1218] pb-2">
                   <span className="font-black text-[#FFD700] text-lg">#{ord.orderId}</span>
-                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${ord.status === 'completed' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                    {ord.status === 'completed' ? 'مكتمل ✅' : 'قيد التنفيذ ⏳'}
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${ord.status === 'completed' ? 'bg-green-500/20 text-green-400' : ord.status === 'accepted' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
+                    {ord.status === 'completed' ? 'مكتمل ✅' : ord.status === 'accepted' ? 'قيد التحضير 👨‍🍳' : 'جديد 🔔'}
                   </span>
                 </div>
 
@@ -1532,18 +1541,25 @@ const CashierDashboard = () => {
                 </div>
 
                 <div className="flex gap-2">
-                  <button 
-                    onClick={() => updateOrderStatus(ord._id || ord.orderId, 'completed')}
-                    className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-xl text-xs font-bold transition"
-                  >
-                    إنهاء الأوردر ✅
-                  </button>
-                  <button 
-                    onClick={() => updateOrderStatus(ord._id || ord.orderId, 'pending')}
-                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-2 rounded-xl text-xs font-bold transition"
-                  >
-                    معلق ⏳
-                  </button>
+                  {ord.status === 'pending' && (
+                    <button
+                      onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')}
+                      className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl text-sm font-black transition shadow-lg"
+                    >
+                      ✅ قبول الأوردر (إيقاف الصوت)
+                    </button>
+                  )}
+                  {ord.status === 'accepted' && (
+                    <button
+                      onClick={() => updateOrderStatus(ord._id || ord.orderId, 'completed')}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold transition"
+                    >
+                      🏁 إنهاء الأوردر (تم التسليم)
+                    </button>
+                  )}
+                  {ord.status === 'completed' && (
+                    <span className="flex-1 text-center text-green-400 text-xs font-bold py-2">تم تسليم الأوردر</span>
+                  )}
                 </div>
               </div>
             </div>
