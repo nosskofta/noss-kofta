@@ -189,6 +189,26 @@ const settingsSchema = new mongoose.Schema({
 const Settings = mongoose.model("Settings", settingsSchema);
 
 // =========================
+// Orders (شاشة الكاشير)
+// =========================
+const orderSchema = new mongoose.Schema({
+  orderId: { type: String, required: true, unique: true },
+  customerName: { type: String, required: true },
+  customerPhone: { type: String, required: true },
+  orderType: { type: String, required: true },
+  customerAddress: { type: String },
+  zoneName: { type: String },
+  deliveryFee: { type: Number, default: 0 },
+  items: { type: Array, required: true },
+  itemsTotal: { type: Number, required: true },
+  grandTotal: { type: Number, required: true },
+  status: { type: String, default: "pending" },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Order = mongoose.model("Order", orderSchema);
+
+// =========================
 // SETTINGS
 // =========================
 
@@ -499,6 +519,51 @@ app.delete("/api/items/:id", async (req, res) => {
     res.status(500).json({
       error: err.message
     });
+  }
+});
+
+// =========================
+// ORDERS (شاشة الكاشير)
+// =========================
+
+// استقبال وحفظ أوردر جديد
+app.post("/api/orders", async (req, res) => {
+  try {
+    const newOrder = new Order(req.body);
+    const savedOrder = await newOrder.save();
+    console.log(`✅ New order saved: #${savedOrder.orderId}`);
+    res.status(201).json(savedOrder);
+  } catch (err) {
+    console.error("❌ Save order error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// جلب كل الأوردرات لشاشة الكاشير
+app.get("/api/orders", async (req, res) => {
+  try {
+    const orders = await Order.find().sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// تحديث حالة الأوردر (مكتمل / قيد التنفيذ)
+app.put("/api/orders/:id", async (req, res) => {
+  try {
+    const query = mongoose.Types.ObjectId.isValid(req.params.id)
+      ? { $or: [{ _id: req.params.id }, { orderId: req.params.id }] }
+      : { orderId: req.params.id };
+
+    const updatedOrder = await Order.findOneAndUpdate(
+      query,
+      { status: req.body.status },
+      { new: true }
+    );
+    res.json(updatedOrder);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
