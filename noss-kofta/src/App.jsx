@@ -1374,6 +1374,7 @@ const CashierDashboard = () => {
   const [isAuth, setIsAuth] = useState(false);
   const [passInput, setPassInput] = useState('');
   const [orders, setOrders] = useState([]);
+  const [cashierTab, setCashierTab] = useState('active'); // active | archive
 
   const audioCtxRef = useRef(null);
 
@@ -1565,38 +1566,48 @@ const CashierDashboard = () => {
         </div>
       </div>
 
-      {orders.length === 0 ? (
-        <p className="text-zinc-500 text-center py-20 text-xl">لا توجد أوردرات مسجلة في قاعدة البيانات حتى الآن... ⏳</p>
-      ) : (
-        <>
-          {/* ===== الأوردرات النشطة ===== */}
-          <div className="mb-12">
-            <h3 className="text-2xl font-black text-[#FFD700] mb-5 border-r-4 border-red-500 pr-3">
-              🔥 الأوردرات النشطة ({activeOrders.length})
-            </h3>
-            {activeOrders.length === 0 ? (
-              <p className="text-zinc-500 text-center py-10 bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات نشطة حالياً ✨</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {activeOrders.map(renderOrderCard)}
-              </div>
-            )}
-          </div>
+      {/* ===== التابات: النشطة / الأرشيف ===== */}
+      <div className="flex gap-3 mb-8">
+        <button
+          type="button"
+          onClick={() => setCashierTab('active')}
+          className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-black text-base transition border ${
+            cashierTab === 'active'
+              ? 'bg-[#800020] text-white border-[#FFD700] shadow-[0_0_15px_rgba(128,0,32,0.5)]'
+              : 'bg-[#1C0D10] text-zinc-300 border-[#3A1218] hover:border-[#800020]'
+          }`}
+        >
+          🔥 الأوردرات النشطة ({activeOrders.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setCashierTab('archive')}
+          className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-black text-base transition border ${
+            cashierTab === 'archive'
+              ? 'bg-[#800020] text-white border-[#FFD700] shadow-[0_0_15px_rgba(128,0,32,0.5)]'
+              : 'bg-[#1C0D10] text-zinc-300 border-[#3A1218] hover:border-[#800020]'
+          }`}
+        >
+          📦 أرشيف الأوردرات المنتهية ({doneOrders.length})
+        </button>
+      </div>
 
-          {/* ===== أرشيف الأوردرات المنتهية ===== */}
-          <div>
-            <h3 className="text-2xl font-black text-zinc-300 mb-5 border-r-4 border-green-500 pr-3">
-              📦 أرشيف الأوردرات المنتهية ({doneOrders.length})
-            </h3>
-            {doneOrders.length === 0 ? (
-              <p className="text-zinc-500 text-center py-10 bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات منتهية بعد.</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-80">
-                {doneOrders.map(renderOrderCard)}
-              </div>
-            )}
+      {cashierTab === 'active' ? (
+        activeOrders.length === 0 ? (
+          <p className="text-zinc-500 text-center py-20 text-xl bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات نشطة حالياً ✨</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {activeOrders.map(renderOrderCard)}
           </div>
-        </>
+        )
+      ) : (
+        doneOrders.length === 0 ? (
+          <p className="text-zinc-500 text-center py-20 text-xl bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات منتهية بعد.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-90">
+            {doneOrders.map(renderOrderCard)}
+          </div>
+        )
       )}
     </section>
   );
