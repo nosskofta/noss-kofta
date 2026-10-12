@@ -203,9 +203,16 @@ const hashPassword = (password) => {
 };
 
 const verifyPassword = (password, stored) => {
-  const [salt, hash] = stored.split(":");
-  const test = crypto.scryptSync(password, salt, 64);
-  return crypto.timingSafeEqual(Buffer.from(hash, "hex"), test);
+  try {
+    if (typeof stored !== "string") return false;
+    const [salt, hash] = stored.split(":");
+    if (!salt || !hash || !/^[0-9a-f]{128}$/i.test(hash)) return false;
+    const expected = Buffer.from(hash, "hex");
+    const test = crypto.scryptSync(String(password), salt, 64);
+    return expected.length === test.length && crypto.timingSafeEqual(expected, test);
+  } catch {
+    return false;
+  }
 };
 
 const signToken = (payload) => {
@@ -242,11 +249,8 @@ async function seedAdmin() {
     const existingAdmin = await Staff.findOne({ username });
     
     if (existingAdmin) {
-      existingAdmin.password = hashPassword(password);
-      existingAdmin.role = "admin";
-      existingAdmin.active = true;
-      await existingAdmin.save();
-      console.log("✅ تم تحديث باسورد الأدمن بنجاح إلى: 123456");
+      // لا تغيّر كلمة المرور في كل Restart/Deploy حتى لا تتعطل حسابات الإدارة.
+      console.log("ℹ️ حساب الأدمن موجود بالفعل؛ تم الحفاظ على بياناته.");
     } else {
       await Staff.create({
         name: "المدير",
@@ -569,7 +573,11 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
       update.completedAt = new Date();
     }
 
+    if (!req.body.status || !["pending", "accepted", "completed"].includes(req.body.status)) {
+      return res.status(400).json({ error: "حالة الأوردر غير صحيحة" });
+    }
     const updatedOrder = await Order.findOneAndUpdate(query, update, { new: true });
+    if (!updatedOrder) return res.status(404).json({ error: "الأوردر غير موجود" });
     res.json(updatedOrder);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -583,6 +591,14 @@ app.delete("/api/orders/:id", requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// فحص سريع لمعرفة هل الـ API وقاعدة البيانات شغالين
+app.get("/api/health", (req, res) => {
+  res.status(mongoose.connection.readyState === 1 ? 200 : 503).json({
+    ok: mongoose.connection.readyState === 1,
+    database: mongoose.connection.readyState === 1 ? "connected" : "disconnected"
+  });
 });
 
 // =========================
