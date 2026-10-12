@@ -271,37 +271,32 @@ const verifyToken = (token) => {
   }
 };
 
-// بيعمل حساب الأدمن أو يحدّث الباسورد بتاعه لو موجود
+// دالة إنشاء أو تحديث حساب الأدمن بكلمة مرور ثابتة ومضمونة للتجربة
 async function seedAdmin() {
   try {
-    const username = (process.env.ADMIN_USERNAME || "admin").toLowerCase();
-    const password = process.env.ADMIN_PASSWORD;
-    
-    if (!password) {
-      console.error("❌ ADMIN_PASSWORD غير موجود في Environment Variables");
-      return;
-    }
+    const username = "admin";
+    const password = "123456"; // الباسورد اللي هندخل بيه دلوقتي
 
-    const adminUser = await Staff.findOne({ role: "admin" });
+    const existingAdmin = await Staff.findOne({ username });
     
-    if (adminUser) {
-      // لو الحساب موجود، هنحدث الباسورد واليوزر باللي مكتوب في Railway
-      adminUser.password = hashPassword(password);
-      adminUser.username = username;
-      await adminUser.save();
-      console.log(`✅ تم تحديث بيانات الأدمن بنجاح: ${username}`);
+    if (existingAdmin) {
+      existingAdmin.password = hashPassword(password);
+      existingAdmin.role = "admin";
+      existingAdmin.active = true;
+      await existingAdmin.save();
+      console.log("✅ تم تحديث باسورد الأدمن بنجاح إلى: 123456");
     } else {
-      // لو مش موجود هنعمله من الصفر
       await Staff.create({
         name: "المدير",
         username,
         password: hashPassword(password),
-        role: "admin"
+        role: "admin",
+        active: true
       });
-      console.log(`✅ تم إنشاء حساب الأدمن: ${username}`);
+      console.log("✅ تم إنشاء حساب الأدمن الجديد بنجاح (الباسورد: 123456)");
     }
   } catch (err) {
-    console.error("❌ seedAdmin error:", err);
+    console.error("❌ خطأ في سكريبت الأدمن:", err);
   }
 }
 
