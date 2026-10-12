@@ -271,24 +271,35 @@ const verifyToken = (token) => {
   }
 };
 
-// بيعمل حساب الأدمن أول مرة بس
+// بيعمل حساب الأدمن أو يحدّث الباسورد بتاعه لو موجود
 async function seedAdmin() {
   try {
-    const exists = await Staff.findOne({ role: "admin" });
-    if (exists) return;
     const username = (process.env.ADMIN_USERNAME || "admin").toLowerCase();
     const password = process.env.ADMIN_PASSWORD;
+    
     if (!password) {
-      console.error("❌ ADMIN_PASSWORD غير موجود في Environment Variables - مفيش أدمن اتعمل");
+      console.error("❌ ADMIN_PASSWORD غير موجود في Environment Variables");
       return;
     }
-    await Staff.create({
-      name: "المدير",
-      username,
-      password: hashPassword(password),
-      role: "admin"
-    });
-    console.log(`✅ تم إنشاء حساب الأدمن: ${username}`);
+
+    const adminUser = await Staff.findOne({ role: "admin" });
+    
+    if (adminUser) {
+      // لو الحساب موجود، هنحدث الباسورد واليوزر باللي مكتوب في Railway
+      adminUser.password = hashPassword(password);
+      adminUser.username = username;
+      await adminUser.save();
+      console.log(`✅ تم تحديث بيانات الأدمن بنجاح: ${username}`);
+    } else {
+      // لو مش موجود هنعمله من الصفر
+      await Staff.create({
+        name: "المدير",
+        username,
+        password: hashPassword(password),
+        role: "admin"
+      });
+      console.log(`✅ تم إنشاء حساب الأدمن: ${username}`);
+    }
   } catch (err) {
     console.error("❌ seedAdmin error:", err);
   }
