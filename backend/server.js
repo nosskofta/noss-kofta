@@ -270,18 +270,6 @@ async function seedAdmin() {
 // MongoDB Connection
 // =========================
 const MONGO_URI = process.env.MONGO_URI;
-
-if (!MONGO_URI) {
-  console.error("❌ MONGO_URI غير موجود في Environment Variables");
-} else {
-  mongoose
-    .connect(MONGO_URI)
-    .then(async () => {
-      console.log("🔥 تم الاتصال بقاعدة البيانات MongoDB بنجاح!");
-      await seedAdmin(); // 👈 دي اللي بتنشئ أو تحدث بيانات الأدمن في قاعدة البيانات
-    })
-    .catch((err) => console.log("❌ خطأ في الاتصال:", err));
-}
 // Middlewares
 const requireAuth = async (req, res, next) => {
   try {
@@ -602,10 +590,40 @@ app.get("/api/health", (req, res) => {
 });
 
 // =========================
-// SERVER
+// SERVER + DATABASE STARTUP
 // =========================
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 السيرفر شغال ومفتوح للجميع على البورت ${PORT}`);
-});
+async function startServer() {
+  if (!MONGO_URI) {
+    console.error("❌ MONGO_URI غير موجود في Environment Variables على Railway");
+    process.exit(1);
+  }
+
+  try {
+    await mongoose.connect(MONGO_URI, {
+      serverSelectionTimeoutMS: 15000,
+    });
+
+    console.log("✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح");
+
+    mongoose.connection.on("disconnected", () => {
+      console.error("❌ اتصال MongoDB انقطع");
+    });
+
+    mongoose.connection.on("error", (err) => {
+      console.error("❌ MongoDB error:", err.message);
+    });
+
+    await seedAdmin();
+
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 السيرفر شغال على البورت ${PORT}`);
+    });
+  } catch (err) {
+    console.error("❌ فشل الاتصال بقاعدة بيانات MongoDB:", err.message);
+    process.exit(1);
+  }
+}
+
+startServer();
