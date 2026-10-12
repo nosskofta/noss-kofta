@@ -274,11 +274,10 @@ if (!MONGO_URI) {
     .connect(MONGO_URI)
     .then(async () => {
       console.log("🔥 تم الاتصال بقاعدة البيانات MongoDB بنجاح!");
-      await seedAdmin();
+      await seedAdmin(); // 👈 دي اللي بتنشئ أو تحدث بيانات الأدمن في قاعدة البيانات
     })
     .catch((err) => console.log("❌ خطأ في الاتصال:", err));
 }
-
 // Middlewares
 const requireAuth = async (req, res, next) => {
   try {
