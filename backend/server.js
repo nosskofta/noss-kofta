@@ -2,10 +2,15 @@ import express from 'express';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import { promisify } from 'util';
 
 dotenv.config();
 
+const scrypt = promisify(crypto.scrypt);
 const app = express();
+
+// Railway شغال ورا proxy، ده عشان نعرف IP الزبون الحقيقي (بنستخدمه في الحماية من التكرار)
+app.set('trust proxy', 1);
 
 // =========================
 // CORS
@@ -183,7 +188,27 @@ const Order = mongoose.model("Order", orderSchema);
 // =========================
 // AUTH (الكاشير / الأدمن)
 // =========================
-const AUTH_SECRET = process.env.AUTH_SECRET || "change-me-please";
+// الأدمن: اليوزر "admin" والباسورد من متغير ADMIN_PASSWORD في Railway (مش مكتوب في الكود).
+// الكاشيرات: حسابات في الداتابيز بيعملها الأدمن من شاشة الكاشير.
+const AUTH_SECRET = process.env.AUTH_SECRET || "";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const ADMIN_USERNAME = "admin";
+
+const authReady = AUTH_SECRET.length >= 24 && ADMIN_PASSWORD.length >= 8;
+
+if (!authReady) {
+  console.error(
+    "⚠️ نظام الدخول مقفول: لازم تضيف AUTH_SECRET (24 حرف أو أكتر) و ADMIN_PASSWORD (8 حروف أو أكتر) في Variables بتاعة Railway. الموقع والمنيو شغالين عادي، بس شاشة الكاشير ولوحة الإدارة مش هيفتحوا."
+  );
+}
+
+const ADMIN_TOKEN_TTL = 12 * 60 * 60 * 1000; // 12 ساعة
+const CASHIER_TOKEN_TTL = 14 * 24 * 60 * 60 * 1000; // 14 يوم (وممكن الأدمن يوقف الحساب في أي لحظة)
+
+// بصمة بتتغير لو الأدمن غيّر ADMIN_PASSWORD أو AUTH_SECRET، فتوكنات الأدمن القديمة تبطل فوراً
+const adminStamp = authReady
+  ? crypto.createHmac("sha256", AUTH_SECRET).update(`admin:${ADMIN_PASSWORD}`).digest("hex").slice(0, 16)
+  : "";
 
 const staffSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -196,28 +221,37 @@ const staffSchema = new mongoose.Schema({
 
 const Staff = mongoose.model("Staff", staffSchema);
 
-const hashPassword = (password) => {
+const hashPassword = async (password) => {
   const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
+  const key = await scrypt(String(password), salt, 64);
+  return `${salt}:${key.toString("hex")}`;
 };
 
-const verifyPassword = (password, stored) => {
+// بيتستخدم لما اليوزر مش موجود، عشان وقت الرد يفضل ثابت ومحدش يعرف إذا كان اليوزر موجود ولا لأ
+const DUMMY_HASH = `${"0".repeat(32)}:${"0".repeat(128)}`;
+
+const verifyPassword = async (password, stored) => {
   try {
     if (typeof stored !== "string") return false;
     const [salt, hash] = stored.split(":");
     if (!salt || !hash || !/^[0-9a-f]{128}$/i.test(hash)) return false;
     const expected = Buffer.from(hash, "hex");
-    const test = crypto.scryptSync(String(password), salt, 64);
+    const test = await scrypt(String(password), salt, 64);
     return expected.length === test.length && crypto.timingSafeEqual(expected, test);
   } catch {
     return false;
   }
 };
 
-const signToken = (payload) => {
+const safeEqual = (a, b) => {
+  const ha = crypto.createHash("sha256").update(String(a)).digest();
+  const hb = crypto.createHash("sha256").update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+};
+
+const signToken = (payload, ttlMs) => {
   const body = Buffer.from(
-    JSON.stringify({ ...payload, exp: Date.now() + 12 * 60 * 60 * 1000 })
+    JSON.stringify({ ...payload, exp: Date.now() + ttlMs })
   ).toString("base64url");
   const sig = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("base64url");
   return `${body}.${sig}`;
@@ -225,61 +259,82 @@ const signToken = (payload) => {
 
 const verifyToken = (token) => {
   try {
+    if (typeof token !== "string") return null;
     const [body, sig] = token.split(".");
+    if (!body || !sig) return null;
     const expected = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("base64url");
     if (
-      !sig ||
       sig.length !== expected.length ||
       !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
     ) return null;
     const payload = JSON.parse(Buffer.from(body, "base64url").toString());
-    if (payload.exp < Date.now()) return null;
+    if (!payload.exp || payload.exp < Date.now()) return null;
     return payload;
   } catch {
     return null;
   }
 };
 
-// دالة إنشاء الأدمن التلقائية
-async function seedAdmin() {
-  try {
-    const username = "admin";
-    const password = "123456";
+// ---------- حماية من التخمين والطلبات المتكررة ----------
+const buckets = new Map();
 
-    const existingAdmin = await Staff.findOne({ username });
-    
-    if (existingAdmin) {
-      // لا تغيّر كلمة المرور في كل Restart/Deploy حتى لا تتعطل حسابات الإدارة.
-      console.log("ℹ️ حساب الأدمن موجود بالفعل؛ تم الحفاظ على بياناته.");
-    } else {
-      await Staff.create({
-        name: "المدير",
-        username,
-        password: hashPassword(password),
-        role: "admin",
-        active: true
-      });
-      console.log("✅ تم إنشاء حساب الأدمن الجديد بنجاح (الباسورد: 123456)");
-    }
-  } catch (err) {
-    console.error("❌ خطأ في سكريبت الأدمن:", err);
+const hitBucket = (key, windowMs) => {
+  const now = Date.now();
+  let bucket = buckets.get(key);
+  if (!bucket || bucket.reset < now) {
+    bucket = { count: 0, reset: now + windowMs };
+    buckets.set(key, bucket);
   }
-}
+  bucket.count += 1;
+  return bucket;
+};
 
-// =========================
-// MongoDB Connection
-// =========================
-const MONGO_URI = process.env.MONGO_URI;
-// Middlewares
+const peekBucket = (key) => {
+  const bucket = buckets.get(key);
+  return bucket && bucket.reset > Date.now() ? bucket : null;
+};
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of buckets) {
+    if (bucket.reset < now) buckets.delete(key);
+  }
+}, 60 * 1000).unref();
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const MAX_LOGIN_FAILS_PER_USER = 8;
+const MAX_LOGIN_FAILS_PER_IP = 30;
+
+const orderLimiter = (req, res, next) => {
+  const bucket = hitBucket(`order:${req.ip}`, 10 * 60 * 1000);
+  if (bucket.count > 15) {
+    return res.status(429).json({ error: "طلبات كتير في وقت قصير، حاول بعد شوية" });
+  }
+  next();
+};
+
+// ---------- Middlewares ----------
 const requireAuth = async (req, res, next) => {
   try {
+    if (!authReady) {
+      return res.status(503).json({ error: "نظام الدخول لسه مش متظبط على السيرفر" });
+    }
+
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : null;
     const payload = token ? verifyToken(token) : null;
     if (!payload) return res.status(401).json({ error: "غير مصرح" });
 
+    if (payload.role === "admin") {
+      if (payload.s !== adminStamp) return res.status(401).json({ error: "غير مصرح" });
+      req.user = { _id: "admin", name: "المدير", username: ADMIN_USERNAME, role: "admin" };
+      return next();
+    }
+
     const user = await Staff.findById(payload.id);
-    if (!user || !user.active) return res.status(401).json({ error: "الحساب غير مفعل" });
+    if (!user || !user.active || user.role !== "cashier") {
+      return res.status(401).json({ error: "الحساب غير مفعل" });
+    }
 
     req.user = user;
     next();
@@ -295,31 +350,68 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-// تسجيل الدخول
+// ---------- تسجيل الدخول ----------
 app.post("/api/auth/login", async (req, res) => {
   try {
-    const username = String(req.body.username || "").toLowerCase().trim();
-    const password = String(req.body.password || "");
+    if (!authReady) {
+      return res.status(503).json({ error: "نظام الدخول لسه مش متظبط على السيرفر" });
+    }
 
-    const user = await Staff.findOne({ username });
-    if (!user || !user.active || !verifyPassword(password, user.password)) {
+    const username = String(req.body?.username || "").toLowerCase().trim();
+    const password = String(req.body?.password || "");
+
+    if (!username || !password || password.length > 200) {
+      return res.status(400).json({ error: "اكتب اليوزر والباسورد" });
+    }
+
+    const userKey = `login:${req.ip}:${username}`;
+    const ipKey = `loginip:${req.ip}`;
+    if (
+      (peekBucket(userKey)?.count || 0) >= MAX_LOGIN_FAILS_PER_USER ||
+      (peekBucket(ipKey)?.count || 0) >= MAX_LOGIN_FAILS_PER_IP
+    ) {
+      return res.status(429).json({ error: "محاولات غلط كتير، استنى 15 دقيقة وحاول تاني" });
+    }
+
+    let session = null;
+
+    if (username === ADMIN_USERNAME) {
+      if (safeEqual(password, ADMIN_PASSWORD)) {
+        session = {
+          token: signToken({ id: "admin", role: "admin", s: adminStamp }, ADMIN_TOKEN_TTL),
+          user: { id: "admin", name: "المدير", username: ADMIN_USERNAME, role: "admin" }
+        };
+      }
+    } else {
+      const staff = await Staff.findOne({ username, role: "cashier" });
+      const passwordOk = await verifyPassword(password, staff ? staff.password : DUMMY_HASH);
+      if (staff && passwordOk && staff.active) {
+        session = {
+          token: signToken({ id: String(staff._id), role: "cashier" }, CASHIER_TOKEN_TTL),
+          user: { id: staff._id, name: staff.name, username: staff.username, role: "cashier" }
+        };
+      }
+    }
+
+    if (!session) {
+      hitBucket(userKey, LOGIN_WINDOW_MS);
+      hitBucket(ipKey, LOGIN_WINDOW_MS);
       return res.status(401).json({ error: "اليوزر أو الباسورد غلط" });
     }
 
-    const token = signToken({ id: user._id });
-    res.json({
-      token,
-      user: { id: user._id, name: user.name, username: user.username, role: user.role }
-    });
+    buckets.delete(userKey);
+    res.json(session);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// إدارة الموظفين
+// ---------- إدارة الكاشيرات (للأدمن فقط) ----------
+const USERNAME_RE = /^[a-z0-9_.-]{3,30}$/;
+
 app.get("/api/staff", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const staff = await Staff.find().select("-password").sort({ createdAt: 1 });
+    const staff = await Staff.find({ role: "cashier" }).select("-password").sort({ createdAt: 1 });
     res.json(staff);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -328,16 +420,28 @@ app.get("/api/staff", requireAuth, requireAdmin, async (req, res) => {
 
 app.post("/api/staff", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { name, username, password } = req.body;
-    if (!name || !username || !password || String(password).length < 4) {
-      return res.status(400).json({ error: "الاسم واليوزر والباسورد مطلوبين" });
+    const name = String(req.body?.name || "").trim().slice(0, 50);
+    const username = String(req.body?.username || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+
+    if (!name) return res.status(400).json({ error: "اكتب اسم الكاشير" });
+    if (!USERNAME_RE.test(username)) {
+      return res.status(400).json({ error: "اسم المستخدم لازم يكون إنجليزي وأرقام (من 3 لـ 30 حرف) من غير مسافات" });
     }
+    if (username === ADMIN_USERNAME) {
+      return res.status(400).json({ error: "اسم المستخدم ده محجوز" });
+    }
+    if (password.length < 6 || password.length > 100) {
+      return res.status(400).json({ error: "الباسورد لازم يكون 6 حروف أو أرقام على الأقل" });
+    }
+
     const created = await Staff.create({
-      name: String(name).trim(),
-      username: String(username).trim(),
-      password: hashPassword(String(password)),
+      name,
+      username,
+      password: await hashPassword(password),
       role: "cashier"
     });
+
     res.status(201).json({
       _id: created._id,
       name: created.name,
@@ -353,16 +457,28 @@ app.post("/api/staff", requireAuth, requireAdmin, async (req, res) => {
 
 app.put("/api/staff/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const update = {};
-    if (req.body.password) {
-      update.password = hashPassword(String(req.body.password));
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "رقم الحساب غير صحيح" });
     }
-    if (typeof req.body.active === "boolean") {
+
+    const update = {};
+    if (req.body?.password !== undefined) {
+      const password = String(req.body.password);
+      if (password.length < 6 || password.length > 100) {
+        return res.status(400).json({ error: "الباسورد لازم يكون 6 حروف أو أرقام على الأقل" });
+      }
+      update.password = await hashPassword(password);
+    }
+    if (typeof req.body?.active === "boolean") {
       update.active = req.body.active;
     }
-    if (req.body.name) update.name = String(req.body.name).trim();
+    if (req.body?.name) update.name = String(req.body.name).trim().slice(0, 50);
 
-    const updated = await Staff.findByIdAndUpdate(req.params.id, update, { new: true }).select("-password");
+    const updated = await Staff
+      .findOneAndUpdate({ _id: req.params.id, role: "cashier" }, update, { new: true })
+      .select("-password");
+
+    if (!updated) return res.status(404).json({ error: "الحساب غير موجود" });
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -371,14 +487,19 @@ app.put("/api/staff/:id", requireAuth, requireAdmin, async (req, res) => {
 
 app.delete("/api/staff/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
-    await Staff.findByIdAndDelete(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "رقم الحساب غير صحيح" });
+    }
+    await Staff.findOneAndDelete({ _id: req.params.id, role: "cashier" });
     res.json({ message: "تم المسح" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// SETTINGS & ZONES & CATEGORIES & ITEMS & ORDERS ROUTES (كما هي)
+// =========================
+// SETTINGS (القراءة للكل - التعديل للأدمن فقط)
+// =========================
 app.get("/api/settings", async (req, res) => {
   try {
     let settings = await Settings.findOne();
@@ -389,7 +510,7 @@ app.get("/api/settings", async (req, res) => {
   }
 });
 
-app.put("/api/settings", async (req, res) => {
+app.put("/api/settings", requireAuth, requireAdmin, async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) {
@@ -408,6 +529,9 @@ app.put("/api/settings", async (req, res) => {
   }
 });
 
+// =========================
+// DELIVERY ZONES (القراءة للكل - التعديل للأدمن فقط)
+// =========================
 app.get("/api/zones", async (req, res) => {
   try {
     const zones = await DeliveryZone.find();
@@ -417,7 +541,7 @@ app.get("/api/zones", async (req, res) => {
   }
 });
 
-app.post("/api/zones", async (req, res) => {
+app.post("/api/zones", requireAuth, requireAdmin, async (req, res) => {
   try {
     const newZone = new DeliveryZone(req.body);
     const savedZone = await newZone.save();
@@ -427,7 +551,7 @@ app.post("/api/zones", async (req, res) => {
   }
 });
 
-app.delete("/api/zones/:id", async (req, res) => {
+app.delete("/api/zones/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     await DeliveryZone.findByIdAndDelete(req.params.id);
     res.json({ message: "تم مسح المنطقة بنجاح" });
@@ -436,6 +560,9 @@ app.delete("/api/zones/:id", async (req, res) => {
   }
 });
 
+// =========================
+// CATEGORIES (القراءة للكل - التعديل للأدمن فقط)
+// =========================
 app.get("/api/categories", async (req, res) => {
   try {
     const cats = await Category.find().sort({ order: 1, _id: 1 });
@@ -445,7 +572,7 @@ app.get("/api/categories", async (req, res) => {
   }
 });
 
-app.post("/api/categories", async (req, res) => {
+app.post("/api/categories", requireAuth, requireAdmin, async (req, res) => {
   try {
     const count = await Category.countDocuments();
     const newCat = new Category({ ...req.body, order: count });
@@ -456,7 +583,7 @@ app.post("/api/categories", async (req, res) => {
   }
 });
 
-app.put("/api/categories/:id", async (req, res) => {
+app.put("/api/categories/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const updatedCat = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
     res.json(updatedCat);
@@ -465,7 +592,7 @@ app.put("/api/categories/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/categories/:id", async (req, res) => {
+app.delete("/api/categories/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     await Category.findByIdAndDelete(req.params.id);
     res.json({ message: "تم مسح القسم بنجاح" });
@@ -474,6 +601,9 @@ app.delete("/api/categories/:id", async (req, res) => {
   }
 });
 
+// =========================
+// ITEMS (القراءة للكل - التعديل للأدمن فقط)
+// =========================
 app.get("/api/items", async (req, res) => {
   try {
     const items = await Item.find().sort({ order: 1, _id: 1 });
@@ -483,7 +613,7 @@ app.get("/api/items", async (req, res) => {
   }
 });
 
-app.post("/api/items", async (req, res) => {
+app.post("/api/items", requireAuth, requireAdmin, async (req, res) => {
   try {
     const count = await Item.countDocuments({ category: req.body.category });
     const discountValue = Number(req.body.discount) || 0;
@@ -505,7 +635,7 @@ app.post("/api/items", async (req, res) => {
   }
 });
 
-app.put("/api/items/:id", async (req, res) => {
+app.put("/api/items/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const discountValue = Number(req.body.discount) || 0;
     const updateData = { ...req.body, price: Number(req.body.price), discount: discountValue };
@@ -517,7 +647,7 @@ app.put("/api/items/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/items/:id", async (req, res) => {
+app.delete("/api/items/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     await Item.findByIdAndDelete(req.params.id);
     res.json({ message: "تم مسح الصنف بنجاح" });
@@ -526,16 +656,88 @@ app.delete("/api/items/:id", async (req, res) => {
   }
 });
 
-app.post("/api/orders", async (req, res) => {
+// =========================
+// ORDERS
+// =========================
+const cleanText = (value, max) => String(value ?? "").trim().slice(0, max);
+
+const clampNumber = (value, min, max) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return min;
+  return Math.min(Math.max(n, min), max);
+};
+
+// بنبني الأوردر بأنفسنا من الحقول المسموحة بس (الحالة والتاريخ والإجمالي بيتحددوا هنا مش من الزبون)
+const buildOrderFromBody = (body = {}, zoneFee = null) => {
+  const orderId = cleanText(body.orderId, 30);
+  if (!/^[A-Za-z0-9-]{4,30}$/.test(orderId)) return { error: "رقم الأوردر غير صحيح" };
+
+  const customerName = cleanText(body.customerName, 80);
+  if (!customerName) return { error: "الاسم مطلوب" };
+
+  const customerPhone = cleanText(body.customerPhone, 20);
+  if (!/^\+?\d{8,15}$/.test(customerPhone)) return { error: "رقم التليفون غير صحيح" };
+
+  const orderType = body.orderType === "delivery" ? "delivery" : body.orderType === "pickup" ? "pickup" : null;
+  if (!orderType) return { error: "نوع الاستلام غير صحيح" };
+
+  const rawItems = Array.isArray(body.items) ? body.items.slice(0, 60) : [];
+  const items = rawItems
+    .map((it) => ({
+      name: cleanText(it?.name, 200),
+      price: clampNumber(it?.price, 0, 100000),
+      quantity: Math.round(clampNumber(it?.quantity, 1, 99))
+    }))
+    .filter((it) => it.name);
+  if (items.length === 0) return { error: "الأوردر فاضي" };
+
+  const itemsTotal = items.reduce((sum, it) => sum + it.price * it.quantity, 0);
+  const deliveryFee = orderType === "delivery"
+    ? (zoneFee !== null ? zoneFee : clampNumber(body.deliveryFee, 0, 500))
+    : 0;
+
+  return {
+    order: {
+      orderId,
+      customerName,
+      customerPhone,
+      orderType,
+      customerAddress: orderType === "delivery" ? cleanText(body.customerAddress, 300) : "استلام من الفرع",
+      zoneName: orderType === "delivery" ? cleanText(body.zoneName, 80) : "استلام من الفرع",
+      deliveryFee,
+      items,
+      itemsTotal,
+      grandTotal: itemsTotal + deliveryFee,
+      status: "pending"
+    }
+  };
+};
+
+// الزبون يبعت أوردر (من غير تسجيل دخول) — بس بحد أقصى للتكرار
+app.post("/api/orders", orderLimiter, async (req, res) => {
   try {
-    const newOrder = new Order(req.body);
-    const savedOrder = await newOrder.save();
-    res.status(201).json(savedOrder);
+    const body = req.body || {};
+
+    let zoneFee = null;
+    if (body.orderType === "delivery") {
+      const zone = await DeliveryZone.findOne({ name: cleanText(body.zoneName, 80) });
+      if (zone) zoneFee = zone.fee;
+    }
+
+    const { order, error } = buildOrderFromBody(body, zoneFee);
+    if (error) return res.status(400).json({ error });
+
+    const saved = await new Order(order).save();
+    console.log(`✅ New order saved: #${saved.orderId}`);
+    res.status(201).json({ ok: true, orderId: saved.orderId });
   } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: "الأوردر ده اتبعت قبل كده" });
+    console.error("❌ Save order error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// الأوردرات (للكاشير والأدمن)
 app.get("/api/orders", requireAuth, async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
@@ -547,6 +749,10 @@ app.get("/api/orders", requireAuth, async (req, res) => {
 
 app.put("/api/orders/:id", requireAuth, async (req, res) => {
   try {
+    if (!req.body.status || !["pending", "accepted", "completed"].includes(req.body.status)) {
+      return res.status(400).json({ error: "حالة الأوردر غير صحيحة" });
+    }
+
     const query = mongoose.Types.ObjectId.isValid(req.params.id)
       ? { $or: [{ _id: req.params.id }, { orderId: req.params.id }] }
       : { orderId: req.params.id };
@@ -561,9 +767,6 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
       update.completedAt = new Date();
     }
 
-    if (!req.body.status || !["pending", "accepted", "completed"].includes(req.body.status)) {
-      return res.status(400).json({ error: "حالة الأوردر غير صحيحة" });
-    }
     const updatedOrder = await Order.findOneAndUpdate(query, update, { new: true });
     if (!updatedOrder) return res.status(404).json({ error: "الأوردر غير موجود" });
     res.json(updatedOrder);
@@ -581,11 +784,13 @@ app.delete("/api/orders/:id", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// فحص سريع لمعرفة هل الـ API وقاعدة البيانات شغالين
+// فحص سريع: افتح /api/health في المتصفح عشان تعرف السيرفر والداتابيز ونظام الدخول شغالين ولا لأ
 app.get("/api/health", (req, res) => {
-  res.status(mongoose.connection.readyState === 1 ? 200 : 503).json({
-    ok: mongoose.connection.readyState === 1,
-    database: mongoose.connection.readyState === 1 ? "connected" : "disconnected"
+  const dbOk = mongoose.connection.readyState === 1;
+  res.status(dbOk ? 200 : 503).json({
+    ok: dbOk,
+    database: dbOk ? "connected" : "disconnected",
+    auth: authReady ? "ready" : "not-configured"
   });
 });
 
@@ -593,6 +798,7 @@ app.get("/api/health", (req, res) => {
 // SERVER + DATABASE STARTUP
 // =========================
 const PORT = process.env.PORT || 5000;
+const MONGO_URI = process.env.MONGO_URI;
 
 async function startServer() {
   if (!MONGO_URI) {
@@ -614,8 +820,6 @@ async function startServer() {
     mongoose.connection.on("error", (err) => {
       console.error("❌ MongoDB error:", err.message);
     });
-
-    await seedAdmin();
 
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`🚀 السيرفر شغال على البورت ${PORT}`);
