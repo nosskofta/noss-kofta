@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom';
 
-const API_BASE = 'https://noss-kofta-production-d57f.up.railway.app';
+const API_BASE = "https://noss-kofta-production.up.railway.app";
 
 const translations = {
   ar: {
