@@ -1,6 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
 dotenv.config();
 
@@ -37,7 +38,10 @@ if (!MONGO_URI) {
 } else {
   mongoose
     .connect(MONGO_URI)
-    .then(() => console.log("🔥 تم الاتصال بقاعدة البيانات MongoDB بنجاح!"))
+    .then(async () => {
+      console.log("🔥 تم الاتصال بقاعدة البيانات MongoDB بنجاح!");
+      await seedAdmin();
+    })
     .catch((err) => console.log("❌ خطأ في الاتصال:", err));
 }
 
@@ -203,10 +207,209 @@ const orderSchema = new mongoose.Schema({
   itemsTotal: { type: Number, required: true },
   grandTotal: { type: Number, required: true },
   status: { type: String, default: "pending" },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+
+  // مين الكاشير اللي قبل / أنهى الأوردر
+  acceptedBy: { type: String },
+  acceptedAt: { type: Date },
+  completedBy: { type: String },
+  completedAt: { type: Date }
 });
 
 const Order = mongoose.model("Order", orderSchema);
+
+// =========================
+// AUTH (الكاشير / الأدمن)
+// =========================
+const AUTH_SECRET = process.env.AUTH_SECRET || "change-me-please";
+
+const staffSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  username: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  password: { type: String, required: true }, // مشفر
+  role: { type: String, enum: ["cashier", "admin"], default: "cashier" },
+  active: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Staff = mongoose.model("Staff", staffSchema);
+
+const hashPassword = (password) => {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+};
+
+const verifyPassword = (password, stored) => {
+  const [salt, hash] = stored.split(":");
+  const test = crypto.scryptSync(password, salt, 64);
+  return crypto.timingSafeEqual(Buffer.from(hash, "hex"), test);
+};
+
+const signToken = (payload) => {
+  const body = Buffer.from(
+    JSON.stringify({ ...payload, exp: Date.now() + 12 * 60 * 60 * 1000 })
+  ).toString("base64url");
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+};
+
+const verifyToken = (token) => {
+  try {
+    const [body, sig] = token.split(".");
+    const expected = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("base64url");
+    if (
+      !sig ||
+      sig.length !== expected.length ||
+      !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
+    ) return null;
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString());
+    if (payload.exp < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+};
+
+// بيعمل حساب الأدمن أول مرة بس
+async function seedAdmin() {
+  try {
+    const exists = await Staff.findOne({ role: "admin" });
+    if (exists) return;
+    const username = (process.env.ADMIN_USERNAME || "admin").toLowerCase();
+    const password = process.env.ADMIN_PASSWORD;
+    if (!password) {
+      console.error("❌ ADMIN_PASSWORD غير موجود في Environment Variables - مفيش أدمن اتعمل");
+      return;
+    }
+    await Staff.create({
+      name: "المدير",
+      username,
+      password: hashPassword(password),
+      role: "admin"
+    });
+    console.log(`✅ تم إنشاء حساب الأدمن: ${username}`);
+  } catch (err) {
+    console.error("❌ seedAdmin error:", err);
+  }
+}
+
+// Middlewares
+const requireAuth = async (req, res, next) => {
+  try {
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+    const payload = token ? verifyToken(token) : null;
+    if (!payload) return res.status(401).json({ error: "غير مصرح" });
+
+    const user = await Staff.findById(payload.id);
+    if (!user || !user.active) return res.status(401).json({ error: "الحساب غير مفعل" });
+
+    req.user = user;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: "غير مصرح" });
+  }
+};
+
+const requireAdmin = (req, res, next) => {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ error: "للأدمن فقط" });
+  }
+  next();
+};
+
+// تسجيل الدخول
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const username = String(req.body.username || "").toLowerCase().trim();
+    const password = String(req.body.password || "");
+
+    const user = await Staff.findOne({ username });
+    if (!user || !user.active || !verifyPassword(password, user.password)) {
+      return res.status(401).json({ error: "اليوزر أو الباسورد غلط" });
+    }
+
+    const token = signToken({ id: user._id });
+    res.json({
+      token,
+      user: { id: user._id, name: user.name, username: user.username, role: user.role }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// إدارة الموظفين (أدمن فقط)
+app.get("/api/staff", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const staff = await Staff.find().select("-password").sort({ createdAt: 1 });
+    res.json(staff);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/staff", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { name, username, password } = req.body;
+    if (!name || !username || !password || String(password).length < 4) {
+      return res.status(400).json({ error: "الاسم واليوزر والباسورد (4 حروف على الأقل) مطلوبين" });
+    }
+    const created = await Staff.create({
+      name: String(name).trim(),
+      username: String(username).trim(),
+      password: hashPassword(String(password)),
+      role: "cashier"
+    });
+    res.status(201).json({
+      _id: created._id,
+      name: created.name,
+      username: created.username,
+      role: created.role,
+      active: created.active
+    });
+  } catch (err) {
+    if (err.code === 11000) return res.status(400).json({ error: "اليوزر ده موجود قبل كده" });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/staff/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const update = {};
+    if (req.body.password) {
+      if (String(req.body.password).length < 4) {
+        return res.status(400).json({ error: "الباسورد لازم 4 حروف على الأقل" });
+      }
+      update.password = hashPassword(String(req.body.password));
+    }
+    if (typeof req.body.active === "boolean") {
+      if (req.params.id === String(req.user._id) && req.body.active === false) {
+        return res.status(400).json({ error: "مينفعش توقف حسابك" });
+      }
+      update.active = req.body.active;
+    }
+    if (req.body.name) update.name = String(req.body.name).trim();
+
+    const updated = await Staff.findByIdAndUpdate(req.params.id, update, { new: true }).select("-password");
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/staff/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (req.params.id === String(req.user._id)) {
+      return res.status(400).json({ error: "مينفعش تمسح حسابك" });
+    }
+    await Staff.findByIdAndDelete(req.params.id);
+    res.json({ message: "تم المسح" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // =========================
 // SETTINGS
@@ -526,7 +729,7 @@ app.delete("/api/items/:id", async (req, res) => {
 // ORDERS (شاشة الكاشير)
 // =========================
 
-// استقبال وحفظ أوردر جديد
+// استقبال وحفظ أوردر جديد (مفتوح للعملاء)
 app.post("/api/orders", async (req, res) => {
   try {
     const newOrder = new Order(req.body);
@@ -539,8 +742,8 @@ app.post("/api/orders", async (req, res) => {
   }
 });
 
-// جلب كل الأوردرات لشاشة الكاشير
-app.get("/api/orders", async (req, res) => {
+// جلب كل الأوردرات (لازم تسجيل دخول)
+app.get("/api/orders", requireAuth, async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
     res.json(orders);
@@ -549,19 +752,35 @@ app.get("/api/orders", async (req, res) => {
   }
 });
 
-// تحديث حالة الأوردر (مكتمل / قيد التنفيذ)
-app.put("/api/orders/:id", async (req, res) => {
+// تحديث حالة الأوردر + تسجيل اسم الكاشير
+app.put("/api/orders/:id", requireAuth, async (req, res) => {
   try {
     const query = mongoose.Types.ObjectId.isValid(req.params.id)
       ? { $or: [{ _id: req.params.id }, { orderId: req.params.id }] }
       : { orderId: req.params.id };
 
-    const updatedOrder = await Order.findOneAndUpdate(
-      query,
-      { status: req.body.status },
-      { new: true }
-    );
+    const update = { status: req.body.status };
+    if (req.body.status === "accepted") {
+      update.acceptedBy = req.user.name;
+      update.acceptedAt = new Date();
+    }
+    if (req.body.status === "completed") {
+      update.completedBy = req.user.name;
+      update.completedAt = new Date();
+    }
+
+    const updatedOrder = await Order.findOneAndUpdate(query, update, { new: true });
     res.json(updatedOrder);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// مسح أوردر (أدمن فقط)
+app.delete("/api/orders/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await Order.findByIdAndDelete(req.params.id);
+    res.json({ message: "تم مسح الأوردر" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

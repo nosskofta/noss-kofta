@@ -1369,16 +1369,60 @@ const CartPage = ({ cart, setCart, lang }) => {
   );
 };
 
-// ================= 5. شاشة الكاشير المستقلة (سرية تماماً) =================
+// ================= 5. شاشة الكاشير (بحسابات وأدوار) =================
 const CashierDashboard = () => {
-  const [isAuth, setIsAuth] = useState(false);
+  const [session, setSession] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('cashierSession')) || null; }
+    catch { return null; }
+  });
+  const [usernameInput, setUsernameInput] = useState('');
   const [passInput, setPassInput] = useState('');
   const [orders, setOrders] = useState([]);
-  const [cashierTab, setCashierTab] = useState('active'); // active | archive
+  const [cashierTab, setCashierTab] = useState('active'); // active | archive | staff
+  const [soundReady, setSoundReady] = useState(false);
+
+  // إدارة الموظفين (للأدمن)
+  const [staff, setStaff] = useState([]);
+  const [newName, setNewName] = useState('');
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
 
   const audioCtxRef = useRef(null);
+  const token = session?.token;
+  const user = session?.user;
+  const isAdmin = user?.role === 'admin';
 
-  // الصوت: 3 نغمات متتالية
+  const logout = () => {
+    localStorage.removeItem('cashierSession');
+    setSession(null);
+    setOrders([]);
+    setSoundReady(false);
+  };
+
+  const authFetch = async (path, options = {}) => {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(options.headers || {})
+      }
+    });
+    if (res.status === 401) {
+      logout();
+      throw new Error('unauthorized');
+    }
+    return res;
+  };
+
+  // الصوت لازم يتفعل من ضغطة مستخدم
+  const enableSound = () => {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx();
+    audioCtxRef.current.resume();
+    setSoundReady(true);
+  };
+
   const playBeep = () => {
     const ctx = audioCtxRef.current;
     if (!ctx) return;
@@ -1402,137 +1446,217 @@ const CashierDashboard = () => {
     beep(1.0, 880);
   };
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    if (passInput === "15926") {
-      // لازم نفتح الصوت من ضغطة المستخدم، المتصفح بيمنعه غير كده
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      audioCtxRef.current = new AudioCtx();
-      audioCtxRef.current.resume();
-      setIsAuth(true);
-    } else {
-      alert("كلمة المرور غير صحيحة!");
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: usernameInput, password: passInput })
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'بيانات الدخول غلط!');
+      localStorage.setItem('cashierSession', JSON.stringify(data));
+      setSession(data);
+      setPassInput('');
+      enableSound(); // ضغطة الدخول = إذن الصوت
+    } catch (err) {
+      alert('مشكلة في الاتصال بالسيرفر');
     }
   };
 
   const fetchOrders = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/orders`);
+      const res = await authFetch('/api/orders');
       const data = await res.json();
-      if (!Array.isArray(data)) return;
+      if (Array.isArray(data)) setOrders(data);
+    } catch (err) {}
+  };
 
-      setOrders(data);
-    } catch (err) {
-      console.error(err);
-    }
+  const fetchStaff = async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await authFetch('/api/staff');
+      const data = await res.json();
+      if (Array.isArray(data)) setStaff(data);
+    } catch (err) {}
   };
 
   useEffect(() => {
-    if (isAuth) {
-      fetchOrders();
-      const interval = setInterval(fetchOrders, 3000);
-      return () => clearInterval(interval);
-    }
-  }, [isAuth]);
+    if (!token) return;
+    fetchOrders();
+    const interval = setInterval(fetchOrders, 3000);
+    return () => clearInterval(interval);
+  }, [token]);
+
+  useEffect(() => {
+    if (token && isAdmin && cashierTab === 'staff') fetchStaff();
+  }, [token, cashierTab]);
 
   const updateOrderStatus = async (orderId, newStatus) => {
     try {
-      await fetch(`${API_BASE}/api/orders/${orderId}`, {
+      await authFetch(`/api/orders/${orderId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
       });
       fetchOrders();
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) {}
   };
 
-  // pending = جديد (لسه ماتقبلش) | accepted = اتقبل وقيد التحضير | completed = مكتمل
+  const deleteOrder = async (id) => {
+    if (!window.confirm('مسح الأوردر نهائياً؟')) return;
+    try {
+      await authFetch(`/api/orders/${id}`, { method: 'DELETE' });
+      fetchOrders();
+    } catch (err) {}
+  };
+
+  // ===== إدارة الموظفين =====
+  const handleAddStaff = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await authFetch('/api/staff', {
+        method: 'POST',
+        body: JSON.stringify({ name: newName, username: newUsername, password: newPassword })
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'حصل خطأ');
+      setNewName(''); setNewUsername(''); setNewPassword('');
+      fetchStaff();
+    } catch (err) {}
+  };
+
+  const handleResetPassword = async (s) => {
+    const pass = window.prompt(`باسورد جديد لـ ${s.name}:`);
+    if (!pass) return;
+    try {
+      const res = await authFetch(`/api/staff/${s._id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ password: pass })
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'حصل خطأ');
+      alert('تم تغيير الباسورد ✅');
+    } catch (err) {}
+  };
+
+  const handleToggleStaff = async (s) => {
+    try {
+      const res = await authFetch(`/api/staff/${s._id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ active: !s.active })
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'حصل خطأ');
+      fetchStaff();
+    } catch (err) {}
+  };
+
+  const handleDeleteStaff = async (s) => {
+    if (!window.confirm(`مسح حساب ${s.name}؟`)) return;
+    try {
+      const res = await authFetch(`/api/staff/${s._id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'حصل خطأ');
+      fetchStaff();
+    } catch (err) {}
+  };
+
   const newCount = orders.filter(o => o.status === 'pending').length;
   const preparingCount = orders.filter(o => o.status === 'accepted').length;
   const hasNewOrders = newCount > 0;
 
-  // الصوت يفضل يرن لحد ما كل الأوردرات الجديدة تتقبل
   useEffect(() => {
-    if (!isAuth || !hasNewOrders) return;
+    if (!token || !soundReady || !hasNewOrders) return;
     playBeep();
     const ringInterval = setInterval(playBeep, 2500);
     return () => clearInterval(ringInterval);
-  }, [isAuth, hasNewOrders]);
-
-  // كارت الأوردر (بيتستخدم في القسمين)
-  const renderOrderCard = (ord) => (
-        <div key={ord._id || ord.orderId} className={`bg-[#1C0D10] border rounded-2xl p-5 shadow-xl flex flex-col justify-between ${ord.status === 'completed' ? 'border-[#3A1218]' : ord.status === 'accepted' ? 'border-yellow-500/60' : 'border-red-500 animate-pulse'}`}>
-          <div>
-            <div className="flex justify-between items-center mb-3 border-b border-[#3A1218] pb-2">
-              <span className="font-black text-[#FFD700] text-lg">#{ord.orderId}</span>
-              <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${ord.status === 'completed' ? 'bg-green-500/20 text-green-400' : ord.status === 'accepted' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
-                {ord.status === 'completed' ? 'مكتمل ✅' : ord.status === 'accepted' ? 'قيد التحضير 👨‍🍳' : 'جديد 🔔'}
-              </span>
-            </div>
-
-            <div className="text-sm space-y-1 mb-4 text-zinc-300">
-              <p>👤 <strong className="text-white">{ord.customerName}</strong></p>
-              <p>📞 <strong className="text-white">{ord.customerPhone}</strong></p>
-              <p>📦 <strong className="text-white">{ord.orderType === 'delivery' ? `توصيل (${ord.zoneName})` : 'استلام من الفرع'}</strong></p>
-              {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.customerAddress}</span></p>}
-              {ord.createdAt && <p>🕒 <span className="text-zinc-400 text-xs">{new Date(ord.createdAt).toLocaleString('ar-EG')}</span></p>}
-            </div>
-
-            <div className="bg-[#12080A] p-3 rounded-xl border border-[#3A1218] mb-4 space-y-1.5 max-h-40 overflow-y-auto">
-              {ord.items && ord.items.map((it, idx) => (
-                <div key={idx} className="flex justify-between text-xs">
-                  <span className="text-white font-medium">{it.quantity}× {it.name}</span>
-                  <span className="text-[#FFD700]">{it.price * it.quantity} ج</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center pt-3 border-t border-[#3A1218] mb-4 text-sm font-bold">
-              <span>الإجمالي:</span>
-              <span className="text-[#FFD700] text-lg font-black">{ord.grandTotal} ج</span>
-            </div>
-
-            <div className="flex gap-2">
-              {ord.status === 'pending' && (
-                <button
-                  onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')}
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl text-sm font-black transition shadow-lg"
-                >
-                  ✅ قبول الأوردر (إيقاف الصوت)
-                </button>
-              )}
-              {ord.status === 'accepted' && (
-                <button
-                  onClick={() => updateOrderStatus(ord._id || ord.orderId, 'completed')}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold transition"
-                >
-                  🏁 إنهاء الأوردر (تم التسليم)
-                </button>
-              )}
-              {ord.status === 'completed' && (
-                <span className="flex-1 text-center text-green-400 text-xs font-bold py-2">تم تسليم الأوردر</span>
-              )}
-            </div>
-          </div>
-        </div>
-  );
+  }, [token, soundReady, hasNewOrders]);
 
   const activeOrders = orders.filter(o => o.status !== 'completed');
   const doneOrders = orders.filter(o => o.status === 'completed');
 
-  if (!isAuth) {
+  const todayStr = new Date().toDateString();
+  const todaySales = doneOrders
+    .filter(o => new Date(o.createdAt).toDateString() === todayStr)
+    .reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+
+  const renderOrderCard = (ord) => (
+    <div key={ord._id || ord.orderId} className={`bg-[#1C0D10] border rounded-2xl p-5 shadow-xl flex flex-col justify-between ${ord.status === 'completed' ? 'border-[#3A1218]' : ord.status === 'accepted' ? 'border-yellow-500/60' : 'border-red-500 animate-pulse'}`}>
+      <div>
+        <div className="flex justify-between items-center mb-3 border-b border-[#3A1218] pb-2">
+          <span className="font-black text-[#FFD700] text-lg">#{ord.orderId}</span>
+          <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${ord.status === 'completed' ? 'bg-green-500/20 text-green-400' : ord.status === 'accepted' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
+            {ord.status === 'completed' ? 'مكتمل ✅' : ord.status === 'accepted' ? 'قيد التحضير 👨‍🍳' : 'جديد 🔔'}
+          </span>
+        </div>
+
+        <div className="text-sm space-y-1 mb-4 text-zinc-300">
+          <p>👤 <strong className="text-white">{ord.customerName}</strong></p>
+          <p>📞 <strong className="text-white">{ord.customerPhone}</strong></p>
+          <p>📦 <strong className="text-white">{ord.orderType === 'delivery' ? `توصيل (${ord.zoneName})` : 'استلام من الفرع'}</strong></p>
+          {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.customerAddress}</span></p>}
+          {ord.createdAt && <p>🕒 <span className="text-zinc-400 text-xs">{new Date(ord.createdAt).toLocaleString('ar-EG')}</span></p>}
+          {ord.acceptedBy && <p>✅ <span className="text-zinc-400 text-xs">قبله: {ord.acceptedBy}</span></p>}
+          {ord.completedBy && <p>🏁 <span className="text-zinc-400 text-xs">أنهاه: {ord.completedBy}</span></p>}
+        </div>
+
+        <div className="bg-[#12080A] p-3 rounded-xl border border-[#3A1218] mb-4 space-y-1.5 max-h-40 overflow-y-auto">
+          {ord.items && ord.items.map((it, idx) => (
+            <div key={idx} className="flex justify-between text-xs">
+              <span className="text-white font-medium">{it.quantity}× {it.name}</span>
+              <span className="text-[#FFD700]">{it.price * it.quantity} ج</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div className="flex justify-between items-center pt-3 border-t border-[#3A1218] mb-4 text-sm font-bold">
+          <span>الإجمالي:</span>
+          <span className="text-[#FFD700] text-lg font-black">{ord.grandTotal} ج</span>
+        </div>
+
+        <div className="flex gap-2">
+          {ord.status === 'pending' && (
+            <button onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">
+              ✅ قبول الأوردر (إيقاف الصوت)
+            </button>
+          )}
+          {ord.status === 'accepted' && (
+            <button onClick={() => updateOrderStatus(ord._id || ord.orderId, 'completed')} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold transition">
+              🏁 إنهاء الأوردر (تم التسليم)
+            </button>
+          )}
+          {ord.status === 'completed' && (
+            <span className="flex-1 text-center text-green-400 text-xs font-bold py-2">تم تسليم الأوردر</span>
+          )}
+          {isAdmin && (
+            <button onClick={() => deleteOrder(ord._id)} className="text-red-400 bg-red-500/10 px-3 rounded-xl text-xs font-bold">🗑️</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ===== شاشة الدخول =====
+  if (!token) {
     return (
       <div className="min-h-screen bg-[#12080A] flex items-center justify-center p-4">
         <form onSubmit={handleLogin} className="bg-[#1C0D10] border border-[#800020] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
           <h2 className="text-2xl font-black text-[#FFD700] mb-6">🔒 دخول شاشة الكاشير</h2>
-          <input 
-            type="password" 
-            placeholder="اكتب كلمة المرور..." 
-            value={passInput} 
+          <input
+            type="text"
+            placeholder="اسم المستخدم"
+            value={usernameInput}
+            onChange={(e) => setUsernameInput(e.target.value)}
+            autoCapitalize="none"
+            className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg"
+          />
+          <input
+            type="password"
+            placeholder="كلمة المرور"
+            value={passInput}
             onChange={(e) => setPassInput(e.target.value)}
             className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-6 text-lg tracking-widest"
           />
@@ -1544,70 +1668,112 @@ const CashierDashboard = () => {
     );
   }
 
+  const tabBtn = (key, label) => (
+    <button
+      type="button"
+      onClick={() => setCashierTab(key)}
+      className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-black text-base transition border ${
+        cashierTab === key
+          ? 'bg-[#800020] text-white border-[#FFD700] shadow-[0_0_15px_rgba(128,0,32,0.5)]'
+          : 'bg-[#1C0D10] text-zinc-300 border-[#3A1218] hover:border-[#800020]'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <section className="px-8 py-12 max-w-7xl mx-auto min-h-screen bg-[#12080A] text-white">
       <div className="flex flex-wrap gap-3 justify-between items-center mb-8 border-b border-[#3A1218] pb-4">
         <h2 className="text-3xl font-bold text-[#FFD700]">
           🖥️ شاشة الكاشير
           {newCount > 0 && (
-            <span className="bg-red-600 text-white text-base px-3 py-1 rounded-full mr-3 animate-pulse">
-              🔔 {newCount} جديد
-            </span>
+            <span className="bg-red-600 text-white text-base px-3 py-1 rounded-full mr-3 animate-pulse">🔔 {newCount} جديد</span>
           )}
           {preparingCount > 0 && (
-            <span className="bg-yellow-500/20 text-yellow-400 text-base px-3 py-1 rounded-full mr-2">
-              {preparingCount} قيد التحضير
-            </span>
+            <span className="bg-yellow-500/20 text-yellow-400 text-base px-3 py-1 rounded-full mr-2">{preparingCount} قيد التحضير</span>
           )}
         </h2>
-        <div className="flex gap-2">
-          <button onClick={playBeep} className="bg-zinc-800 px-4 py-2 rounded-xl text-sm font-bold text-white">🔊 تجربة الصوت</button>
+        <div className="flex flex-wrap gap-2 items-center">
+          <span className="text-sm text-zinc-300 bg-[#1C0D10] border border-[#3A1218] px-3 py-2 rounded-xl">
+            👤 {user.name} {isAdmin && <span className="text-[#FFD700] font-bold">(أدمن)</span>}
+          </span>
+          {!soundReady ? (
+            <button onClick={enableSound} className="bg-red-600 animate-pulse px-4 py-2 rounded-xl text-sm font-bold text-white">🔊 اضغط لتفعيل الصوت</button>
+          ) : (
+            <button onClick={playBeep} className="bg-zinc-800 px-4 py-2 rounded-xl text-sm font-bold text-white">🔊 تجربة الصوت</button>
+          )}
           <button onClick={fetchOrders} className="bg-[#800020] px-4 py-2 rounded-xl text-sm font-bold text-white">🔄 تحديث</button>
+          <button onClick={logout} className="bg-zinc-700 px-4 py-2 rounded-xl text-sm font-bold text-white">🚪 خروج</button>
         </div>
       </div>
 
-      {/* ===== التابات: النشطة / الأرشيف ===== */}
-      <div className="flex gap-3 mb-8">
-        <button
-          type="button"
-          onClick={() => setCashierTab('active')}
-          className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-black text-base transition border ${
-            cashierTab === 'active'
-              ? 'bg-[#800020] text-white border-[#FFD700] shadow-[0_0_15px_rgba(128,0,32,0.5)]'
-              : 'bg-[#1C0D10] text-zinc-300 border-[#3A1218] hover:border-[#800020]'
-          }`}
-        >
-          🔥 الأوردرات النشطة ({activeOrders.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setCashierTab('archive')}
-          className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-black text-base transition border ${
-            cashierTab === 'archive'
-              ? 'bg-[#800020] text-white border-[#FFD700] shadow-[0_0_15px_rgba(128,0,32,0.5)]'
-              : 'bg-[#1C0D10] text-zinc-300 border-[#3A1218] hover:border-[#800020]'
-          }`}
-        >
-          📦 أرشيف الأوردرات المنتهية ({doneOrders.length})
-        </button>
+      <div className="flex flex-wrap gap-3 mb-8">
+        {tabBtn('active', `🔥 الأوردرات النشطة (${activeOrders.length})`)}
+        {tabBtn('archive', `📦 الأرشيف (${doneOrders.length})`)}
+        {isAdmin && tabBtn('staff', '👥 إدارة الكاشيرات')}
       </div>
 
-      {cashierTab === 'active' ? (
+      {cashierTab === 'active' && (
         activeOrders.length === 0 ? (
           <p className="text-zinc-500 text-center py-20 text-xl bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات نشطة حالياً ✨</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {activeOrders.map(renderOrderCard)}
-          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{activeOrders.map(renderOrderCard)}</div>
         )
-      ) : (
-        doneOrders.length === 0 ? (
-          <p className="text-zinc-500 text-center py-20 text-xl bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات منتهية بعد.</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-90">
-            {doneOrders.map(renderOrderCard)}
+      )}
+
+      {cashierTab === 'archive' && (
+        <>
+          {isAdmin && (
+            <div className="bg-[#1C0D10] border border-[#FFD700]/40 rounded-2xl p-4 mb-6 flex justify-between items-center">
+              <span className="font-bold text-zinc-300">💰 إجمالي مبيعات اليوم (الأوردرات المكتملة)</span>
+              <span className="text-[#FFD700] text-2xl font-black">{todaySales} ج</span>
+            </div>
+          )}
+          {doneOrders.length === 0 ? (
+            <p className="text-zinc-500 text-center py-20 text-xl bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات منتهية بعد.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-90">{doneOrders.map(renderOrderCard)}</div>
+          )}
+        </>
+      )}
+
+      {cashierTab === 'staff' && isAdmin && (
+        <div className="space-y-8">
+          <form onSubmit={handleAddStaff} className="bg-[#1C0D10] border border-[#800020]/60 rounded-2xl p-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+            <h3 className="md:col-span-4 text-xl font-bold text-[#FFD700]">➕ إضافة كاشير جديد</h3>
+            <input required type="text" placeholder="الاسم (مثلاً: أحمد)" value={newName} onChange={(e) => setNewName(e.target.value)} className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
+            <input required type="text" placeholder="اسم المستخدم (إنجليزي)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} autoCapitalize="none" className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
+            <input required type="text" placeholder="الباسورد" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
+            <button type="submit" className="bg-[#800020] text-white font-bold rounded-xl hover:bg-[#990026] transition">إضافة</button>
+          </form>
+
+          <div className="space-y-3">
+            {staff.map((s) => (
+              <div key={s._id} className="bg-[#1C0D10] border border-[#3A1218] rounded-xl px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
+                <div>
+                  <span className="font-bold text-white">{s.name}</span>
+                  <span className="text-zinc-400 text-sm mr-3">@{s.username}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-bold mr-2 ${s.role === 'admin' ? 'bg-[#FFD700] text-black' : 'bg-zinc-700 text-zinc-200'}`}>
+                    {s.role === 'admin' ? 'أدمن' : 'كاشير'}
+                  </span>
+                  {!s.active && <span className="text-xs text-red-400 font-bold mr-2">⛔ موقوف</span>}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleResetPassword(s)} className="text-[#FFD700] bg-[#800020]/30 px-3 py-1.5 rounded-lg text-xs font-bold">🔑 تغيير الباسورد</button>
+                  {s._id !== user.id && (
+                    <>
+                      <button onClick={() => handleToggleStaff(s)} className="text-yellow-400 bg-yellow-500/10 px-3 py-1.5 rounded-lg text-xs font-bold">
+                        {s.active ? '⏸️ إيقاف' : '▶️ تفعيل'}
+                      </button>
+                      <button onClick={() => handleDeleteStaff(s)} className="text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg text-xs font-bold">✕ مسح</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-        )
+        </div>
       )}
     </section>
   );
