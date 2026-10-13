@@ -800,34 +800,56 @@ app.get("/api/health", (req, res) => {
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 
-async function startServer() {
-  if (!MONGO_URI) {
-    console.error("❌ MONGO_URI غير موجود في Environment Variables على Railway");
-    process.exit(1);
-  }
+process.on("unhandledRejection", (err) => {
+  console.error("⚠️ unhandledRejection:", err);
+});
 
+mongoose.connection.on("disconnected", () => {
+  console.error("❌ اتصال MongoDB انقطع (Mongoose هيحاول يرجّعه لوحده)");
+});
+
+mongoose.connection.on("error", (err) => {
+  console.error("❌ MongoDB error:", err.message);
+});
+
+// حسابات "أدمن" قديمة كانت بتتسجل في الداتابيز بباسورد مكتوب في الكود (123456).
+// الأدمن دلوقتي بياخد الباسورد من ADMIN_PASSWORD بس، فبنمسح القديمة عشان مايفضلش باب مفتوح.
+const removeLegacyAdminAccounts = async () => {
   try {
-    await mongoose.connect(MONGO_URI, {
-      serverSelectionTimeoutMS: 15000,
-    });
-
-    console.log("✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح");
-
-    mongoose.connection.on("disconnected", () => {
-      console.error("❌ اتصال MongoDB انقطع");
-    });
-
-    mongoose.connection.on("error", (err) => {
-      console.error("❌ MongoDB error:", err.message);
-    });
-
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`🚀 السيرفر شغال على البورت ${PORT}`);
-    });
+    const result = await Staff.deleteMany({ role: "admin" });
+    if (result.deletedCount > 0) {
+      console.log(`🧹 اتمسح ${result.deletedCount} حساب أدمن قديم من الداتابيز`);
+    }
   } catch (err) {
-    console.error("❌ فشل الاتصال بقاعدة بيانات MongoDB:", err.message);
-    process.exit(1);
+    console.error("⚠️ ماقدرتش أنضف حسابات الأدمن القديمة:", err.message);
   }
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// بنحاول نتصل بالداتابيز لحد ما ننجح، من غير ما السيرفر نفسه يقع.
+// (قبل كده لو الداتابيز اتأخرت لحظة أول ما السيرفر يشتغل، السيرفر كان بيقفل والموقع كله يقع)
+const connectToDatabase = async () => {
+  while (true) {
+    try {
+      await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 15000 });
+      console.log("✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح");
+      await removeLegacyAdminAccounts();
+      return;
+    } catch (err) {
+      console.error("❌ فشل الاتصال بقاعدة بيانات MongoDB، هحاول تاني بعد 5 ثواني:", err.message);
+      await sleep(5000);
+    }
+  }
+};
+
+if (!MONGO_URI) {
+  console.error("❌ MONGO_URI غير موجود في Environment Variables على Railway");
+  process.exit(1);
 }
 
-startServer();
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 السيرفر شغال على البورت ${PORT}`);
+});
+
+connectToDatabase();

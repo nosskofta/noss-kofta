@@ -1,7 +1,107 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom';
 
-const API_BASE = "https://noss-kofta-production.up.railway.app";
+const API_BASE = 'https://noss-kofta-production-d57f.up.railway.app';
+
+// ================= الدخول والجلسات (كاشير / أدمن) =================
+const SESSION_KEY = 'cashierSession';
+
+const readSession = () => {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY)) || null; }
+  catch { return null; }
+};
+const saveSession = (session) => {
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch {}
+};
+const clearSession = () => {
+  try { localStorage.removeItem(SESSION_KEY); } catch {}
+};
+
+// طلب للسيرفر ومعاه التوكن. لو السيرفر رد "غير مصرح" بنقفل الجلسة ونرجّع لشاشة الدخول.
+const authRequest = async (token, path, options = {}, onUnauthorized) => {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(options.headers || {})
+    }
+  });
+  if (res.status === 401) {
+    if (onUnauthorized) onUnauthorized();
+    throw new Error('unauthorized');
+  }
+  return res;
+};
+
+const loginRequest = async (username, password) => {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  let data = {};
+  try { data = await res.json(); } catch {}
+  if (!res.ok) throw new Error(data.error || 'بيانات الدخول غلط!');
+  return data;
+};
+
+// شاشة تسجيل الدخول (بتتستخدم للكاشير ولوحة الإدارة)
+const StaffLogin = ({ title, onLogin, onBeforeSubmit, requireAdmin = false }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (onBeforeSubmit) onBeforeSubmit(); // لازم يتنفذ فوراً مع الضغطة (عشان الصوت)
+    setError('');
+    setLoading(true);
+    try {
+      const data = await loginRequest(username, password);
+      if (requireAdmin && data.user?.role !== 'admin') {
+        setError('الحساب ده مش أدمن، ادخل بحساب الأدمن.');
+        return;
+      }
+      setPassword('');
+      onLogin(data);
+    } catch (err) {
+      setError(err.message === 'Failed to fetch' ? 'مشكلة في الاتصال بالسيرفر' : err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#12080A] flex items-center justify-center p-4">
+      <form onSubmit={submit} className="bg-[#1C0D10] border border-[#800020] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
+        <h2 className="text-2xl font-black text-[#FFD700] mb-6">{title}</h2>
+        <input
+          type="text"
+          placeholder="اسم المستخدم"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoCapitalize="none"
+          autoComplete="username"
+          className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg"
+        />
+        <input
+          type="password"
+          placeholder="كلمة المرور"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password"
+          className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg tracking-widest"
+        />
+        {error && <p className="text-red-400 text-sm font-bold mb-4">{error}</p>}
+        <button type="submit" disabled={loading} className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow disabled:opacity-60">
+          {loading ? 'جاري الدخول...' : 'دخول النظام'}
+        </button>
+      </form>
+    </div>
+  );
+};
 
 const translations = {
   ar: {
@@ -336,13 +436,11 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
 };
 
 // ================= 3. لوحة التحكم الشاملة =================
-const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems, fetchCategories, fetchSettings, isAuthenticated }) => {
+const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fetchCategories, fetchSettings, token, onUnauthorized, onLogout }) => {
   const t = translations[lang];
-  const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!isAuthenticated) navigate('/menu');
-  }, [isAuthenticated, navigate]);
+  // كل طلبات لوحة الإدارة بتتبعت ومعاها توكن الأدمن
+  const adminFetch = (path, options = {}) => authRequest(token, path, options, onUnauthorized);
 
   const [heroImg, setHeroImg] = useState(siteSettings.heroImage);
   const [bannerImg, setBannerImg] = useState(siteSettings.promoBannerImage || '');
@@ -356,7 +454,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 
   const fetchZones = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/zones`);
+      const res = await adminFetch(`/api/zones`);
       const data = await res.json();
       setDeliveryZones(data);
     } catch (err) {}
@@ -370,7 +468,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     e.preventDefault();
     if (!zoneName.trim() || !zoneFee) return;
     try {
-      const res = await fetch(`${API_BASE}/api/zones`, {
+      const res = await adminFetch(`/api/zones`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: zoneName.trim(), fee: Number(zoneFee) })
@@ -386,7 +484,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const handleDeleteZone = async (id) => {
     if (!window.confirm("حذف هذه المنطقة؟")) return;
     try {
-      const res = await fetch(`${API_BASE}/api/zones/${id}`, { method: 'DELETE' });
+      const res = await adminFetch(`/api/zones/${id}`, { method: 'DELETE' });
       if (res.ok) fetchZones();
     } catch (err) {}
   };
@@ -464,7 +562,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const handleSaveSettings = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch(`${API_BASE}/api/settings`, {
+      const res = await adminFetch(`/api/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -495,7 +593,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     try {
       await Promise.all(
         newCategories.map((cat, idx) => 
-          fetch(`${API_BASE}/api/categories/${cat._id}`, {
+          adminFetch(`/api/categories/${cat._id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ order: idx })
@@ -518,7 +616,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     try {
       await Promise.all(
         newItems.map((itm, idx) => 
-          fetch(`${API_BASE}/api/items/${itm._id}`, {
+          adminFetch(`/api/items/${itm._id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...itm, order: idx })
@@ -592,13 +690,13 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     try {
       let res;
       if (editCatId) {
-        res = await fetch(`${API_BASE}/api/categories/${editCatId}`, {
+        res = await adminFetch(`/api/categories/${editCatId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: catName.trim() })
         });
       } else {
-        res = await fetch(`${API_BASE}/api/categories`, {
+        res = await adminFetch(`/api/categories`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: catName.trim() })
@@ -621,7 +719,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const handleDeleteCategory = async (id) => {
     if (!window.confirm("Delete?")) return;
     try {
-      const res = await fetch(`${API_BASE}/api/categories/${id}`, { method: 'DELETE' });
+      const res = await adminFetch(`/api/categories/${id}`, { method: 'DELETE' });
       if (res.ok) fetchCategories();
     } catch (err) {}
   };
@@ -669,13 +767,13 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     try {
       let res;
       if (editId) {
-        res = await fetch(`${API_BASE}/api/items/${editId}`, {
+        res = await adminFetch(`/api/items/${editId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(itemData)
         });
       } else {
-        res = await fetch(`${API_BASE}/api/items`, {
+        res = await adminFetch(`/api/items`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(itemData)
@@ -719,7 +817,7 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
   const handleDeleteItem = async (id) => {
     if (!window.confirm("Delete item?")) return;
     try {
-      const res = await fetch(`${API_BASE}/api/items/${id}`, { method: 'DELETE' });
+      const res = await adminFetch(`/api/items/${id}`, { method: 'DELETE' });
       if (res.ok) fetchItems();
     } catch (err) {}
   };
@@ -728,7 +826,11 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
     <section className="px-8 py-12 max-w-5xl mx-auto min-h-[80vh] bg-[#12080A] text-white">
       <div className="flex justify-between items-center mb-8 border-b border-[#3A1218] pb-4">
         <h2 className="text-3xl font-bold text-[#FFD700]">⚙️ لوحة الإدارة</h2>
-        <Link className="text-zinc-400 hover:text-white underline" to="/menu">{t.menu}</Link>
+        <div className="flex items-center gap-4">
+          <Link className="text-zinc-400 hover:text-white underline" to="/cashier">شاشة الكاشير</Link>
+          <Link className="text-zinc-400 hover:text-white underline" to="/menu">{t.menu}</Link>
+          <button type="button" onClick={onLogout} className="bg-zinc-700 hover:bg-zinc-600 px-4 py-2 rounded-xl text-sm font-bold text-white">🚪 خروج</button>
+        </div>
       </div>
 
       <div className="bg-[#1C0D10] p-6 rounded-2xl border border-[#800020]/60 mb-8 shadow-xl">
@@ -1095,6 +1197,29 @@ const AdminDashboard = ({ menuItems, categories, siteSettings, lang, fetchItems,
 );
 };
 
+// بوابة لوحة الإدارة: لازم دخول بحساب الأدمن (الباسورد بيتراجع في السيرفر مش في الموقع)
+const AdminDashboard = (props) => {
+  const [session, setSession] = useState(readSession);
+
+  const handleLogout = () => {
+    clearSession();
+    setSession(null);
+  };
+
+  if (!session?.token || session.user?.role !== 'admin') {
+    return (
+      <StaffLogin
+        title="🔒 دخول لوحة الإدارة"
+        requireAdmin
+        onLogin={(data) => { saveSession(data); setSession(data); }}
+      />
+    );
+  }
+
+  return <AdminPanel {...props} token={session.token} onUnauthorized={handleLogout} onLogout={handleLogout} />;
+};
+
+
 // ================= 4. صفحة السلة وإدخال بيانات التوصيل =================
 const CartPage = ({ cart, setCart, lang }) => {
   const t = translations[lang];
@@ -1174,10 +1299,9 @@ const CartPage = ({ cart, setCart, lang }) => {
       customerAddress: orderType === 'delivery' ? customerAddress : 'استلام من الفرع',
       zoneName: orderType === 'delivery' && selectedZone ? selectedZone.name : 'استلام من الفرع',
       deliveryFee: orderType === 'delivery' ? deliveryFee : 0,
-      items: groupedCart,
+      items: groupedCart.map(({ name, price, quantity }) => ({ name, price, quantity })),
       itemsTotal,
-      grandTotal,
-      status: 'pending'
+      grandTotal
     };
 
     // إرسال الأوردر لشاشة الكاشير (السيرفر)
@@ -1371,12 +1495,7 @@ const CartPage = ({ cart, setCart, lang }) => {
 
 // ================= 5. شاشة الكاشير (بحسابات وأدوار) =================
 const CashierDashboard = () => {
-  const [session, setSession] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('cashierSession')) || null; }
-    catch { return null; }
-  });
-  const [usernameInput, setUsernameInput] = useState('');
-  const [passInput, setPassInput] = useState('');
+  const [session, setSession] = useState(readSession);
   const [orders, setOrders] = useState([]);
   const [cashierTab, setCashierTab] = useState('active'); // active | archive | staff
   const [soundReady, setSoundReady] = useState(false);
@@ -1393,34 +1512,34 @@ const CashierDashboard = () => {
   const isAdmin = user?.role === 'admin';
 
   const logout = () => {
-    localStorage.removeItem('cashierSession');
+    clearSession();
     setSession(null);
     setOrders([]);
+    setStaff([]);
     setSoundReady(false);
+    setCashierTab('active');
   };
 
-  const authFetch = async (path, options = {}) => {
-    const res = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(options.headers || {})
-      }
-    });
-    if (res.status === 401) {
-      logout();
-      throw new Error('unauthorized');
+  const authFetch = (path, options = {}) => authRequest(token, path, options, logout);
+
+  // الصوت لازم يتفعل من ضغطة مستخدم (المتصفح بيمنعه غير كده)
+  const unlockAudio = () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx();
+      audioCtxRef.current.resume();
+    } catch (err) {}
+  };
+
+  const enableSound = async () => {
+    unlockAudio();
+    try {
+      await audioCtxRef.current.resume();
+      setSoundReady(audioCtxRef.current.state === 'running');
+    } catch (err) {
+      setSoundReady(false);
     }
-    return res;
-  };
-
-  // الصوت لازم يتفعل من ضغطة مستخدم
-  const enableSound = () => {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx();
-    audioCtxRef.current.resume();
-    setSoundReady(true);
   };
 
   const playBeep = () => {
@@ -1446,23 +1565,10 @@ const CashierDashboard = () => {
     beep(1.0, 880);
   };
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: usernameInput, password: passInput })
-      });
-      const data = await res.json();
-      if (!res.ok) return alert(data.error || 'بيانات الدخول غلط!');
-      localStorage.setItem('cashierSession', JSON.stringify(data));
-      setSession(data);
-      setPassInput('');
-      enableSound(); // ضغطة الدخول = إذن الصوت
-    } catch (err) {
-      alert('مشكلة في الاتصال بالسيرفر');
-    }
+  const handleLoggedIn = (data) => {
+    saveSession(data);
+    setSession(data);
+    enableSound(); // ضغطة الدخول = إذن الصوت
   };
 
   const fetchOrders = async () => {
@@ -1641,31 +1747,7 @@ const CashierDashboard = () => {
 
   // ===== شاشة الدخول =====
   if (!token) {
-    return (
-      <div className="min-h-screen bg-[#12080A] flex items-center justify-center p-4">
-        <form onSubmit={handleLogin} className="bg-[#1C0D10] border border-[#800020] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
-          <h2 className="text-2xl font-black text-[#FFD700] mb-6">🔒 دخول شاشة الكاشير</h2>
-          <input
-            type="text"
-            placeholder="اسم المستخدم"
-            value={usernameInput}
-            onChange={(e) => setUsernameInput(e.target.value)}
-            autoCapitalize="none"
-            className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg"
-          />
-          <input
-            type="password"
-            placeholder="كلمة المرور"
-            value={passInput}
-            onChange={(e) => setPassInput(e.target.value)}
-            className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-6 text-lg tracking-widest"
-          />
-          <button type="submit" className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow">
-            دخول النظام
-          </button>
-        </form>
-      </div>
-    );
+    return <StaffLogin title="🔒 دخول شاشة الكاشير" onBeforeSubmit={unlockAudio} onLogin={handleLoggedIn} />;
   }
 
   const tabBtn = (key, label) => (
@@ -1698,15 +1780,23 @@ const CashierDashboard = () => {
           <span className="text-sm text-zinc-300 bg-[#1C0D10] border border-[#3A1218] px-3 py-2 rounded-xl">
             👤 {user.name} {isAdmin && <span className="text-[#FFD700] font-bold">(أدمن)</span>}
           </span>
-          {!soundReady ? (
-            <button onClick={enableSound} className="bg-red-600 animate-pulse px-4 py-2 rounded-xl text-sm font-bold text-white">🔊 اضغط لتفعيل الصوت</button>
-          ) : (
+          {soundReady && (
             <button onClick={playBeep} className="bg-zinc-800 px-4 py-2 rounded-xl text-sm font-bold text-white">🔊 تجربة الصوت</button>
           )}
           <button onClick={fetchOrders} className="bg-[#800020] px-4 py-2 rounded-xl text-sm font-bold text-white">🔄 تحديث</button>
           <button onClick={logout} className="bg-zinc-700 px-4 py-2 rounded-xl text-sm font-bold text-white">🚪 خروج</button>
         </div>
       </div>
+
+      {!soundReady && (
+        <button
+          type="button"
+          onClick={enableSound}
+          className="w-full mb-6 bg-red-600 hover:bg-red-700 animate-pulse text-white font-black text-lg py-4 rounded-2xl shadow-lg"
+        >
+          🔕 الصوت مقفول — اضغط هنا عشان تسمع تنبيه الأوردرات الجديدة
+        </button>
+      )}
 
       <div className="flex flex-wrap gap-3 mb-8">
         {tabBtn('active', `🔥 الأوردرات النشطة (${activeOrders.length})`)}
@@ -1786,7 +1876,6 @@ function App() {
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [siteSettings, setSiteSettings] = useState({ heroImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [logoClicks, setLogoClicks] = useState(0);
   const [lang, setLang] = useState('ar');
 
@@ -1850,11 +1939,7 @@ function App() {
     setLogoClicks(prev => {
       const newCount = prev + 1;
       if (newCount === 3) {
-        const pass = window.prompt("🔒 Admin Password:");
-        if (pass === "15926") {
-          setIsAuthenticated(true);
-          navigate('/secret-admin-dashboard');
-        } else if (pass !== null) { alert("Wrong password!"); }
+        navigate('/secret-admin-dashboard'); // صفحة الإدارة بتطلب تسجيل دخول بنفسها
         return 0;
       }
       return newCount;
@@ -1983,7 +2068,7 @@ function App() {
         <Routes>
           <Route path="/" element={<HomePage lang={lang} siteSettings={siteSettings} menuItems={menuItems} handleOpenItemDetails={handleOpenItemDetailsModal} cart={cart} setCart={setCart} />} />
           <Route path="/menu" element={<MenuPage menuItems={menuItems} categories={categories} lang={lang} handleOpenBox={handleOpenBox} handleOpenItemDetails={handleOpenItemDetailsModal} cart={cart} setCart={setCart} />} />
-          <Route path="/secret-admin-dashboard" element={<AdminDashboard menuItems={menuItems} categories={categories} siteSettings={siteSettings} lang={lang} fetchItems={fetchItems} fetchCategories={fetchCategories} fetchSettings={fetchSettings} isAuthenticated={isAuthenticated} />} />
+          <Route path="/secret-admin-dashboard" element={<AdminDashboard menuItems={menuItems} categories={categories} siteSettings={siteSettings} lang={lang} fetchItems={fetchItems} fetchCategories={fetchCategories} fetchSettings={fetchSettings} />} />
           <Route path="/cashier" element={<CashierDashboard />} />
           <Route path="/cart" element={<CartPage cart={cart} setCart={setCart} lang={lang} />} />
         </Routes>
