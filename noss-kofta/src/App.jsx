@@ -1513,20 +1513,20 @@ const Receipt80 = ({ order, cashierName }) => {
     <div id="receipt-print" dir="rtl">
       <style>{`
         #receipt-print { display: none; }
-        @page { size: 80mm auto; margin: 0; }
+        @page { margin: 0; }
         @media print {
           body > *:not(#receipt-print) { display: none !important; }
           html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
           #receipt-print {
-            display: block; width: 72mm; margin: 0 auto; padding: 3mm 0 6mm;
+            display: block; box-sizing: border-box; width: 60mm; margin: 0 auto; padding: 3mm 0 6mm;
             background: #fff; color: #000; font-family: Tahoma, Arial, sans-serif;
-            font-size: 13px; line-height: 1.45; font-weight: 600;
+            font-size: 12px; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere;
           }
           #receipt-print .rc-center { text-align: center; }
-          #receipt-print .rc-title { font-size: 26px; font-weight: 900; margin: 0; }
+          #receipt-print .rc-title { font-size: 24px; font-weight: 900; margin: 0; }
           #receipt-print .rc-sub { font-size: 12px; margin: 2px 0; }
           #receipt-print .rc-line { border-top: 1px dashed #000; margin: 6px 0; }
-          #receipt-print .rc-row { display: flex; justify-content: space-between; gap: 6px; }
+          #receipt-print .rc-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 6px; }
           #receipt-print table { width: 100%; border-collapse: collapse; }
           #receipt-print th { font-size: 12px; text-align: right; border-bottom: 1px solid #000; padding: 2px 0; }
           #receipt-print td { padding: 3px 0; vertical-align: top; }
