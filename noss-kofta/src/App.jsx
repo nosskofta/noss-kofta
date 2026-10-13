@@ -1498,7 +1498,7 @@ const CartPage = ({ cart, setCart, lang }) => {
 const RESTAURANT_NAME = 'نص كفتة';
 const RESTAURANT_PHONE = '01042258982';
 
-const Receipt80 = ({ order, cashierName }) => {
+const Receipt80 = ({ order, type, cashierName }) => {
   if (!order) return null;
   const items = order.items || [];
   const fee = Number(order.deliveryFee) || 0;
@@ -1533,9 +1533,32 @@ const Receipt80 = ({ order, cashierName }) => {
           #receipt-print .rc-num { text-align: left; white-space: nowrap; padding-right: 4px; }
           #receipt-print .rc-total { font-size: 18px; font-weight: 900; }
           #receipt-print .rc-big { font-size: 15px; font-weight: 900; }
+          #receipt-print .rc-kid { font-size: 28px; font-weight: 900; text-align: center; margin: 4px 0; }
+          #receipt-print .rc-kitem { display: flex; gap: 8px; font-size: 18px; font-weight: 900; padding: 4px 0; border-bottom: 1px dotted #000; }
+          #receipt-print .rc-kqty { min-width: 30px; }
         }
       `}</style>
 
+      {type === 'kitchen' ? (
+        <>
+          <div className="rc-center rc-big">🍳 أوردر المطبخ</div>
+          <div className="rc-kid" dir="ltr">#{order.orderId}</div>
+          <div className="rc-row rc-big">
+            <span>{isDelivery ? '🛵 توصيل' : '🏪 استلام'}</span>
+            <span>{timeText}</span>
+          </div>
+          <div className="rc-line" />
+          {items.map((it, i) => (
+            <div key={i} className="rc-kitem">
+              <span className="rc-kqty">{it.quantity}×</span>
+              <span>{it.name}</span>
+            </div>
+          ))}
+          <div className="rc-line" />
+          <div className="rc-center rc-sub">{dateText}</div>
+        </>
+      ) : (
+      <>
       <div className="rc-center">
         <h1 className="rc-title">{RESTAURANT_NAME}</h1>
         <p className="rc-sub">📞 {RESTAURANT_PHONE}</p>
@@ -1581,6 +1604,8 @@ const Receipt80 = ({ order, cashierName }) => {
 
       <div className="rc-center rc-sub">شكراً لاختياركم {RESTAURANT_NAME} ❤️</div>
       <div className="rc-center rc-sub">بالهنا والشفا</div>
+      </>
+      )}
     </div>,
     document.body
   );
@@ -1631,8 +1656,8 @@ const CashierDashboard = () => {
     } catch (e) {}
   };
 
-  const requestPrint = (ord) => {
-    printQueueRef.current.push(ord);
+  const requestPrint = (ord, type = 'customer') => {
+    printQueueRef.current.push({ order: ord, type });
     setPrintTick(t => t + 1);
   };
 
@@ -1661,7 +1686,7 @@ const CashierDashboard = () => {
     if (fresh.length === 0) return;
     fresh.forEach(o => {
       printed.add(o._id || o.orderId);
-      if (autoPrintRef.current && o.status !== 'completed') requestPrint(o);
+      if (autoPrintRef.current && o.status !== 'completed') requestPrint(o, 'kitchen');
     });
     savePrinted();
   };
@@ -1680,6 +1705,18 @@ const CashierDashboard = () => {
     }, 400);
     return () => clearTimeout(t1);
   }, [printJob]);
+
+  // أي لمسة أو ضغطة في الصفحة بتفعّل الصوت لوحدها (من غير ما تدوس الزرار الأحمر)
+  useEffect(() => {
+    if (!token) return;
+    const unlock = () => unlockAudio();
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, [token]);
 
   // لو التطبيق مفتوح بصلاحية الصوت التلقائي، نفعّل الصوت من غير ضغطة
   useEffect(() => {
@@ -1707,8 +1744,13 @@ const CashierDashboard = () => {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return;
-      if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx();
+      if (!audioCtxRef.current) {
+        const c = new AudioCtx();
+        c.onstatechange = () => setSoundReady(c.state === 'running');
+        audioCtxRef.current = c;
+      }
       audioCtxRef.current.resume();
+      if (audioCtxRef.current.state === 'running') setSoundReady(true);
     } catch (err) {}
   };
 
@@ -1913,14 +1955,15 @@ const CashierDashboard = () => {
             </button>
           )}
           {ord.status === 'accepted' && (
-            <button onClick={() => updateOrderStatus(ord._id || ord.orderId, 'completed')} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold transition">
+            <button onClick={() => { updateOrderStatus(ord._id || ord.orderId, 'completed'); if (autoPrint) requestPrint(ord, 'customer'); }} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold transition">
               🏁 إنهاء الأوردر (تم التسليم)
             </button>
           )}
           {ord.status === 'completed' && (
             <span className="flex-1 text-center text-green-400 text-xs font-bold py-2">تم تسليم الأوردر</span>
           )}
-          <button onClick={() => requestPrint(ord)} title="طباعة الفاتورة" className="text-white bg-zinc-700 hover:bg-zinc-600 px-3 rounded-xl text-sm font-bold">🖨️</button>
+          <button onClick={() => requestPrint(ord, 'kitchen')} title="طباعة ورقة المطبخ" className="text-white bg-zinc-700 hover:bg-zinc-600 px-3 rounded-xl text-sm font-bold">🍳</button>
+          <button onClick={() => requestPrint(ord, 'customer')} title="طباعة فاتورة العميل" className="text-white bg-zinc-700 hover:bg-zinc-600 px-3 rounded-xl text-sm font-bold">🧾</button>
           {isAdmin && (
             <button onClick={() => deleteOrder(ord._id)} className="text-red-400 bg-red-500/10 px-3 rounded-xl text-xs font-bold">🗑️</button>
           )}
@@ -1968,7 +2011,7 @@ const CashierDashboard = () => {
             <button onClick={playBeep} className="bg-zinc-800 px-4 py-2 rounded-xl text-sm font-bold text-white">🔊 تجربة الصوت</button>
           )}
           <button onClick={toggleAutoPrint} className={`px-4 py-2 rounded-xl text-sm font-bold text-white ${autoPrint ? 'bg-green-700' : 'bg-zinc-700'}`}>
-            🖨️ طباعة تلقائية: {autoPrint ? 'شغالة' : 'مقفولة'}
+            🖨️ طباعة تلقائية (مطبخ + عميل): {autoPrint ? 'شغالة' : 'مقفولة'}
           </button>
           <button onClick={fetchOrders} className="bg-[#800020] px-4 py-2 rounded-xl text-sm font-bold text-white">🔄 تحديث</button>
           <button onClick={logout} className="bg-zinc-700 px-4 py-2 rounded-xl text-sm font-bold text-white">🚪 خروج</button>
@@ -2053,7 +2096,7 @@ const CashierDashboard = () => {
         </div>
       )}
 
-      <Receipt80 order={printJob} cashierName={user?.name} />
+      <Receipt80 order={printJob?.order} type={printJob?.type} cashierName={user?.name} />
     </section>
   );
 };
