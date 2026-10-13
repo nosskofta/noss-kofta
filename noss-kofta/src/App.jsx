@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 
 const API_BASE = 'https://noss-kofta-production-d57f.up.railway.app';
 
@@ -1493,6 +1494,98 @@ const CartPage = ({ cart, setCart, lang }) => {
   );
 };
 
+// ================= فاتورة الطباعة (ورق حراري 80 مم) =================
+const RESTAURANT_NAME = 'نص كفتة';
+const RESTAURANT_PHONE = '01042258982';
+
+const Receipt80 = ({ order, cashierName }) => {
+  if (!order) return null;
+  const items = order.items || [];
+  const fee = Number(order.deliveryFee) || 0;
+  const total = Number(order.grandTotal) || 0;
+  const subtotal = total - fee;
+  const dt = order.createdAt ? new Date(order.createdAt) : new Date();
+  const dateText = dt.toLocaleDateString('ar-EG');
+  const timeText = dt.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+  const isDelivery = order.orderType === 'delivery';
+
+  return createPortal(
+    <div id="receipt-print" dir="rtl">
+      <style>{`
+        #receipt-print { display: none; }
+        @page { size: 80mm auto; margin: 0; }
+        @media print {
+          body > *:not(#receipt-print) { display: none !important; }
+          html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+          #receipt-print {
+            display: block; width: 72mm; margin: 0 auto; padding: 3mm 0 6mm;
+            background: #fff; color: #000; font-family: Tahoma, Arial, sans-serif;
+            font-size: 13px; line-height: 1.45; font-weight: 600;
+          }
+          #receipt-print .rc-center { text-align: center; }
+          #receipt-print .rc-title { font-size: 26px; font-weight: 900; margin: 0; }
+          #receipt-print .rc-sub { font-size: 12px; margin: 2px 0; }
+          #receipt-print .rc-line { border-top: 1px dashed #000; margin: 6px 0; }
+          #receipt-print .rc-row { display: flex; justify-content: space-between; gap: 6px; }
+          #receipt-print table { width: 100%; border-collapse: collapse; }
+          #receipt-print th { font-size: 12px; text-align: right; border-bottom: 1px solid #000; padding: 2px 0; }
+          #receipt-print td { padding: 3px 0; vertical-align: top; }
+          #receipt-print .rc-num { text-align: left; white-space: nowrap; padding-right: 4px; }
+          #receipt-print .rc-total { font-size: 18px; font-weight: 900; }
+          #receipt-print .rc-big { font-size: 15px; font-weight: 900; }
+        }
+      `}</style>
+
+      <div className="rc-center">
+        <h1 className="rc-title">{RESTAURANT_NAME}</h1>
+        <p className="rc-sub">📞 {RESTAURANT_PHONE}</p>
+      </div>
+      <div className="rc-line" />
+
+      <div className="rc-row rc-big"><span>أوردر</span><span dir="ltr">#{order.orderId}</span></div>
+      <div className="rc-row"><span>التاريخ: {dateText}</span><span>الوقت: {timeText}</span></div>
+      {cashierName && <div className="rc-row"><span>الكاشير: {cashierName}</span></div>}
+      <div className="rc-line" />
+
+      <div className="rc-big">{isDelivery ? '🛵 توصيل' : '🏪 استلام من الفرع'}</div>
+      <div>الاسم: {order.customerName}</div>
+      <div>التليفون: <span dir="ltr">{order.customerPhone}</span></div>
+      {isDelivery && order.zoneName && <div>المنطقة: {order.zoneName}</div>}
+      {isDelivery && order.customerAddress && <div>العنوان: {order.customerAddress}</div>}
+      <div className="rc-line" />
+
+      <table>
+        <thead>
+          <tr>
+            <th>الصنف</th>
+            <th style={{ textAlign: 'center' }}>كمية</th>
+            <th className="rc-num">السعر</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((it, i) => (
+            <tr key={i}>
+              <td>{it.name}</td>
+              <td style={{ textAlign: 'center' }}>{it.quantity}</td>
+              <td className="rc-num">{(Number(it.price) || 0) * (Number(it.quantity) || 0)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="rc-line" />
+
+      <div className="rc-row"><span>المجموع</span><span>{subtotal} ج</span></div>
+      {isDelivery && <div className="rc-row"><span>التوصيل</span><span>{fee} ج</span></div>}
+      <div className="rc-row rc-total"><span>الإجمالي</span><span>{total} ج</span></div>
+      <div className="rc-line" />
+
+      <div className="rc-center rc-sub">شكراً لاختياركم {RESTAURANT_NAME} ❤️</div>
+      <div className="rc-center rc-sub">بالهنا والشفا</div>
+    </div>,
+    document.body
+  );
+};
+
 // ================= 5. شاشة الكاشير (بحسابات وأدوار) =================
 const CashierDashboard = () => {
   const [session, setSession] = useState(readSession);
@@ -1510,6 +1603,93 @@ const CashierDashboard = () => {
   const token = session?.token;
   const user = session?.user;
   const isAdmin = user?.role === 'admin';
+
+  // ===== الطباعة =====
+  const [printJob, setPrintJob] = useState(null);
+  const [printTick, setPrintTick] = useState(0);
+  const [autoPrint, setAutoPrint] = useState(() => {
+    try { return localStorage.getItem('autoPrint') !== 'off'; } catch (e) { return true; }
+  });
+  const autoPrintRef = useRef(autoPrint);
+  const printQueueRef = useRef([]);
+  const printedRef = useRef(null);
+  const seededRef = useRef(false);
+
+  const loadPrinted = () => {
+    if (printedRef.current) return printedRef.current;
+    let arr = null;
+    try { arr = JSON.parse(localStorage.getItem('printedOrderIds')); } catch (e) {}
+    printedRef.current = new Set(Array.isArray(arr) ? arr : []);
+    printedRef.current.hadStorage = Array.isArray(arr);
+    return printedRef.current;
+  };
+
+  const savePrinted = () => {
+    try {
+      const list = Array.from(printedRef.current).slice(-500);
+      localStorage.setItem('printedOrderIds', JSON.stringify(list));
+    } catch (e) {}
+  };
+
+  const requestPrint = (ord) => {
+    printQueueRef.current.push(ord);
+    setPrintTick(t => t + 1);
+  };
+
+  const toggleAutoPrint = () => {
+    const next = !autoPrint;
+    setAutoPrint(next);
+    autoPrintRef.current = next;
+    try { localStorage.setItem('autoPrint', next ? 'on' : 'off'); } catch (e) {}
+  };
+
+  // بيطبع الأوردرات الجديدة اللي لسه ماتطبعتش (مرة واحدة بس لكل أوردر)
+  const handleAutoPrint = (list) => {
+    const printed = loadPrinted();
+    if (!seededRef.current) {
+      seededRef.current = true;
+      if (!printed.hadStorage) {
+        // أول تشغيل على الجهاز: الأوردرات القديمة ما تتطبعش
+        list.forEach(o => printed.add(o._id || o.orderId));
+        savePrinted();
+        return;
+      }
+    }
+    const fresh = list
+      .filter(o => !printed.has(o._id || o.orderId))
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    if (fresh.length === 0) return;
+    fresh.forEach(o => {
+      printed.add(o._id || o.orderId);
+      if (autoPrintRef.current && o.status !== 'completed') requestPrint(o);
+    });
+    savePrinted();
+  };
+
+  // تنفيذ الطباعة واحدة ورا التانية
+  useEffect(() => {
+    if (printJob || printQueueRef.current.length === 0) return;
+    setPrintJob(printQueueRef.current.shift());
+  }, [printTick, printJob]);
+
+  useEffect(() => {
+    if (!printJob) return;
+    const t1 = setTimeout(() => {
+      try { window.print(); } catch (e) {}
+      setTimeout(() => setPrintJob(null), 1200);
+    }, 400);
+    return () => clearTimeout(t1);
+  }, [printJob]);
+
+  // لو التطبيق مفتوح بصلاحية الصوت التلقائي، نفعّل الصوت من غير ضغطة
+  useEffect(() => {
+    if (!token) return;
+    unlockAudio();
+    const t = setTimeout(() => {
+      if (audioCtxRef.current && audioCtxRef.current.state === 'running') setSoundReady(true);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [token]);
 
   const logout = () => {
     clearSession();
@@ -1575,7 +1755,10 @@ const CashierDashboard = () => {
     try {
       const res = await authFetch('/api/orders');
       const data = await res.json();
-      if (Array.isArray(data)) setOrders(data);
+      if (Array.isArray(data)) {
+        setOrders(data);
+        handleAutoPrint(data);
+      }
     } catch (err) {}
   };
 
@@ -1737,6 +1920,7 @@ const CashierDashboard = () => {
           {ord.status === 'completed' && (
             <span className="flex-1 text-center text-green-400 text-xs font-bold py-2">تم تسليم الأوردر</span>
           )}
+          <button onClick={() => requestPrint(ord)} title="طباعة الفاتورة" className="text-white bg-zinc-700 hover:bg-zinc-600 px-3 rounded-xl text-sm font-bold">🖨️</button>
           {isAdmin && (
             <button onClick={() => deleteOrder(ord._id)} className="text-red-400 bg-red-500/10 px-3 rounded-xl text-xs font-bold">🗑️</button>
           )}
@@ -1783,6 +1967,9 @@ const CashierDashboard = () => {
           {soundReady && (
             <button onClick={playBeep} className="bg-zinc-800 px-4 py-2 rounded-xl text-sm font-bold text-white">🔊 تجربة الصوت</button>
           )}
+          <button onClick={toggleAutoPrint} className={`px-4 py-2 rounded-xl text-sm font-bold text-white ${autoPrint ? 'bg-green-700' : 'bg-zinc-700'}`}>
+            🖨️ طباعة تلقائية: {autoPrint ? 'شغالة' : 'مقفولة'}
+          </button>
           <button onClick={fetchOrders} className="bg-[#800020] px-4 py-2 rounded-xl text-sm font-bold text-white">🔄 تحديث</button>
           <button onClick={logout} className="bg-zinc-700 px-4 py-2 rounded-xl text-sm font-bold text-white">🚪 خروج</button>
         </div>
@@ -1865,6 +2052,8 @@ const CashierDashboard = () => {
           </div>
         </div>
       )}
+
+      <Receipt80 order={printJob} cashierName={user?.name} />
     </section>
   );
 };
