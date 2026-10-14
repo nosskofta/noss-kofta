@@ -185,6 +185,19 @@ const orderSchema = new mongoose.Schema({
 
 const Order = mongoose.model("Order", orderSchema);
 
+// تقفيلات الشيفتات
+const shiftSchema = new mongoose.Schema({
+  closedAt: { type: Date, default: Date.now },
+  closedBy: { type: String },
+  from: { type: Date },
+  count: { type: Number, default: 0 },
+  total: { type: Number, default: 0 },
+  delivery: { type: Number, default: 0 },
+  orders: { type: Array, default: [] }
+});
+
+const Shift = mongoose.model("Shift", shiftSchema);
+
 // =========================
 // AUTH (الكاشير / الأدمن)
 // =========================
@@ -779,6 +792,49 @@ app.delete("/api/orders/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     await Order.findByIdAndDelete(req.params.id);
     res.json({ message: "تم مسح الأوردر" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// تقفيل الشيفت (الحساب بيتم على السيرفر من الأوردرات المكتملة بعد آخر تقفيل)
+app.get("/api/shifts", requireAuth, async (req, res) => {
+  try {
+    const shifts = await Shift.find().sort({ closedAt: -1 }).limit(90);
+    res.json(shifts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/shifts/close", requireAuth, async (req, res) => {
+  try {
+    const last = await Shift.findOne().sort({ closedAt: -1 });
+    const lastAt = last ? new Date(last.closedAt).getTime() : 0;
+    const now = new Date();
+
+    const completed = await Order.find({ status: "completed" });
+    const inShift = completed
+      .filter((o) => {
+        const t = new Date(o.completedAt || o.createdAt).getTime();
+        return t > lastAt && t <= now.getTime();
+      })
+      .sort((a, b) => new Date(a.completedAt || a.createdAt) - new Date(b.completedAt || b.createdAt));
+
+    if (inShift.length === 0) {
+      return res.status(400).json({ error: "مفيش أوردرات مكتملة في الشيفت ده" });
+    }
+
+    const shift = await Shift.create({
+      closedAt: now,
+      closedBy: req.user.name,
+      from: inShift[0].completedAt || inShift[0].createdAt,
+      count: inShift.length,
+      total: inShift.reduce((sum, o) => sum + (Number(o.grandTotal) || 0), 0),
+      delivery: inShift.reduce((sum, o) => sum + (Number(o.deliveryFee) || 0), 0),
+      orders: inShift.map((o) => ({ id: o.orderId, total: Number(o.grandTotal) || 0 }))
+    });
+    res.json(shift);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
