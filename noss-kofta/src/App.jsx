@@ -1494,6 +1494,19 @@ const CartPage = ({ cart, setCart, lang }) => {
   );
 };
 
+// ================= مساعدات الأرشيف والشيفت =================
+const dayKeyOf = (v) => {
+  const d = new Date(v);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const dayLabelOf = (v) =>
+  new Date(v).toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+const sumOrders = (list) => ({
+  count: list.length,
+  total: list.reduce((sum, o) => sum + (Number(o.grandTotal) || 0), 0),
+  delivery: list.reduce((sum, o) => sum + (Number(o.deliveryFee) || 0), 0)
+});
+
 // ================= فاتورة الطباعة (ورق حراري 80 مم) =================
 const RESTAURANT_NAME = 'نص كفتة';
 const RESTAURANT_PHONE = '01042258982';
@@ -1539,7 +1552,36 @@ const Receipt80 = ({ order, type, cashierName }) => {
         }
       `}</style>
 
-      {type === 'kitchen' ? (
+      {type === 'shift' ? (
+        <>
+          <div className="rc-center">
+            <h1 className="rc-title">{RESTAURANT_NAME}</h1>
+            <p className="rc-big">🔒 تقفيل شيفت</p>
+          </div>
+          <div className="rc-line" />
+          <div>من: {new Date(order.from).toLocaleString('ar-EG')}</div>
+          <div>إلى: {new Date(order.closedAt).toLocaleString('ar-EG')}</div>
+          <div>الكاشير: {order.closedBy}</div>
+          <div className="rc-line" />
+          <table>
+            <thead><tr><th>الأوردر</th><th className="rc-num">الإجمالي</th></tr></thead>
+            <tbody>
+              {(order.orders || []).map((o, i) => (
+                <tr key={i}>
+                  <td dir="ltr" style={{ textAlign: 'right' }}>{o.id}</td>
+                  <td className="rc-num">{o.total} ج</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="rc-line" />
+          <div className="rc-row"><span>عدد الأوردرات</span><span>{order.count}</span></div>
+          <div className="rc-row"><span>مبيعات الأصناف</span><span>{order.total - order.delivery} ج</span></div>
+          <div className="rc-row"><span>رسوم التوصيل</span><span>{order.delivery} ج</span></div>
+          <div className="rc-row rc-total"><span>إجمالي الشيفت</span><span>{order.total} ج</span></div>
+          <div className="rc-line" />
+        </>
+      ) : type === 'kitchen' ? (
         <>
           <div className="rc-center rc-big">🍳 أوردر المطبخ</div>
           <div className="rc-kid" dir="ltr">#{order.orderId}</div>
@@ -1630,6 +1672,8 @@ const CashierDashboard = () => {
   const isAdmin = user?.role === 'admin';
 
   // ===== الطباعة =====
+  const [shiftClosings, setShiftClosings] = useState([]);
+  const [openDay, setOpenDay] = useState(null); // null = أحدث يوم مفتوح، '' = الكل مقفول
   const [printJob, setPrintJob] = useState(null);
   const [printTick, setPrintTick] = useState(0);
   const [autoPrint, setAutoPrint] = useState(() => {
@@ -1804,6 +1848,14 @@ const CashierDashboard = () => {
     } catch (err) {}
   };
 
+  const fetchShifts = async () => {
+    try {
+      const res = await authFetch('/api/shifts');
+      const data = await res.json();
+      if (Array.isArray(data)) setShiftClosings(data);
+    } catch (err) {}
+  };
+
   const fetchStaff = async () => {
     if (!isAdmin) return;
     try {
@@ -1816,9 +1868,14 @@ const CashierDashboard = () => {
   useEffect(() => {
     if (!token) return;
     fetchOrders();
+    fetchShifts();
     const interval = setInterval(fetchOrders, 3000);
     return () => clearInterval(interval);
   }, [token]);
+
+  useEffect(() => {
+    if (token && cashierTab === 'archive') fetchShifts();
+  }, [token, cashierTab]);
 
   useEffect(() => {
     if (token && isAdmin && cashierTab === 'staff') fetchStaff();
@@ -1907,10 +1964,37 @@ const CashierDashboard = () => {
   const activeOrders = orders.filter(o => o.status !== 'completed');
   const doneOrders = orders.filter(o => o.status === 'completed');
 
-  const todayStr = new Date().toDateString();
-  const todaySales = doneOrders
-    .filter(o => new Date(o.createdAt).toDateString() === todayStr)
-    .reduce((sum, o) => sum + (o.grandTotal || 0), 0);
+  const lastClosedAt = shiftClosings.length ? new Date(shiftClosings[0].closedAt).getTime() : 0;
+  const shiftOrders = doneOrders.filter(o => new Date(o.completedAt || o.createdAt).getTime() > lastClosedAt);
+  const shiftStats = sumOrders(shiftOrders);
+
+  const dayGroups = (() => {
+    const m = {};
+    doneOrders.forEach(o => { const k = dayKeyOf(o.createdAt); (m[k] = m[k] || []).push(o); });
+    return Object.keys(m).sort().reverse().map(k => ({
+      key: k,
+      label: dayLabelOf(m[k][0].createdAt),
+      orders: [...m[k]].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
+      ...sumOrders(m[k])
+    }));
+  })();
+
+  const closeShift = async () => {
+    if (shiftOrders.length === 0) return alert('مفيش أوردرات مكتملة في الشيفت ده');
+    const msg = activeOrders.length > 0
+      ? `فيه ${activeOrders.length} أوردر لسه شغال (مش مكتمل) ومش هيدخل في التقفيل. تقفل الشيفت؟`
+      : 'تقفل الشيفت دلوقتي؟';
+    if (!window.confirm(msg)) return;
+    try {
+      const res = await authFetch('/api/shifts/close', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'حصل خطأ في التقفيل');
+      setShiftClosings(prev => [data, ...prev]);
+      requestPrint(data, 'shift');
+    } catch (err) {
+      alert('تعذر الاتصال بالسيرفر، حاول تاني');
+    }
+  };
 
   const renderOrderCard = (ord) => (
     <div key={ord._id || ord.orderId} className={`bg-[#1C0D10] border rounded-2xl p-5 shadow-xl flex flex-col justify-between ${ord.status === 'completed' ? 'border-[#3A1218]' : ord.status === 'accepted' ? 'border-yellow-500/60' : 'border-red-500 animate-pulse'}`}>
@@ -2043,19 +2127,67 @@ const CashierDashboard = () => {
       )}
 
       {cashierTab === 'archive' && (
-        <>
-          {isAdmin && (
-            <div className="bg-[#1C0D10] border border-[#FFD700]/40 rounded-2xl p-4 mb-6 flex justify-between items-center">
-              <span className="font-bold text-zinc-300">💰 إجمالي مبيعات اليوم (الأوردرات المكتملة)</span>
-              <span className="text-[#FFD700] text-2xl font-black">{todaySales} ج</span>
+        <div className="space-y-6">
+          <div className="bg-[#1C0D10] border border-[#FFD700]/40 rounded-2xl p-5 flex flex-wrap gap-4 items-center justify-between">
+            <div>
+              <p className="font-black text-[#FFD700] text-lg">🕒 الشيفت الحالي</p>
+              <p className="text-zinc-300 text-sm mt-1">{shiftStats.count} أوردر مكتمل · توصيل {shiftStats.delivery} ج</p>
+              {shiftClosings[0] && (
+                <p className="text-zinc-500 text-xs mt-1">آخر تقفيل: {new Date(shiftClosings[0].closedAt).toLocaleString('ar-EG')} ({shiftClosings[0].closedBy})</p>
+              )}
             </div>
+            <div className="flex items-center gap-4">
+              <span className="text-[#FFD700] text-3xl font-black">{shiftStats.total} ج</span>
+              <button onClick={closeShift} className="bg-red-600 hover:bg-red-700 text-white font-black px-5 py-3 rounded-xl">🔒 تقفيل الشيفت</button>
+            </div>
+          </div>
+
+          {shiftClosings.length > 0 && (
+            <details className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-4">
+              <summary className="cursor-pointer font-bold text-zinc-200">📜 تقفيلات الشيفتات السابقة ({shiftClosings.length})</summary>
+              <div className="mt-3 space-y-2">
+                {shiftClosings.map(c => (
+                  <div key={c._id || c.id} className="flex flex-wrap items-center justify-between gap-2 bg-[#12080A] border border-[#3A1218] rounded-xl px-4 py-2 text-sm">
+                    <span className="text-zinc-300">{new Date(c.closedAt).toLocaleString('ar-EG')} · {c.closedBy}</span>
+                    <span className="text-zinc-400">{c.count} أوردر</span>
+                    <span className="text-[#FFD700] font-black">{c.total} ج</span>
+                    <button onClick={() => requestPrint(c, 'shift')} className="bg-zinc-700 text-white px-3 py-1 rounded-lg text-xs font-bold">🖨️ طباعة</button>
+                  </div>
+                ))}
+              </div>
+            </details>
           )}
-          {doneOrders.length === 0 ? (
+
+          {dayGroups.length === 0 ? (
             <p className="text-zinc-500 text-center py-20 text-xl bg-[#1C0D10] border border-[#3A1218] rounded-2xl">لا توجد أوردرات منتهية بعد.</p>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-90">{doneOrders.map(renderOrderCard)}</div>
+            dayGroups.map(g => {
+              const isOpen = (openDay === null ? dayGroups[0].key : openDay) === g.key;
+              return (
+                <div key={g.key} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setOpenDay(isOpen ? '' : g.key)}
+                    className="w-full flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-right hover:bg-[#2A1217] transition"
+                  >
+                    <span className="font-black text-white text-lg">📅 {g.label}</span>
+                    <span className="flex items-center gap-4 text-sm">
+                      <span className="text-zinc-300">{g.count} أوردر</span>
+                      <span className="text-zinc-400">توصيل {g.delivery} ج</span>
+                      <span className="text-[#FFD700] text-xl font-black">{g.total} ج</span>
+                      <span className="text-zinc-400">{isOpen ? '▲' : '▼'}</span>
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="p-5 border-t border-[#3A1218] grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-95">
+                      {g.orders.map(renderOrderCard)}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
-        </>
+        </div>
       )}
 
       {cashierTab === 'staff' && isAdmin && (
