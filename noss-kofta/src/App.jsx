@@ -2233,6 +2233,47 @@ const CashierDashboard = () => {
   );
 };
 
+// ================= لودر نص كفتة المتحرك =================
+const KoftaLoader = () => (
+  <div className="kofta-loader" dir="rtl" role="status" aria-label="جاري تجهيز المنيو">
+    <style>{`
+      .kofta-loader{min-height:100vh;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;background:radial-gradient(ellipse at 50% 42%,#351018 0%,#1b0b0e 42%,#12080a 76%);color:#fff;font-family:inherit;position:relative}
+      .kofta-loader:before{content:"";position:absolute;width:320px;height:320px;border-radius:50%;background:#800020;filter:blur(95px);opacity:.22;animation:koftaGlow 2.8s ease-in-out infinite alternate}
+      .kofta-scene{position:relative;width:260px;height:245px;display:flex;align-items:center;justify-content:center;z-index:1}
+      .kofta-skewer{position:absolute;top:25px;left:calc(50% - 2px);height:166px;width:4px;border-radius:8px;background:linear-gradient(90deg,#8b552b,#f1c27d,#6f3d1c);box-shadow:0 0 5px #000;transform:rotate(7deg);z-index:1}
+      .kofta-piece{position:absolute;left:50%;width:105px;height:27px;transform:translate(-50%,-24px) rotate(7deg) scale(.72);opacity:0;z-index:2;border-radius:48% 45% 46% 42%;background:repeating-linear-gradient(105deg,transparent 0 10px,rgba(45,12,5,.5) 11px 14px),linear-gradient(180deg,#d68b43 0%,#9e4d24 40%,#5f2918 72%,#b96c32 100%);box-shadow:inset 0 3px 4px #f4bd6d80,inset 0 -5px 5px #35140e,0 4px 7px #0009;animation:koftaBuild 2.5s ease-in-out infinite}
+      .kofta-piece:after{content:"";position:absolute;left:16px;right:15px;top:7px;height:3px;border-radius:50%;background:#3b160e;box-shadow:26px 8px 0 -1px #3b160e,48px -1px 0 -1px #3b160e;opacity:.9}
+      .kofta-piece.p1{top:31px;animation-delay:0s}.kofta-piece.p2{top:59px;animation-delay:.22s}.kofta-piece.p3{top:87px;animation-delay:.44s}.kofta-piece.p4{top:115px;animation-delay:.66s}.kofta-piece.p5{top:143px;animation-delay:.88s}
+      .kofta-grill{position:absolute;bottom:19px;width:190px;height:28px;border-radius:50%;background:linear-gradient(180deg,#292427,#080708);border:2px solid #514044;box-shadow:0 8px 18px #0009,0 0 25px #d44c151c}
+      .kofta-grill:before{content:"";position:absolute;left:14px;right:14px;top:7px;height:3px;border-radius:50%;background:repeating-linear-gradient(90deg,#6e6261 0 13px,#21191a 13px 19px)}
+      .kofta-fire{position:absolute;bottom:34px;width:150px;height:35px;background:linear-gradient(0deg,#ff4d13 0%,#ffb52e 38%,transparent 78%);filter:blur(7px);opacity:.75;animation:koftaFire .65s ease-in-out infinite alternate}
+      .kofta-ember{position:absolute;bottom:43px;width:5px;height:5px;border-radius:50%;background:#ffb63d;box-shadow:0 0 10px #ff5b1a;animation:koftaEmber 1.7s ease-out infinite}
+      .kofta-ember.e1{left:57px;animation-delay:.1s}.kofta-ember.e2{left:90px;animation-delay:.7s}.kofta-ember.e3{right:61px;animation-delay:1.1s}
+      .kofta-smoke{position:absolute;top:2px;width:22px;height:48px;border-radius:50%;background:linear-gradient(180deg,#b9a6a6,transparent);filter:blur(8px);opacity:0;animation:koftaSmoke 2.2s ease-out infinite}
+      .kofta-smoke.s1{left:87px;animation-delay:.2s}.kofta-smoke.s2{left:139px;animation-delay:1.1s}
+      .kofta-loader-title{z-index:1;margin-top:2px;font-size:25px;font-weight:900;color:#ffd700;text-shadow:0 2px 18px #800020;letter-spacing:.3px;animation:koftaText 1.5s ease-in-out infinite}
+      .kofta-loader-sub{z-index:1;margin-top:9px;color:#d7c4c7;font-size:13px;letter-spacing:1px}
+      @keyframes koftaBuild{0%,8%{opacity:0;transform:translate(-50%,-24px) rotate(7deg) scale(.72)}18%,72%{opacity:1;transform:translate(-50%,0) rotate(7deg) scale(1)}85%,100%{opacity:0;transform:translate(-50%,4px) rotate(7deg) scale(.96)}}
+      @keyframes koftaGlow{from{transform:scale(.88);opacity:.14}to{transform:scale(1.12);opacity:.3}}
+      @keyframes koftaFire{from{transform:scaleX(.86);opacity:.45}to{transform:scaleX(1.08);opacity:.9}}
+      @keyframes koftaEmber{0%{transform:translateY(0) scale(.5);opacity:0}20%{opacity:1}100%{transform:translateY(-58px) translateX(12px) scale(0);opacity:0}}
+      @keyframes koftaSmoke{0%{transform:translateY(0) scale(.5);opacity:0}20%{opacity:.25}100%{transform:translateY(-42px) translateX(-12px) scale(1.8);opacity:0}}
+      @keyframes koftaText{0%,100%{opacity:.75;transform:scale(.99)}50%{opacity:1;transform:scale(1.02)}}
+      @media(prefers-reduced-motion:reduce){.kofta-piece,.kofta-fire,.kofta-ember,.kofta-smoke,.kofta-loader-title,.kofta-loader:before{animation-duration:4s}}
+    `}</style>
+    <div className="kofta-scene" aria-hidden="true">
+      <div className="kofta-smoke s1" /><div className="kofta-smoke s2" />
+      <div className="kofta-skewer" />
+      <div className="kofta-piece p1" /><div className="kofta-piece p2" /><div className="kofta-piece p3" /><div className="kofta-piece p4" /><div className="kofta-piece p5" />
+      <div className="kofta-fire" />
+      <div className="kofta-ember e1" /><div className="kofta-ember e2" /><div className="kofta-ember e3" />
+      <div className="kofta-grill" />
+    </div>
+    <h2 className="kofta-loader-title">نص كفتة</h2>
+    <p className="kofta-loader-sub">بنجهّزلك المنيو على الفحم... 🔥</p>
+  </div>
+);
+
 // ================= التطبيق الرئيسي =================
 function App() {
   const navigate = useNavigate();
@@ -2382,12 +2423,7 @@ function App() {
   };
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen bg-[#12080A] flex flex-col items-center justify-center text-white" dir="rtl">
-        <div className="w-16 h-16 border-4 border-[#800020] border-t-transparent rounded-full animate-spin mb-6"></div>
-        <h2 className="text-[#FFD700] font-black text-2xl italic tracking-wider animate-pulse">جاري تجهيز المنيو... 🔥</h2>
-      </div>
-    );
+    return <KoftaLoader />;
   }
 
   return (
