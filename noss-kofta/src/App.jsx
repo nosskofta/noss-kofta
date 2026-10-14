@@ -2233,46 +2233,149 @@ const CashierDashboard = () => {
   );
 };
 
-// ================= لودر نص كفتة المتحرك =================
-const KoftaLoader = () => (
-  <div className="kofta-loader" dir="rtl" role="status" aria-label="جاري تجهيز المنيو">
-    <style>{`
-      .kofta-loader{min-height:100vh;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;background:radial-gradient(ellipse at 50% 42%,#351018 0%,#1b0b0e 42%,#12080a 76%);color:#fff;font-family:inherit;position:relative}
-      .kofta-loader:before{content:"";position:absolute;width:320px;height:320px;border-radius:50%;background:#800020;filter:blur(95px);opacity:.22;animation:koftaGlow 2.8s ease-in-out infinite alternate}
-      .kofta-scene{position:relative;width:260px;height:245px;display:flex;align-items:center;justify-content:center;z-index:1}
-      .kofta-skewer{position:absolute;top:25px;left:calc(50% - 2px);height:166px;width:4px;border-radius:8px;background:linear-gradient(90deg,#8b552b,#f1c27d,#6f3d1c);box-shadow:0 0 5px #000;transform:rotate(7deg);z-index:1}
-      .kofta-piece{position:absolute;left:50%;width:105px;height:27px;transform:translate(-50%,-24px) rotate(7deg) scale(.72);opacity:0;z-index:2;border-radius:48% 45% 46% 42%;background:repeating-linear-gradient(105deg,transparent 0 10px,rgba(45,12,5,.5) 11px 14px),linear-gradient(180deg,#d68b43 0%,#9e4d24 40%,#5f2918 72%,#b96c32 100%);box-shadow:inset 0 3px 4px #f4bd6d80,inset 0 -5px 5px #35140e,0 4px 7px #0009;animation:koftaBuild 2.5s ease-in-out infinite}
-      .kofta-piece:after{content:"";position:absolute;left:16px;right:15px;top:7px;height:3px;border-radius:50%;background:#3b160e;box-shadow:26px 8px 0 -1px #3b160e,48px -1px 0 -1px #3b160e;opacity:.9}
-      .kofta-piece.p1{top:31px;animation-delay:0s}.kofta-piece.p2{top:59px;animation-delay:.22s}.kofta-piece.p3{top:87px;animation-delay:.44s}.kofta-piece.p4{top:115px;animation-delay:.66s}.kofta-piece.p5{top:143px;animation-delay:.88s}
-      .kofta-grill{position:absolute;bottom:19px;width:190px;height:28px;border-radius:50%;background:linear-gradient(180deg,#292427,#080708);border:2px solid #514044;box-shadow:0 8px 18px #0009,0 0 25px #d44c151c}
-      .kofta-grill:before{content:"";position:absolute;left:14px;right:14px;top:7px;height:3px;border-radius:50%;background:repeating-linear-gradient(90deg,#6e6261 0 13px,#21191a 13px 19px)}
-      .kofta-fire{position:absolute;bottom:34px;width:150px;height:35px;background:linear-gradient(0deg,#ff4d13 0%,#ffb52e 38%,transparent 78%);filter:blur(7px);opacity:.75;animation:koftaFire .65s ease-in-out infinite alternate}
-      .kofta-ember{position:absolute;bottom:43px;width:5px;height:5px;border-radius:50%;background:#ffb63d;box-shadow:0 0 10px #ff5b1a;animation:koftaEmber 1.7s ease-out infinite}
-      .kofta-ember.e1{left:57px;animation-delay:.1s}.kofta-ember.e2{left:90px;animation-delay:.7s}.kofta-ember.e3{right:61px;animation-delay:1.1s}
-      .kofta-smoke{position:absolute;top:2px;width:22px;height:48px;border-radius:50%;background:linear-gradient(180deg,#b9a6a6,transparent);filter:blur(8px);opacity:0;animation:koftaSmoke 2.2s ease-out infinite}
-      .kofta-smoke.s1{left:87px;animation-delay:.2s}.kofta-smoke.s2{left:139px;animation-delay:1.1s}
-      .kofta-loader-title{z-index:1;margin-top:2px;font-size:25px;font-weight:900;color:#ffd700;text-shadow:0 2px 18px #800020;letter-spacing:.3px;animation:koftaText 1.5s ease-in-out infinite}
-      .kofta-loader-sub{z-index:1;margin-top:9px;color:#d7c4c7;font-size:13px;letter-spacing:1px}
-      @keyframes koftaBuild{0%,8%{opacity:0;transform:translate(-50%,-24px) rotate(7deg) scale(.72)}18%,72%{opacity:1;transform:translate(-50%,0) rotate(7deg) scale(1)}85%,100%{opacity:0;transform:translate(-50%,4px) rotate(7deg) scale(.96)}}
-      @keyframes koftaGlow{from{transform:scale(.88);opacity:.14}to{transform:scale(1.12);opacity:.3}}
-      @keyframes koftaFire{from{transform:scaleX(.86);opacity:.45}to{transform:scaleX(1.08);opacity:.9}}
-      @keyframes koftaEmber{0%{transform:translateY(0) scale(.5);opacity:0}20%{opacity:1}100%{transform:translateY(-58px) translateX(12px) scale(0);opacity:0}}
-      @keyframes koftaSmoke{0%{transform:translateY(0) scale(.5);opacity:0}20%{opacity:.25}100%{transform:translateY(-42px) translateX(-12px) scale(1.8);opacity:0}}
-      @keyframes koftaText{0%,100%{opacity:.75;transform:scale(.99)}50%{opacity:1;transform:scale(1.02)}}
-      @media(prefers-reduced-motion:reduce){.kofta-piece,.kofta-fire,.kofta-ember,.kofta-smoke,.kofta-loader-title,.kofta-loader:before{animation-duration:4s}}
-    `}</style>
-    <div className="kofta-scene" aria-hidden="true">
-      <div className="kofta-smoke s1" /><div className="kofta-smoke s2" />
-      <div className="kofta-skewer" />
-      <div className="kofta-piece p1" /><div className="kofta-piece p2" /><div className="kofta-piece p3" /><div className="kofta-piece p4" /><div className="kofta-piece p5" />
-      <div className="kofta-fire" />
-      <div className="kofta-ember e1" /><div className="kofta-ember e2" /><div className="kofta-ember e3" />
-      <div className="kofta-grill" />
+// ================= شاشة التحميل: سيخ كفتة بيتشوي ودخان =================
+const KoftaLoader = () => {
+  const messages = [
+    'بنولّع الفحم 🔥',
+    'بنلف الكفتة على السيخ...',
+    'الدخان طالع والريحة جاية 😋',
+    'لسه شوية وتبقى جاهزة'
+  ];
+  const [msgIdx, setMsgIdx] = useState(0);
+
+  useEffect(() => {
+    const t = setInterval(() => setMsgIdx(i => (i + 1) % messages.length), 2200);
+    return () => clearInterval(t);
+  }, []);
+
+  const pieces = [0, 1, 2, 3];
+  const flames = [78, 134, 190, 246];
+  const smokes = [
+    { x: 95, d: 0 }, { x: 150, d: 0.9 }, { x: 205, d: 1.8 },
+    { x: 250, d: 0.5 }, { x: 120, d: 2.4 }, { x: 180, d: 3.0 }
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#12080A] flex flex-col items-center justify-center text-white px-4" dir="rtl">
+      <style>{`
+        .nkl-svg { width: min(92vw, 420px); height: auto; overflow: visible; }
+        .nkl-box { transform-box: fill-box; }
+        .nkl-piece { transform-box: fill-box; transform-origin: center; animation: nkl-build 5.2s ease-in-out infinite; }
+        .nkl-cook { animation: nkl-cook 5.2s ease-in-out infinite; }
+        .nkl-roll { animation: nkl-roll 0.9s linear infinite; }
+        .nkl-flame { transform-box: fill-box; transform-origin: 50% 100%; animation: nkl-flame 0.7s ease-in-out infinite alternate; }
+        .nkl-coal { animation: nkl-coal 1.4s ease-in-out infinite alternate; }
+        .nkl-smoke { transform-box: fill-box; transform-origin: center; filter: blur(7px); opacity: 0; animation: nkl-smoke 4.2s ease-out infinite; }
+        .nkl-spark { opacity: 0; animation: nkl-spark 2.2s ease-out infinite; }
+        .nkl-msg { animation: nkl-fade 2.2s ease-in-out infinite; }
+        @keyframes nkl-build { 0%, 3% { transform: scaleX(0); opacity: 0; } 14%, 90% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(1); opacity: 0; } }
+        @keyframes nkl-cook { 0%, 35% { opacity: 0; } 80%, 100% { opacity: 1; } }
+        @keyframes nkl-roll { from { transform: translateY(0); } to { transform: translateY(10px); } }
+        @keyframes nkl-flame { from { transform: scale(0.85, 0.8) skewX(-4deg); } to { transform: scale(1.1, 1.25) skewX(5deg); } }
+        @keyframes nkl-coal { from { opacity: 0.55; } to { opacity: 1; } }
+        @keyframes nkl-smoke {
+          0% { transform: translate(0, 0) scale(0.5); opacity: 0; }
+          15% { opacity: 0.5; }
+          60% { transform: translate(14px, -70px) scale(1.4); opacity: 0.28; }
+          100% { transform: translate(-10px, -135px) scale(2.1); opacity: 0; }
+        }
+        @keyframes nkl-spark {
+          0% { transform: translate(0, 0); opacity: 0; }
+          15% { opacity: 1; }
+          100% { transform: translate(var(--dx, 8px), -90px); opacity: 0; }
+        }
+        @keyframes nkl-fade { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) {
+          .nkl-piece, .nkl-cook, .nkl-roll, .nkl-flame, .nkl-coal, .nkl-smoke, .nkl-spark, .nkl-msg { animation: none; }
+          .nkl-cook { opacity: 1; } .nkl-smoke, .nkl-spark { opacity: 0; }
+        }
+      `}</style>
+
+      <svg className="nkl-svg" viewBox="0 0 320 230" role="img" aria-label="جاري تجهيز المنيو">
+        <defs>
+          <linearGradient id="nklRaw" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#d9786c" /><stop offset="1" stopColor="#a4473f" />
+          </linearGradient>
+          <linearGradient id="nklCooked" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#a8622f" /><stop offset="0.6" stopColor="#6e3418" /><stop offset="1" stopColor="#3d1b0c" />
+          </linearGradient>
+          <linearGradient id="nklFlame" x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0" stopColor="#ff3d00" /><stop offset="0.6" stopColor="#ff8f00" /><stop offset="1" stopColor="#ffe082" />
+          </linearGradient>
+          <radialGradient id="nklCoal" cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0" stopColor="#ffb300" /><stop offset="0.6" stopColor="#ff4d00" /><stop offset="1" stopColor="#7a1500" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id="nklSteel" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#f2f2f2" /><stop offset="1" stopColor="#8a8a8a" />
+          </linearGradient>
+          <clipPath id="nklClip">
+            {pieces.map(i => <rect key={i} x={60 + i * 54} y={104} width={50} height={28} rx={14} />)}
+          </clipPath>
+        </defs>
+
+        {/* دخان */}
+        {smokes.map((sm, i) => (
+          <ellipse key={i} className="nkl-smoke" cx={sm.x} cy={108} rx={22} ry={16} fill="#e9e1dc" style={{ animationDelay: `${sm.d}s` }} />
+        ))}
+
+        {/* شرار */}
+        {[70, 120, 175, 225, 265].map((x, i) => (
+          <circle key={i} className="nkl-spark" cx={x} cy={165} r={1.8} fill="#ffb300"
+            style={{ animationDelay: `${i * 0.42}s`, ['--dx']: `${(i % 2 ? 1 : -1) * (6 + i * 2)}px` }} />
+        ))}
+
+        {/* الشواية: فحم */}
+        <rect x={14} y={170} width={292} height={42} rx={12} fill="#1b0e0a" stroke="#3a1a12" strokeWidth={2} />
+        {[34, 66, 98, 130, 162, 194, 226, 258, 288].map((x, i) => (
+          <ellipse key={i} className="nkl-coal" cx={x} cy={184 + (i % 3) * 6} rx={15} ry={8} fill="url(#nklCoal)"
+            style={{ animationDelay: `${(i % 4) * 0.25}s` }} />
+        ))}
+
+        {/* لهب */}
+        {flames.map((x, i) => (
+          <g key={i} transform={`translate(${x} 176)`}>
+            <path className="nkl-flame" d="M0 0 C -13 -12 -8 -26 0 -44 C 8 -26 13 -12 0 0 Z" fill="url(#nklFlame)" opacity={0.9}
+              style={{ animationDelay: `${i * 0.15}s`, animationDuration: `${0.55 + i * 0.1}s` }} />
+          </g>
+        ))}
+
+        {/* حوامل السيخ */}
+        <path d="M46 168 L46 126 L38 118 M46 126 L54 118" stroke="#4a4a4f" strokeWidth={4} fill="none" strokeLinecap="round" />
+        <path d="M286 168 L286 126 L278 118 M286 126 L294 118" stroke="#4a4a4f" strokeWidth={4} fill="none" strokeLinecap="round" />
+
+        {/* السيخ */}
+        <rect x={14} y={116} width={288} height={5} rx={2.5} fill="url(#nklSteel)" />
+        <rect x={0} y={111} width={26} height={15} rx={7} fill="#6b3f1d" />
+        <rect x={2} y={113} width={22} height={4} rx={2} fill="#8a5a2f" opacity={0.7} />
+
+        {/* قطع الكفتة */}
+        {pieces.map(i => (
+          <g key={i} className="nkl-piece" style={{ animationDelay: `${i * 0.55}s` }}>
+            <rect x={60 + i * 54} y={104} width={50} height={28} rx={14} fill="url(#nklRaw)" />
+            <rect className="nkl-cook" x={60 + i * 54} y={104} width={50} height={28} rx={14} fill="url(#nklCooked)"
+              style={{ animationDelay: `${i * 0.55}s` }} />
+            <rect x={64 + i * 54} y={107} width={42} height={5} rx={2.5} fill="#fff" opacity={0.18} />
+          </g>
+        ))}
+
+        {/* علامات الشوي وهي بتلف */}
+        <g clipPath="url(#nklClip)">
+          <g className="nkl-roll">
+            {[-10, 0, 10].map((dy, k) => (
+              <rect key={k} x={58} y={100 + dy + k * 4} width={218} height={3} fill="#1a0a04" opacity={0.28} />
+            ))}
+            {[-10, 0, 10].map((dy, k) => (
+              <rect key={'b' + k} x={58} y={112 + dy + k * 4} width={218} height={3} fill="#1a0a04" opacity={0.22} />
+            ))}
+          </g>
+        </g>
+      </svg>
+
+      <h2 className="text-[#FFD700] font-black text-2xl italic tracking-wider mt-2">جاري تجهيز المنيو... 🔥</h2>
+      <p key={msgIdx} className="nkl-msg text-zinc-300 text-sm mt-3 h-5">{messages[msgIdx]}</p>
     </div>
-    <h2 className="kofta-loader-title">نص كفتة</h2>
-    <p className="kofta-loader-sub">بنجهّزلك المنيو على الفحم... 🔥</p>
-  </div>
-);
+  );
+};
 
 // ================= التطبيق الرئيسي =================
 function App() {
@@ -2422,9 +2525,7 @@ function App() {
     setSelectedItemDetail(null); setSelectedSize(null); setSelectedAddon(null);
   };
 
-  if (isLoading) {
-    return <KoftaLoader />;
-  }
+  if (isLoading) return <KoftaLoader />;
 
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#12080A] text-white font-sans flex flex-col justify-between relative">
