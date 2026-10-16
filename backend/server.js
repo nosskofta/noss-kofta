@@ -92,6 +92,10 @@ const itemSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  available: {
+    type: Boolean,
+    default: true
+  },
   order: {
     type: Number,
     default: 0
@@ -652,9 +656,28 @@ app.put("/api/items/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const discountValue = Number(req.body.discount) || 0;
     const updateData = { ...req.body, price: Number(req.body.price), discount: discountValue };
+    delete updateData.available; // التوفر بيتغير من الراوت المخصوص له بس
     const updatedItem = await Item.findByIdAndUpdate(req.params.id, { $set: updateData }, { new: true, runValidators: true });
     if (!updatedItem) return res.status(404).json({ error: "الصنف غير موجود" });
     res.json(updatedItem);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// تشغيل/إيقاف صنف (متاح / خلص) — مسموح للكاشير والأدمن
+app.put("/api/items/:id/availability", requireAuth, async (req, res) => {
+  try {
+    if (typeof req.body.available !== "boolean") {
+      return res.status(400).json({ error: "القيمة غير صحيحة" });
+    }
+    const updated = await Item.findByIdAndUpdate(
+      req.params.id,
+      { $set: { available: req.body.available } },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ error: "الصنف غير موجود" });
+    res.json({ _id: updated._id, name: updated.name, available: updated.available });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

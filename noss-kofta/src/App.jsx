@@ -246,19 +246,23 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                 const finalPrice = getDiscountedPrice(item.price, item.discount);
                 const cartItem = cart.find(i => i.name === item.name);
                 const quantity = cartItem ? cart.filter(i => i.name === item.name).length : 0;
+                const soldOut = item.available === false;
 
                 return (
                   <div 
                     key={item._id} 
-                    className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative pt-8"
+                    className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative pt-8 ${soldOut ? 'opacity-60' : ''}`}
                   >
+                    {soldOut && (
+                      <div className="absolute top-3 left-3 z-30 bg-red-600 text-white text-sm font-black px-3 py-1 rounded-full shadow-lg">⛔ غير متاح حالياً</div>
+                    )}
                     {item.discount > 0 && (
                       <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-r from-[#FFD700] via-[#FFE55C] to-[#FFD700] text-black text-center py-2 font-black text-base md:text-lg shadow-xl border-b-2 border-black/20 tracking-wider">
                         🔥 خصم  {item.discount}%  🔥
                       </div>
                     )}
-                    <div onClick={() => handleOpenItemDetails(item)} className="w-full h-[320px] bg-[#12080A] overflow-hidden relative cursor-pointer">
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
+                    <div onClick={() => { if (!soldOut) handleOpenItemDetails(item); }} className={`w-full h-[320px] bg-[#12080A] overflow-hidden relative ${soldOut ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                      <img src={item.image} alt={item.name} className={`w-full h-full object-cover group-hover:scale-105 transition duration-300 ${soldOut ? 'grayscale' : ''}`} />
                     </div>
                     <div className="p-4 flex items-center justify-between bg-[#220E13] border-t border-[#3A1218]">
                       <div>
@@ -275,7 +279,9 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                         </div>
                       </div>
                       
-                      {quantity === 0 ? (
+                      {soldOut ? (
+                        <button disabled className="bg-zinc-700 text-zinc-300 px-4 py-2 rounded-xl font-bold text-sm cursor-not-allowed">خلص حالياً ⛔</button>
+                      ) : quantity === 0 ? (
                         <button onClick={() => handleOpenItemDetails(item)} className="bg-[#800020] text-white px-4 py-2 rounded-xl font-bold text-sm shadow hover:bg-[#990026] transition">
                           أضف للسلة 🛒
                         </button>
@@ -370,19 +376,23 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                     const finalPrice = getDiscountedPrice(item.price, item.discount);
                     const cartItem = cart.find(i => i.name === item.name);
                     const quantity = cartItem ? cart.filter(i => i.name === item.name).length : 0;
+                    const soldOut = item.available === false;
 
                     return (
                       <div 
                         key={item._id} 
-                        className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative pt-8"
+                        className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative pt-8 ${soldOut ? 'opacity-60' : ''}`}
                       >
+                        {soldOut && (
+                          <div className="absolute top-3 left-3 z-30 bg-red-600 text-white text-sm font-black px-3 py-1 rounded-full shadow-lg">⛔ غير متاح حالياً</div>
+                        )}
                         {item.discount > 0 && (
                           <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-r from-[#FFD700] via-[#FFE55C] to-[#FFD700] text-black text-center py-2 font-black text-base md:text-lg shadow-xl border-b-2 border-black/20 tracking-wider">
                             🔥 خصم  {item.discount}%   🔥
                           </div>
                         )}
-                        <div onClick={() => item.type === 'box' ? handleOpenBox(item) : handleOpenItemDetails(item)} className="w-full h-48 object-cover bg-[#12080A] overflow-hidden cursor-pointer">
-                          <img src={item.image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta"} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
+                        <div onClick={() => { if (soldOut) return; item.type === 'box' ? handleOpenBox(item) : handleOpenItemDetails(item); }} className={`w-full h-48 object-cover bg-[#12080A] overflow-hidden ${soldOut ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                          <img src={item.image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta"} alt={item.name} className={`w-full h-full object-cover group-hover:scale-105 transition duration-300 ${soldOut ? 'grayscale' : ''}`} />
                         </div>
                         <div className="p-4 flex-1 flex flex-col bg-[#1C0D10]">
                           <h3 className="text-xl font-bold mb-1 text-white">{item.name}</h3>
@@ -399,7 +409,9 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                             )}
                           </div>
                           
-                          {item.type === 'box' ? (
+                          {soldOut ? (
+                            <button disabled className="w-full bg-zinc-700 text-zinc-300 font-bold py-2.5 rounded-xl cursor-not-allowed">خلص حالياً ⛔</button>
+                          ) : item.type === 'box' ? (
                             <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow">
                               {t.customizeBox}
                             </button>
@@ -815,6 +827,16 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
     setSizesList([]);
   };
 
+  const handleToggleAvailable = async (item) => {
+    try {
+      const res = await adminFetch(`/api/items/${item._id}/availability`, {
+        method: 'PUT',
+        body: JSON.stringify({ available: item.available === false })
+      });
+      if (res.ok) fetchItems();
+    } catch (err) {}
+  };
+
   const handleDeleteItem = async (id) => {
     if (!window.confirm("Delete item?")) return;
     try {
@@ -1158,6 +1180,7 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
                       <div>
                         <h4 className="font-bold text-white">
                           {item.name} 
+                          {item.available === false && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-md font-black mr-2">⛔ خلص</span>}
                           {item.discount > 0 && <span className="bg-[#FFD700] text-black text-xs px-2 py-0.5 rounded-md font-black mr-2">خصم {item.discount}%</span>}
                         </h4>
                         <span className="text-xs text-[#FFD700]">
@@ -1182,6 +1205,13 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold ${itemIndex === catItems.length - 1 ? 'bg-[#1C0D10] text-zinc-600 cursor-not-allowed' : 'bg-[#220E13] text-[#FFD700] hover:bg-[#2A080D]'}`}
                       >
                         ▼
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleAvailable(item)}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs font-black ${item.available === false ? 'bg-red-600 text-white' : 'bg-green-600 text-white'}`}
+                      >
+                        {item.available === false ? '⛔ خلص (شغّله)' : '✅ متاح'}
                       </button>
                       <button onClick={() => handleEditItemClick(item)} className="text-[#FFD700] bg-[#800020]/30 px-3.5 py-1.5 rounded-lg text-xs font-bold">✏️ تعديل</button>
                       <button onClick={() => handleDeleteItem(item._id)} className="text-red-400 bg-red-500/10 px-3.5 py-1.5 rounded-lg text-xs font-bold">✕ مسح</button>
@@ -1289,6 +1319,20 @@ const CartPage = ({ cart, setCart, lang }) => {
 
     // نفتح نافذة الواتساب فوراً (قبل أي انتظار) عشان المتصفح مايحجبهاش
     const waWindow = window.open('', '_blank');
+
+    // نتأكد إن مفيش صنف في السلة خلص بعد ما العميل ضافه
+    try {
+      const freshRes = await fetch(`${API_BASE}/api/items`);
+      const fresh = await freshRes.json();
+      if (Array.isArray(fresh)) {
+        const offIds = fresh.filter(i => i.available === false).map(i => String(i._id));
+        const bad = cart.filter(c => offIds.includes(String(c._id)));
+        if (bad.length > 0) {
+          if (waWindow) waWindow.close();
+          return alert('للأسف الأصناف دي خلصت حالياً: ' + [...new Set(bad.map(b => b.name))].join('، ') + '\nشيلها من السلة وكمّل الطلب.');
+        }
+      }
+    } catch (err) {}
 
     const orderId = 'NK-' + Date.now().toString().slice(-4) + Math.floor(10 + Math.random() * 90);
 
@@ -1660,6 +1704,12 @@ const CashierDashboard = () => {
   const [cashierTab, setCashierTab] = useState('active'); // active | archive | staff
   const [soundReady, setSoundReady] = useState(false);
 
+  // الأصناف المتاحة / الخالصة
+  const [stockItems, setStockItems] = useState([]);
+  const [stockCats, setStockCats] = useState([]);
+  const [stockSearch, setStockSearch] = useState('');
+  const [stockLoading, setStockLoading] = useState(false);
+
   // إدارة الموظفين (للأدمن)
   const [staff, setStaff] = useState([]);
   const [newName, setNewName] = useState('');
@@ -1856,6 +1906,33 @@ const CashierDashboard = () => {
     } catch (err) {}
   };
 
+  const fetchStock = async () => {
+    setStockLoading(true);
+    try {
+      const [ri, rc] = await Promise.all([fetch(`${API_BASE}/api/items`), fetch(`${API_BASE}/api/categories`)]);
+      const di = await ri.json();
+      const dc = await rc.json();
+      if (Array.isArray(di)) setStockItems(di.map(({ _id, name, category, available, order }) => ({ _id, name, category, available, order })));
+      if (Array.isArray(dc)) setStockCats(dc);
+    } catch (err) {}
+    setStockLoading(false);
+  };
+
+  const toggleStock = async (item) => {
+    const next = item.available === false; // لو كان خلص نشغّله، والعكس
+    setStockItems(prev => prev.map(i => (i._id === item._id ? { ...i, available: next } : i)));
+    try {
+      const res = await authFetch(`/api/items/${item._id}/availability`, {
+        method: 'PUT',
+        body: JSON.stringify({ available: next })
+      });
+      if (!res.ok) throw new Error('fail');
+    } catch (err) {
+      setStockItems(prev => prev.map(i => (i._id === item._id ? { ...i, available: !next } : i)));
+      alert('تعذر تغيير حالة الصنف، حاول تاني');
+    }
+  };
+
   const fetchStaff = async () => {
     if (!isAdmin) return;
     try {
@@ -1875,6 +1952,7 @@ const CashierDashboard = () => {
 
   useEffect(() => {
     if (token && cashierTab === 'archive') fetchShifts();
+    if (token && cashierTab === 'stock') fetchStock();
   }, [token, cashierTab]);
 
   useEffect(() => {
@@ -2115,6 +2193,7 @@ const CashierDashboard = () => {
       <div className="flex flex-wrap gap-3 mb-8">
         {tabBtn('active', `🔥 الأوردرات النشطة (${activeOrders.length})`)}
         {tabBtn('archive', `📦 الأرشيف (${doneOrders.length})`)}
+        {tabBtn('stock', '🍽️ الأصناف المتاحة')}
         {isAdmin && tabBtn('staff', '👥 إدارة الكاشيرات')}
       </div>
 
@@ -2186,6 +2265,62 @@ const CashierDashboard = () => {
                 </div>
               );
             })
+          )}
+        </div>
+      )}
+
+      {cashierTab === 'stock' && (
+        <div className="space-y-6">
+          <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-4 flex flex-wrap gap-3 items-center justify-between">
+            <div>
+              <p className="font-black text-[#FFD700] text-lg">🍽️ إدارة الأصناف</p>
+              <p className="text-zinc-400 text-sm mt-1">
+                اضغط على الصنف عشان تقفله (خلص) أو تفتحه. الصنف الخالص بيظهر للعميل "غير متاح" ومايقدرش يطلبه.
+                {' '}<span className="text-red-400 font-bold">{stockItems.filter(i => i.available === false).length} صنف خالص حالياً</span>
+              </p>
+            </div>
+            <div className="flex gap-2 items-center">
+              <input
+                value={stockSearch}
+                onChange={(e) => setStockSearch(e.target.value)}
+                placeholder="🔍 دوّر على صنف"
+                className="bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm"
+              />
+              <button onClick={fetchStock} className="bg-[#800020] px-4 py-2 rounded-xl text-sm font-bold text-white">{stockLoading ? '...' : '🔄 تحديث'}</button>
+            </div>
+          </div>
+
+          {stockCats.map(cat => {
+            const list = stockItems
+              .filter(i => i.category === cat.name && (!stockSearch.trim() || i.name.toLowerCase().includes(stockSearch.trim().toLowerCase())))
+              .sort((a, b) => (a.order || 0) - (b.order || 0));
+            if (list.length === 0) return null;
+            return (
+              <div key={cat._id} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5">
+                <h4 className="text-lg font-black text-[#FFD700] mb-4 border-r-4 border-[#800020] pr-3">{cat.name}</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {list.map(it => {
+                    const off = it.available === false;
+                    return (
+                      <button
+                        key={it._id}
+                        type="button"
+                        onClick={() => toggleStock(it)}
+                        className={`flex items-center justify-between gap-3 rounded-xl px-4 py-3 border text-right transition ${off ? 'bg-red-950/60 border-red-500/60' : 'bg-[#12080A] border-[#3A1218] hover:border-green-500/60'}`}
+                      >
+                        <span className={`font-bold ${off ? 'text-zinc-400 line-through' : 'text-white'}`}>{it.name}</span>
+                        <span className={`shrink-0 text-xs font-black px-3 py-1.5 rounded-full ${off ? 'bg-red-600 text-white' : 'bg-green-600 text-white'}`}>
+                          {off ? '⛔ خلص' : '✅ متاح'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          {stockItems.length === 0 && !stockLoading && (
+            <p className="text-zinc-500 text-center py-16 bg-[#1C0D10] border border-[#3A1218] rounded-2xl">مفيش أصناف متحملة. اضغط تحديث.</p>
           )}
         </div>
       )}
@@ -2459,6 +2594,7 @@ function App() {
   const [boxSelections, setBoxSelections] = useState({});
 
   const handleOpenBox = (boxItem) => {
+    if (boxItem.available === false) return;
     setActiveBox(boxItem);
     const initialSelections = {};
     if (boxItem.boxItems && boxItem.boxItems.length > 0) {
@@ -2499,6 +2635,7 @@ function App() {
   };
 
   const handleOpenItemDetailsModal = (item) => {
+    if (item.available === false) return;
     const finalPrice = getDiscountedPrice(item.price, item.discount);
     const hasSizes = item.sizes && item.sizes.length > 0;
     const hasAddons = item.addons && item.addons.length > 0;
