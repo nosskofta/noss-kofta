@@ -1664,6 +1664,31 @@ const priceOrderItemsFromCatalog = async (rawItems, maxItems = 80, applyMenuDisc
     if (item.available === false) return { error: `الصنف ${item.name} غير متاح حاليًا` };
 
     const groups = groupsForItem(item);
+
+    // بوكس (نص كفتة): الاختيارات جاية كـ "2× اسم الصنف" ولازم مجموعها = عدد الأصناف المطلوب
+    if (item.type === "box" && Array.isArray(item.boxItems) && item.boxItems.length > 0 && groups.length === 0) {
+      const boxMax = Number(item.maxItems) || 0;
+      const allowedNames = new Set(item.boxItems.map((b) => String(b.name || "").trim()));
+      const picks = [];
+      let boxTotal = 0;
+      for (const m of Array.isArray(raw?.modifiers) ? raw.modifiers : []) {
+        const mm = /^\s*(\d+)\s*×\s*(.+?)\s*$/.exec(String(m || ""));
+        if (!mm) continue;
+        const cnt = Number(mm[1]);
+        if (!allowedNames.has(mm[2]) || cnt < 1) return { error: `اختيارات البوكس ${item.name} غير صحيحة. امسحه وأضفه من المنيو تاني.` };
+        picks.push(`${cnt}× ${mm[2]}`);
+        boxTotal += cnt;
+      }
+      if (boxMax > 0 && boxTotal !== boxMax) return { error: `لازم تختار ${boxMax} أصناف في ${item.name}` };
+      if (boxMax === 0 && boxTotal === 0) return { error: `اختار محتويات ${item.name}` };
+      const boxDiscount = applyMenuDiscount ? (Number(item.discount) || 0) : 0;
+      output.push({
+        itemId: String(item._id), name: item.name, price: discountedComponentPrice(item.price, boxDiscount),
+        quantity: Math.round(clampNumber(raw?.quantity, 1, 99)), modifiers: picks, notes: cleanText(raw?.notes, 300)
+      });
+      continue;
+    }
+
     const selectionsByGroup = groups.map(() => []);
     let hasStructuredSelections = Array.isArray(raw?.selections);
 
@@ -1704,14 +1729,17 @@ const priceOrderItemsFromCatalog = async (rawItems, maxItems = 80, applyMenuDisc
 
     // طلبات الموقع تطبق خصم المنيو، أما الكاشير فيستخدم السعر الأصلي دائمًا.
     const discount = applyMenuDiscount ? (Number(item.discount) || 0) : 0;
-    let unitPrice = Number(item.price) > 0 ? discountedComponentPrice(item.price, discount) : 0;
+    // الأصناف القديمة (أحجام/إضافات): سعر الحجم هو السعر الأساسي، والإضافة بتتحسب من غير خصم
+    const legacyMode = !(Array.isArray(item.modifierGroups) && item.modifierGroups.length > 0);
+    const legacySized = legacyMode && Array.isArray(item.sizes) && item.sizes.length > 0;
+    let unitPrice = !legacySized && Number(item.price) > 0 ? discountedComponentPrice(item.price, discount) : 0;
     const modifiers = [];
     for (let gi = 0; gi < groups.length; gi += 1) {
       const group = groups[gi];
       for (const oi of selectionsByGroup[gi]) {
         const option = (group.options || [])[oi];
         if (!option) continue;
-        const optionPrice = discountedComponentPrice(option.price, discount);
+        const optionPrice = legacyMode && group.name === "الإضافات الاختيارية" ? Math.round(Number(option.price) || 0) : discountedComponentPrice(option.price, discount);
         unitPrice += optionPrice;
         modifiers.push(`${group.name}: ${option.name}${optionPrice > 0 ? ` (+${optionPrice} ج)` : ""}`);
       }
