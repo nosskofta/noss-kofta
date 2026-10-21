@@ -1615,7 +1615,8 @@ const AdminDashboard = (props) => {
 
 
 // ================= 4. صفحة السلة وإدخال بيانات التوصيل =================
-const CartPage = ({ cart, setCart, lang }) => {
+const CartPage = ({ cart, setCart, lang, storeStatus }) => {
+  const storeClosed = !!storeStatus && storeStatus.isOpen === false;
   const t = translations[lang];
   const itemsTotal = cart.reduce((sum, item) => sum + item.price, 0);
 
@@ -1896,8 +1897,11 @@ const CartPage = ({ cart, setCart, lang }) => {
           )}
         </div>
 
-        <button onClick={sendOrderToWhatsApp} className="w-full bg-[#25D366] text-black font-black text-lg py-4 rounded-xl hover:bg-[#20bd5a] transition mt-6 flex items-center justify-center gap-2 shadow-lg cursor-pointer">
-          {t.whatsappOrder}
+        {storeClosed && (
+          <div className="mt-6 bg-[#800020]/20 border border-[#800020] text-[#FFD700] rounded-xl p-4 text-sm font-bold text-center leading-relaxed">🌙 {storeStatus.message}</div>
+        )}
+        <button onClick={sendOrderToWhatsApp} disabled={storeClosed} className={`w-full font-black text-lg py-4 rounded-xl transition mt-4 flex items-center justify-center gap-2 shadow-lg ${storeClosed ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-[#25D366] text-black hover:bg-[#20bd5a] cursor-pointer'}`}>
+          {storeClosed ? '🌙 الطلب مقفول دلوقتي' : t.whatsappOrder}
         </button>
       </div>
     </div>
@@ -4130,7 +4134,7 @@ function App() {
           <Route path="/secret-admin-dashboard" element={<AdminDashboard menuItems={menuItems} categories={categories} siteSettings={siteSettings} lang={lang} fetchItems={fetchItems} fetchCategories={fetchCategories} fetchSettings={fetchSettings} />} />
           <Route path="/cashier" element={<CashierDashboard />} />
           <Route path="/pos" element={<CashierDashboard initialTab="pos" />} />
-          <Route path="/cart" element={<CartPage cart={cart} setCart={setCart} lang={lang} />} />
+          <Route path="/cart" element={<CartPage cart={cart} setCart={setCart} lang={lang} storeStatus={storeStatus} />} />
         </Routes>
       </div>
 
