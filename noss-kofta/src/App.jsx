@@ -201,7 +201,7 @@ const useStoreStatus = () => {
 const StoreClosedBanner = ({ status }) => {
   if (!status || status.isOpen) return null;
   return (
-    <div className="bg-gradient-to-l from-[#8d1710] via-[#ef321b] to-[#8d1710] text-white text-center px-4 py-2.5 text-sm md:text-base font-black leading-relaxed">
+    <div className="bg-gradient-to-l from-[#800020] via-[#990026] to-[#800020] text-[#FFD700] text-center px-4 py-2.5 text-sm md:text-base font-black leading-relaxed">
       🌙 {status.message}
       {status.mode === 'auto' && <span className="block md:inline md:mr-3 text-white/85 font-bold text-xs md:text-sm">مواعيد الطلب: {fmtTime(status.openTime)} – {fmtTime(status.closeTime)}</span>}
     </div>
@@ -3930,6 +3930,7 @@ function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const isStaffPage = location.pathname === '/pos' || location.pathname === '/cashier';
+  const storeStatus = useStoreStatus();
   const [cart, setCart] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -4120,6 +4121,7 @@ function App() {
           </div>
         </div>
       </nav>}
+      {!isStaffPage && <StoreClosedBanner status={storeStatus} />}
 
       <div className="flex-1">
         <Routes>
