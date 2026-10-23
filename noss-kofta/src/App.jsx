@@ -2160,6 +2160,7 @@ const Receipt80 = ({ order, type, cashierName }) => {
               <span>{it.name}<ItemExtras it={it} big /></span>
             </div>
           ))}
+          {order.orderNote && <div className="rc-big" style={{ border: '2px solid #000', padding: '4px', marginTop: '4px', whiteSpace: 'pre-wrap' }}>📝 {order.orderNote}</div>}
           <div className="rc-line" />
           <div className="rc-center rc-sub">{dateText}</div>
         </>
@@ -2191,6 +2192,7 @@ const Receipt80 = ({ order, type, cashierName }) => {
               ))}
             </tbody>
           </table>
+          {order.orderNote && <div style={{ border: '1px solid #000', padding: '3px', marginTop: '4px', whiteSpace: 'pre-wrap', fontWeight: 700 }}>📝 {order.orderNote}</div>}
           <div className="rc-line" />
           <div className="rc-row"><span>المجموع</span><span>{subtotal} ج</span></div>
           {discount > 0 && <div className="rc-row"><span>خصم {order.discountPercent}%</span><span>- {discount} ج</span></div>}
@@ -2589,7 +2591,6 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
 
 // ================= شاشة البيع (POS) داخل الكاشير =================
 const POS_PAYS = [['cash', '💵 كاش'], ['visa', '💳 فيزا'], ['instapay', '📱 انستا باي'], ['wallet', '👛 محفظة']];
-const POS_MAX_CASHIER_DISCOUNT = 15;
 
 const readPosPresets = () => {
   try {
@@ -2636,7 +2637,10 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened }) 
   const [talabatNo, setTalabatNo] = useState('');
   const [discount, setDiscount] = useState(0);
   const [discountReason, setDiscountReason] = useState('');
-  const [discountPin, setDiscountPin] = useState('');
+  const [orderNote, setOrderNote] = useState('');
+  const [showOrderNote, setShowOrderNote] = useState(false);
+  const [noteKey, setNoteKey] = useState(null);
+  const [noteText, setNoteText] = useState('');
   const [presets, setPresets] = useState(readPosPresets);
   const [custName, setCustName] = useState('');
   const [custPhone, setCustPhone] = useState('');
@@ -2758,6 +2762,22 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened }) 
 
   const changeQty = (key, d) => setCart(prev => prev.map(l => (l.key === key ? { ...l, qty: l.qty + d } : l)).filter(l => l.qty > 0));
   const removeLine = (key) => setCart(prev => prev.filter(l => l.key !== key));
+  const startNote = (l) => { setNoteKey(l.key); setNoteText(l.notes || ''); };
+  const saveNote = () => {
+    const text = noteText.trim().slice(0, 200);
+    setCart(prev => {
+      const i = prev.findIndex(l => l.key === noteKey);
+      if (i === -1) return prev;
+      const cur = prev[i];
+      const newKey = [cur._id, cur.modifiersInfo.join('¦'), text].join('|');
+      const j = prev.findIndex((l, idx) => idx !== i && l.key === newKey);
+      const next = [...prev];
+      if (j !== -1) { next[j] = { ...next[j], qty: next[j].qty + cur.qty }; return next.filter((_, idx) => idx !== i); }
+      next[i] = { ...cur, key: newKey, notes: text };
+      return next;
+    });
+    setNoteKey(null); setNoteText('');
+  };
   const clearCart = () => { if (cart.length === 0) return; if (window.confirm('تمسح كل الأصناف من السلة؟')) setCart([]); };
 
   const itemsTotal = cart.reduce((s, l) => s + l.unit * l.qty, 0);
@@ -2791,13 +2811,11 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened }) 
     if (cart.length === 0) return alert('السلة فاضية');
     if (orderType === 'talabat' && !talabatNo.trim()) return alert('اكتب رقم أوردر طلبات');
     if (orderType === 'delivery' && !address.trim()) return alert('اكتب عنوان التوصيل');
-    if (discount > 0 && discountReason.trim().length < 2) return alert('اكتب سبب الخصم');
-    if (!isAdmin && discount > POS_MAX_CASHIER_DISCOUNT && !discountPin.trim()) return alert('خصم أعلى من 15% يحتاج PIN الأدمن');
     setBusy(true);
     try {
       const payload = {
         orderType, paymentMethod: pay, talabatNo: talabatNo.trim(), discountPercent: discount,
-        discountReason: discountReason.trim(), adminPin: discountPin.trim(),
+        discountReason: discountReason.trim(), orderNote: orderNote.trim(),
         customerName: custName.trim(), customerPhone: custPhone.trim(), customerAddress: address.trim(),
         zoneName: zone ? zone.name : (orderType === 'delivery' ? 'توصيل' : ''), deliveryFee: fee,
         items: cart.map(l => ({ itemId: l._id, name: l.name, quantity: l.qty, selections: Array.isArray(l.modifierSelections) ? l.modifierSelections : undefined, modifiers: l.modifiersInfo, notes: l.notes }))
@@ -2809,7 +2827,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened }) 
       } else {
         onCreated(data);
         setToast(`✅ أوردر #${data.orderId} اتبعت للمطبخ`);
-        setCart([]); setDiscount(0); setDiscountReason(''); setDiscountPin(''); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash');
+        setCart([]); setDiscount(0); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash');
       }
     } catch (e) {
       alert('النت قاطع، الأوردر ما اتسجلش. استخدم الكاشير الأوفلاين لحد ما النت يرجع.');
@@ -2893,12 +2911,19 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened }) 
                 <span className="text-[#FFD700] font-black text-sm shrink-0">{l.unit * l.qty} ج</span>
               </div>
               {l.modifiersInfo.length > 0 && <p className="text-[11px] text-zinc-400">{l.modifiersInfo.map(stripMoney).join(' · ')}</p>}
-              {l.notes && <p className="text-[11px] text-[#FFD700]">📝 {l.notes}</p>}
+              {l.notes && noteKey !== l.key && <p className="text-[11px] text-[#FFD700]">📝 {l.notes}</p>}
+              {noteKey === l.key && (
+                <div className="flex gap-1.5 mt-1">
+                  <input autoFocus value={noteText} onChange={(e) => setNoteText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveNote(); } }} placeholder="مثال: من غير طماطم" maxLength={200} className={inp} />
+                  <button type="button" onClick={saveNote} className="px-3 rounded-lg bg-green-600 text-white text-xs font-black shrink-0">حفظ</button>
+                </div>
+              )}
               <div className="flex items-center gap-1.5 mt-1">
                 <button type="button" onClick={() => changeQty(l.key, -1)} className="w-8 h-8 rounded-lg bg-zinc-800 text-white text-lg font-black">−</button>
                 <span className="min-w-[1.8rem] text-center text-white font-black">{l.qty}</span>
                 <button type="button" onClick={() => changeQty(l.key, 1)} className="w-8 h-8 rounded-lg bg-zinc-800 text-white text-lg font-black">+</button>
                 <span className="text-[11px] text-zinc-500 mr-1">{l.unit} ج للواحد</span>
+                <button type="button" onClick={() => startNote(l)} title="ملاحظة على الصنف" className="w-8 h-8 rounded-lg bg-zinc-800 text-[#FFD700] text-sm font-black">📝</button>
                 <button type="button" onClick={() => removeLine(l.key)} className="mr-auto w-8 h-8 rounded-lg bg-red-500/15 text-red-400 font-black">✕</button>
               </div>
             </div>
@@ -2937,8 +2962,21 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened }) 
             {discount > 0 && (
               <div className="mt-2 space-y-2">
                 <p className="text-[11px] text-zinc-500">ده خصم منفصل عن خصم الموقع، ومش بيتطبق إلا لما تختار نسبة هنا.</p>
-                <input value={discountReason} onChange={(e) => setDiscountReason(e.target.value)} placeholder="سبب الخصم (إجباري)" className={inp} />
-                {!isAdmin && discount > POS_MAX_CASHIER_DISCOUNT && <input type="password" inputMode="numeric" value={discountPin} onChange={(e) => setDiscountPin(e.target.value)} placeholder="PIN الأدمن للخصم فوق 15%" className={inp} dir="ltr" />}
+                <input value={discountReason} onChange={(e) => setDiscountReason(e.target.value)} placeholder="سبب الخصم (اختياري)" className={inp} />
+              </div>
+            )}
+          </div>
+
+          <div>
+            {!showOrderNote && !orderNote ? (
+              <button type="button" onClick={() => setShowOrderNote(true)} className="w-full py-2 rounded-xl text-xs font-black border border-dashed border-[#FFD700]/60 text-[#FFD700] hover:bg-[#FFD700]/10">📝 كومنت على الأوردر</button>
+            ) : (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-zinc-400 font-bold">📝 كومنت (بيتطبع في الورقة)</span>
+                  <button type="button" onClick={() => { setOrderNote(''); setShowOrderNote(false); }} className="text-[11px] text-zinc-500 underline">مسح</button>
+                </div>
+                <textarea value={orderNote} onChange={(e) => setOrderNote(e.target.value.slice(0, 300))} rows={2} placeholder="مثال: من غير طماطم، زيادة صوص، الباب التاني..." className={inp} />
               </div>
             )}
           </div>
@@ -3062,6 +3100,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened }) 
 const CashierDashboard = ({ initialTab = 'active' }) => {
   const [session, setSession] = useState(readSession);
   const [orders, setOrders] = useState([]);
+  const [archive, setArchive] = useState(null);
   const [cashierTab, setCashierTab] = useState(initialTab === 'archive' ? 'active' : initialTab); // pos | active | shift | archive | stock | staff
   const [soundReady, setSoundReady] = useState(false);
 
@@ -3096,7 +3135,6 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
   const user = session?.user;
   const isAdmin = user?.role === 'admin';
 
-  useEffect(() => { if (!isAdmin && cashierTab === 'archive') setCashierTab('active'); }, [isAdmin, cashierTab]);
 
   // ===== الطباعة =====
   const [shiftClosings, setShiftClosings] = useState([]);
@@ -3197,6 +3235,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
     clearSession();
     setSession(null);
     setOrders([]);
+    setArchive(null);
     setStaff([]);
     setShiftData(null);
     setSoundReady(false);
@@ -3256,11 +3295,27 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
 
   const fetchOrders = async () => {
     try {
-      const res = await authFetch('/api/orders');
+      const res = await authFetch('/api/orders?scope=live');
       const data = await res.json();
       if (Array.isArray(data)) { setOrders(data); handleAutoPrint(data); }
     } catch (err) {}
   };
+
+  // الأرشيف الكامل (كل الأيام) — للعرض والطباعة فقط، بيتحمّل لما التبويب يتفتح
+  const fetchArchive = async () => {
+    try {
+      const res = await authFetch('/api/orders');
+      const data = await res.json();
+      if (Array.isArray(data)) setArchive(data);
+    } catch (err) {}
+  };
+
+  useEffect(() => {
+    if (!token || cashierTab !== 'archive') return;
+    fetchArchive();
+    const iv = setInterval(fetchArchive, 20000);
+    return () => clearInterval(iv);
+  }, [token, cashierTab]);
 
   // الوردية المفتوحة + تقرير X اللحظي
   const refreshShift = async () => {
@@ -3474,8 +3529,9 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
   }, [token, soundReady, hasNewOrders]);
 
   const activeOrders = orders.filter(o => o.status !== 'completed' && o.status !== 'cancelled');
-  const doneOrders = orders.filter(o => o.status === 'completed');
-  const cancelledOrders = orders.filter(o => o.status === 'cancelled');
+  const archiveSrc = archive || orders;
+  const doneOrders = archiveSrc.filter(o => o.status === 'completed');
+  const cancelledOrders = archiveSrc.filter(o => o.status === 'cancelled');
 
   const dayGroups = (() => {
     const m = {};
@@ -3505,6 +3561,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
           {ord.orderType !== 'talabat' && ord.customerPhone && ord.customerPhone !== '-' && <p>📞 <strong className="text-white">{ord.customerPhone}</strong></p>}
           <p>📦 <strong className="text-white">{ord.orderType === 'delivery' ? `توصيل (${ord.zoneName})` : typeLabel(ord)}</strong>{ord.source === 'pos' && <span className="text-[10px] text-zinc-500 mr-2">من الكاشير</span>}</p>
           {ord.paymentMethod && <p>💰 <span className="text-zinc-300 text-xs">{PAY_LABELS[ord.paymentMethod] || ord.paymentMethod}{ord.discountAmount > 0 ? ` · خصم ${ord.discountPercent}% (${ord.discountAmount} ج)` : ''}</span></p>}
+          {ord.orderNote && <p className="bg-[#FFD700]/10 border border-[#FFD700]/40 rounded-lg px-2 py-1">📝 <strong className="text-[#FFD700]">{ord.orderNote}</strong></p>}
           {ord.driverName && <p>🛵 <span className="text-zinc-300 text-xs">السواق: {ord.driverName}</span></p>}
           {ord.status === 'cancelled' && <p>✖ <span className="text-red-400 text-xs">سبب الإلغاء: {ord.cancelReason} ({ord.cancelledBy})</span></p>}
           {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.customerAddress}</span></p>}
@@ -3597,7 +3654,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
         {tabBtn('pos', '🧾 كاشير (POS)')}
         {tabBtn('active', `🔥 الأوردرات النشطة (${activeOrders.length})`)}
         {tabBtn('shift', '🕒 الوردية والتقفيل')}
-        {isAdmin && tabBtn('archive', `📦 الأرشيف (${doneOrders.length + cancelledOrders.length})`)}
+        {tabBtn('archive', `📦 الأرشيف (${doneOrders.length + cancelledOrders.length})`)}
         {tabBtn('stock', '🍽️ الأصناف المتاحة')}
         {isAdmin && tabBtn('staff', '👥 إدارة الكاشيرات')}
       </div>
@@ -3619,7 +3676,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
         />
       )}
 
-      {isAdmin && cashierTab === 'archive' && (
+      {cashierTab === 'archive' && (
         <div className="space-y-6">
           <p className="text-zinc-400 text-sm bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-4">📌 أرشيف الأوردرات المكتملة حسب اليوم. حسابات الوردية والدرج والتقفيل في تبويب <strong className="text-white">🕒 الوردية والتقفيل</strong>.</p>
           {dayGroups.length === 0 ? (
