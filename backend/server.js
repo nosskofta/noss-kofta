@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { promisify } from 'util';
+import './reset-once.js';
 
 dotenv.config();
 
