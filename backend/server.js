@@ -1514,7 +1514,7 @@ app.get("/api/shifts/current", requireAuth, async (req, res) => {
       return res.json({ shift: null, pendingHandover: pendingHandover ? { shiftId: pendingHandover._id, from: pendingHandover.closedBy, amount: pendingHandover.handoverCash, closedAt: pendingHandover.closedAt } : null });
     }
     const payload = { shift, report: await buildReport(shift.openedAt, new Date(), shift) };
-    res.json(req.user?.role === "admin" ? payload : redactCurrentShiftForCashier(payload));
+    res.json(payload);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1557,9 +1557,7 @@ app.post("/api/shifts/movement", requireAuth, async (req, res) => {
       const drawer = await buildReport(openShift.openedAt, new Date(), openShift);
       const available = Math.round((Number(drawer.expectedCash) || 0) * 100) / 100;
       if (amount > available + 0.009) {
-        return res.status(400).json({ error: req.user?.role === "admin"
-          ? `الدرج مفيهوش كاش كفاية. المتاح في الدرج دلوقتي ${available} ج بس`
-          : "الدرج مفيهوش كاش كفاية للمصروف ده، مينفعش تسجله. لو الفلوس موجودة فعلاً سجّلها كإيداع الأول." });
+        return res.status(400).json({ error: `الدرج مفيهوش كاش كفاية. المتاح في الدرج دلوقتي ${available} ج بس` + " لو الفلوس موجودة فعلاً من برا الدرج سجّلها كإيداع الأول." });
       }
     }
     const shift = await Shift.findOneAndUpdate(
@@ -1627,6 +1625,88 @@ app.get("/api/shifts", requireAuth, async (req, res) => {
     if (req.user?.role !== "admin") return res.json([]);
     const filter = { status: { $ne: "open" } };
     res.json((await Shift.find(filter).sort({ closedAt: -1 }).limit(60)).map(normalizeShiftReport));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// تقرير اليوم: بيجمّع كل ورديات اليوم (الصبح والليل) في تقرير واحد.
+// اليوم بيتحسب من وقت "فتح" الوردية بتوقيت القاهرة، فشيفت الليل اللي بيقفل 3 أو 5 الفجر بيتحسب على نفس اليوم.
+const DAY_TZ = "Africa/Cairo";
+const DAY_START_HOUR = 6;
+const cairoYMDH = (date) => {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: DAY_TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(new Date(date));
+  const g = (t) => Number(parts.find((p) => p.type === t).value);
+  return { y: g("year"), m: g("month"), d: g("day"), h: g("hour") % 24 };
+};
+const businessDayKey = (date) => {
+  const { y, m, d, h } = cairoYMDH(date);
+  return new Date(Date.UTC(y, m - 1, d - (h < DAY_START_HOUR ? 1 : 0))).toISOString().slice(0, 10);
+};
+const shiftDayLabel = (openedAt) => {
+  const { h } = cairoYMDH(openedAt);
+  return h >= DAY_START_HOUR && h < 18 ? "شيفت الصبح" : "شيفت الليل";
+};
+
+// الكاشير يشوف النهارده بس، والأدمن يختار أي يوم
+app.get("/api/reports/day", requireAuth, async (req, res) => {
+  try {
+    const todayKey = businessDayKey(new Date());
+    const asked = String(req.query.date || "");
+    const key = req.user?.role === "admin" && /^\d{4}-\d{2}-\d{2}$/.test(asked) ? asked : todayKey;
+    const base = new Date(`${key}T00:00:00Z`).getTime();
+    if (isNaN(base)) return res.status(400).json({ error: "التاريخ غير صحيح" });
+
+    const docs = await Shift.find({ openedAt: { $gte: new Date(base - 36 * 3600000), $lt: new Date(base + 60 * 3600000) } }).sort({ openedAt: 1 }).lean();
+    const dayShifts = docs.filter((s) => s.openedAt && businessDayKey(s.openedAt) === key);
+    const now = new Date();
+    const n = (x) => Number(x) || 0;
+
+    const totals = { count: 0, total: 0, delivery: 0, discounts: 0, talabat: 0, talabatCash: 0, talabatVisa: 0, expensesTotal: 0, cancelled: 0, cancelledTotal: 0, cashIn: 0, cashOut: 0, driverCash: 0, payments: {} };
+    const catMap = new Map();
+    const shifts = [];
+
+    for (const s of dayShifts) {
+      const isOpen = s.status === "open";
+      const r = isOpen ? await buildReport(s.openedAt, now, s) : (s.report || {});
+      const moves = s.movements || [];
+      const cashIn = moves.filter((m) => m.type === "in").reduce((sum, m) => sum + n(m.amount), 0);
+      const cashOut = moves.filter((m) => m.type === "out").reduce((sum, m) => sum + n(m.amount), 0);
+      const talabat = n(r.talabat ?? s.talabat);
+      const talabatCash = n(r.talabatCash);
+      const row = {
+        id: String(s._id), label: shiftDayLabel(s.openedAt), openedBy: s.openedBy || "", closedBy: s.closedBy || "",
+        openedAt: s.openedAt, closedAt: isOpen ? null : s.closedAt, isOpen,
+        count: n(r.count ?? s.count), total: n(r.grossSales ?? r.total ?? s.total), delivery: n(r.delivery ?? s.delivery),
+        discounts: n(r.discounts ?? s.discounts), talabat, talabatCash,
+        talabatVisa: r.talabatVisa !== undefined ? n(r.talabatVisa) : Math.max(0, talabat - talabatCash),
+        expensesTotal: r.expensesTotal !== undefined ? n(r.expensesTotal) : cashOut,
+        cancelled: n(r.cancelled ?? s.cancelled), cancelledTotal: n(r.cancelledTotal),
+        payments: r.payments || s.payments || {}, openingCash: n(s.openingCash), cashIn, cashOut, driverCash: n(r.driverCash),
+        expectedCash: n(isOpen ? r.expectedCash : (s.expectedCash ?? r.expectedCash))
+      };
+      shifts.push(row);
+
+      for (const k of ["count", "total", "delivery", "discounts", "talabat", "talabatCash", "talabatVisa", "expensesTotal", "cancelled", "cancelledTotal", "cashIn", "cashOut", "driverCash"]) totals[k] += row[k];
+      for (const [pk, pv] of Object.entries(row.payments)) totals.payments[pk] = (totals.payments[pk] || 0) + n(pv);
+
+      for (const c of r.categories || []) {
+        if (!catMap.has(c.name)) catMap.set(c.name, { name: c.name, qty: 0, total: 0, items: new Map() });
+        const cat = catMap.get(c.name);
+        cat.qty += n(c.qty); cat.total += n(c.total);
+        for (const it of c.items || []) {
+          const prev = cat.items.get(it.name) || { name: it.name, qty: 0, total: 0 };
+          prev.qty += n(it.qty); prev.total += n(it.total);
+          cat.items.set(it.name, prev);
+        }
+      }
+    }
+
+    const categories = [...catMap.values()]
+      .map((c) => ({ name: c.name, qty: c.qty, total: c.total, items: [...c.items.values()].sort((a, b) => b.qty - a.qty) }))
+      .sort((a, b) => b.total - a.total);
+
+    res.json({ day: key, isToday: key === todayKey, generatedAt: now, shifts, totals, categories });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

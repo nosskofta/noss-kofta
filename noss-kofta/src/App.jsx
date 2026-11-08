@@ -2091,6 +2091,129 @@ const ReportBody = ({ order }) => {
   );
 };
 
+// ================= تقرير اليوم (كل الشيفتات) =================
+const dayTime = (v) => (v ? new Date(v).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '-');
+const dayLines = (v, drawer) => {
+  const n = (x) => Number(x) || 0;
+  const p = v.payments || {};
+  const L = [['عدد الأوردرات', v.count || 0], ['إجمالي المبيعات', money(v.total)], ['منها رسوم توصيل', money(v.delivery)]];
+  if (n(v.discounts) > 0) L.push(['خصومات', money(v.discounts)]);
+  L.push(['كاش', money(p.cash || 0)]);
+  if (n(v.talabatCash) > 0) L.push(['· منه طلبات كاش', money(v.talabatCash)]);
+  L.push(['فيزا', money(p.visa || 0)], ['انستا باي', money(p.instapay || 0)], ['محفظة', money(p.wallet || 0)]);
+  if (n(v.talabatVisa) > 0) L.push(['طلبات فيزا', money(v.talabatVisa)]);
+  if (n(v.expensesTotal) > 0) L.push(['مصروفات (من الدرج)', money(v.expensesTotal)]);
+  if (n(v.cancelled) > 0) L.push([`ملغي (${v.cancelled})`, money(v.cancelledTotal)]);
+  if (drawer) { L.push(['رصيد الافتتاح', money(v.openingCash)], ['المتوقع في الدرج', money(v.expectedCash)]); }
+  return L;
+};
+const dayShiftSub = (s) => `${s.openedBy} · ${dayTime(s.openedAt)} ← ${s.isOpen ? 'لسه مفتوح' : dayTime(s.closedAt)}`;
+const dayText = (d) => {
+  const out = [`📅 تقرير يوم ${d.day} — ${RESTAURANT_NAME}`];
+  (d.shifts || []).forEach((s) => {
+    out.push('', `${s.label} (${dayShiftSub(s)})`);
+    dayLines(s, true).forEach(([a, b]) => out.push(`${a}: ${b}`));
+  });
+  out.push('', '━━━━━━━━', 'إجمالي اليوم');
+  dayLines(d.totals || {}, false).forEach(([a, b]) => out.push(`${a}: ${b}`));
+  return out.join('\n');
+};
+
+const DayReportBody = ({ order }) => {
+  const d = order.day || { shifts: [], totals: {} };
+  const row = (label, value, cls = '') => <div className={`rc-row ${cls}`}><span>{label}</span><span>{value}</span></div>;
+  const lines = (v, drawer) => dayLines(v, drawer).map(([a, b], i) => <React.Fragment key={i}>{row(a, b, i === 1 ? 'rc-big' : '')}</React.Fragment>);
+  return (
+    <>
+      <div className="rc-center"><h1 className="rc-title">{RESTAURANT_NAME}</h1><p className="rc-big">تقرير اليوم {d.day}</p></div>
+      {(d.shifts || []).map((s) => (
+        <div key={s.id}>
+          <div className="rc-line" />
+          <div className="rc-big rc-center">{s.label}</div>
+          <div className="rc-center rc-sub">{dayShiftSub(s)}</div>
+          {lines(s, true)}
+        </div>
+      ))}
+      <div className="rc-line" />
+      <div className="rc-big rc-center">إجمالي اليوم</div>
+      {dayLines(d.totals || {}, false).map(([a, b], i) => <React.Fragment key={i}>{row(a, b, i === 1 ? 'rc-total' : '')}</React.Fragment>)}
+      <div className="rc-line" />
+      <div className="rc-center rc-sub">طُبع: {fmtDT(order.createdAt)}</div>
+    </>
+  );
+};
+
+const DayReportCard = ({ authFetch, isAdmin, requestPrint, card, inp }) => {
+  const [date, setDate] = useState('');
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const load = async () => {
+    setBusy(true); setMsg('');
+    let result = null;
+    try {
+      const r = await authFetch(`/api/reports/day${isAdmin && date ? `?date=${date}` : ''}`);
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { setData(d); result = d; } else { setData(null); setMsg(d.error || 'حصل خطأ'); }
+    } catch (e) { if (e.message !== 'unauthorized') setMsg('تعذر الاتصال بالسيرفر'); }
+    setBusy(false);
+    return result;
+  };
+  const printIt = async () => {
+    const d = await load();
+    if (!d) return;
+    if ((d.shifts || []).length === 0) return setMsg('مفيش ورديات في اليوم ده');
+    requestPrint({ title: 'تقرير اليوم', day: d, createdAt: new Date().toISOString() }, 'day');
+  };
+  const copyIt = async () => {
+    const d = await load();
+    if (!d) return;
+    const text = dayText(d);
+    try { await navigator.clipboard.writeText(text); setMsg('✅ اتنسخ، الصقه في الجروب'); }
+    catch (e) { window.prompt('انسخ التقرير:', text); }
+  };
+
+  const box = (key, title, sub, lines, gold) => (
+    <div key={key} className={`bg-[#12080A] border border-[#3A1218] rounded-xl p-4 ${gold ? 'border-2 !border-[#FFD700]' : ''}`}>
+      <p className="font-black text-white text-base">{title}</p>
+      {sub && <p className="text-[11px] text-zinc-400 mb-2">{sub}</p>}
+      {lines.map(([a, b], i) => (
+        <div key={i} className={`flex justify-between gap-2 py-1 text-sm border-b border-white/5 last:border-0 ${i === 1 ? 'font-black text-[#FFD700]' : 'text-zinc-300'}`}><span>{a}</span><span className="font-bold text-white">{b}</span></div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className={card + ' space-y-4'}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h4 className="font-black text-[#FFD700] text-lg">📅 تقرير اليوم (كل الشيفتات)</h4>
+        {isAdmin && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-400">اليوم (فاضي = النهارده)</span>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inp + ' !w-auto'} />
+          </div>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" disabled={busy} onClick={load} className="bg-zinc-700 hover:bg-zinc-600 disabled:opacity-60 text-white px-4 py-2.5 rounded-xl text-sm font-black">{busy ? '...' : '👁️ عرض'}</button>
+        <button type="button" disabled={busy} onClick={printIt} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-4 py-2.5 rounded-xl text-sm font-black">🖨️ طباعة تقرير اليوم</button>
+        <button type="button" disabled={busy} onClick={copyIt} className="bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white px-4 py-2.5 rounded-xl text-sm font-black">📋 نسخ للجروب</button>
+      </div>
+      <p className="text-[11px] text-zinc-500">بيجمع الشيفتين بنفس أرقام تقارير التقفيل. لو شيفت لسه مفتوح بياخد أرقامه لحد دلوقتي.</p>
+      {msg && <p className="text-sm font-bold text-orange-300">{msg}</p>}
+      {data && ((data.shifts || []).length === 0 ? (
+        <p className="text-zinc-500 text-sm">مفيش ورديات في يوم {data.day}.</p>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          {data.shifts.map((s) => box(s.id, s.label, dayShiftSub(s), dayLines(s, true), false))}
+          {box('total', `إجمالي اليوم ${data.day}`, `${data.shifts.length} ورديات`, dayLines(data.totals || {}, false), true)}
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const Receipt80 = ({ order, type, cashierName }) => {
   if (!order) return null;
   const items = order.items || [];
@@ -2134,7 +2257,9 @@ const Receipt80 = ({ order, type, cashierName }) => {
         }
       `}</style>
 
-      {type === 'report' ? (
+      {type === 'day' ? (
+        <DayReportBody order={order} />
+      ) : type === 'report' ? (
         <ReportBody order={order} />
       ) : type === 'kitchen-summary' ? (
         <>
@@ -2345,8 +2470,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
   // طباعة ملخص المبيعات من غير تقفيل — متاحة للكاشير والأدمن
   const printNet = () => {
     if (!rep) return;
-    if (isAdmin) requestPrint(makePrint('تقرير الوردية (X) - لحظي', rep, { expectedCash: rep.expectedCash }), 'report');
-    else requestPrint(makePrint('ملخص المبيعات - لحظي', rep, {}), 'report');
+    requestPrint(makePrint('تقرير الوردية (X) - لحظي', rep, { expectedCash: rep.expectedCash }), 'report');
   };
 
   const doClose = async () => {
@@ -2418,7 +2542,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="font-black text-green-400 text-lg">🟢 وردية مفتوحة</p>
-                <p className="text-zinc-300 text-sm mt-1">فتحها <strong className="text-white">{shift.openedBy}</strong> · {fmtDT(shift.openedAt)}{isAdmin ? ` · افتتاح ${money(shift.openingCash)}` : ''}</p>
+                <p className="text-zinc-300 text-sm mt-1">فتحها <strong className="text-white">{shift.openedBy}</strong> · {fmtDT(shift.openedAt)}{` · افتتاح ${money(shift.openingCash)}`}</p>
               </div>
               <button type="button" onClick={refreshShift} className="bg-zinc-700 text-white px-4 py-2 rounded-xl text-sm font-bold">🔄 تحديث</button>
             </div>
@@ -2453,19 +2577,18 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
                 {/* المبيعات حسب طريقة الدفع */}
                 <div className={card}>
                   <h4 className="font-black text-[#FFD700] text-lg mb-2">💳 المبيعات حسب الدفع</h4>
-                  {isAdmin && payRow('💵 كاش', pays.cash || 0)}
-                  {isAdmin && talabatCash > 0 && payRow('منه طلبات كاش', talabatCash, true)}
+                  {payRow('💵 كاش', pays.cash || 0)}
+                  {talabatCash > 0 && payRow('منه طلبات كاش', talabatCash, true)}
                   {payRow('💳 فيزا', pays.visa || 0)}
                   {payRow('📱 انستا باي', pays.instapay || 0)}
                   {payRow('👛 محفظة', pays.wallet || 0)}
                   {payRow('🛍️ طلبات فيزا (مستحق من طلبات)', talabatVisa)}
-                  {!isAdmin && talabatCash > 0 && payRow('🛍️ طلبات كاش', talabatCash)}
                 </div>
 
                 {/* الدرج */}
                 <div className={card + ' space-y-3'}>
                   <h4 className="font-black text-[#FFD700] text-lg">💰 الدرج</h4>
-                  {isAdmin ? (
+                  {rep.openingCash !== undefined ? (
                     <div className="space-y-1.5 text-sm">
                       <div className="flex justify-between"><span className="text-zinc-400">رصيد الافتتاح</span><span className="font-bold text-white">{money(rep.openingCash)}</span></div>
                       <div className="flex justify-between"><span className="text-zinc-400">+ كاش المبيعات</span><span className="font-bold text-white">{money(pays.cash || 0)}</span></div>
@@ -2476,7 +2599,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
                     </div>
                   ) : <p className="text-xs text-zinc-500">أي مصروف أو إيداع من الدرج سجّله هنا عشان الحساب يتظبط وقت التقفيل.</p>}
 
-                  <div className={`${isAdmin ? 'border-t border-[#3A1218] pt-3' : ''} space-y-2`}>
+                  <div className={`${'border-t border-[#3A1218] pt-3'} space-y-2`}>
                     <p className="text-xs font-bold text-zinc-400">تسجيل مصروف أو إيداع</p>
                     <div className="flex flex-wrap gap-1.5 items-center"><span className="text-[11px] text-zinc-500">مصروف سريع:</span>{['ثلج', 'غاز', 'خضار', 'بقشيش', 'صيانة', 'مواصلات', 'أخرى'].map(x => <button key={x} type="button" onClick={() => setMv({ ...mv, type: 'out', reason: x })} className="px-2.5 py-1 rounded-lg text-[11px] font-black border border-red-500/40 text-red-300">{x}</button>)}</div>
 
@@ -2492,7 +2615,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
                     <p className="text-[11px] text-orange-400 font-bold">المصروف بيطلع من كاش الدرج بس. لو الدرج مفيهوش كاش كفاية هيترفض. لو الفلوس موجودة فعلاً من برا الدرج سجّلها كإيداع الأول وبعدها سجّل المصروف.</p>
                   </div>
 
-                  {isAdmin && (rep.movements || []).length > 0 && (
+                  {(rep.movements || []).length > 0 && (
                     <div className="border-t border-[#3A1218] pt-3 space-y-1.5 max-h-40 overflow-y-auto">
                       {rep.movements.map((m, i) => (
                         <div key={i} className="flex justify-between text-xs">
@@ -2573,6 +2696,8 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
         </>
       )}
 
+      <DayReportCard authFetch={authFetch} isAdmin={isAdmin} requestPrint={requestPrint} card={card} inp={inp} />
+
       {/* سجل الورديات (الأدمن فقط) */}
       {isAdmin && (
       <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5">
@@ -2640,7 +2765,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
               <div className="text-3xl font-black text-[#FFD700]">{money(rep?.grossSales ?? rep?.total ?? 0)}</div>
               <div className="text-xs text-zinc-400">{rep?.count || 0} أوردر{Number(rep?.discounts) > 0 ? ` · خصومات ${money(rep.discounts)}` : ''}</div>
             </div>
-            {isAdmin && <div className="text-xs bg-[#12080A] border border-[#3A1218] rounded-lg p-2 text-zinc-400">المتوقع في الدرج: <b className="text-white">{money(expected)}</b></div>}
+            {<div className="text-xs bg-[#12080A] border border-[#3A1218] rounded-lg p-2 text-zinc-400">المتوقع في الدرج: <b className="text-white">{money(expected)}</b></div>}
             <div className="space-y-2">
               <label className="block text-sm font-black text-white">ملاحظة (اختياري)</label>
               <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="اكتب هنا لو في حاجة" className={inp} />
@@ -3783,7 +3908,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
         </h2>
         <div className="flex flex-wrap gap-2 items-center">
           {shiftData && (shiftData.shift ? (
-            <button type="button" onClick={() => setCashierTab('shift')} className="bg-green-600 text-white px-3 py-2 rounded-xl text-xs font-black" title="الوردية المفتوحة">🟢 ورديتك: {shiftData.shift.openedBy}{isAdmin ? ` · درج ${money(shiftData.report?.expectedCash)}` : ''}</button>
+            <button type="button" onClick={() => setCashierTab('shift')} className="bg-green-600 text-white px-3 py-2 rounded-xl text-xs font-black" title="الوردية المفتوحة">🟢 ورديتك: {shiftData.shift.openedBy}{` · درج ${money(shiftData.report?.expectedCash)}`}</button>
           ) : (
             <button type="button" onClick={() => setCashierTab('shift')} className="bg-red-600 text-white px-3 py-2 rounded-xl text-xs font-black animate-pulse">🔴 مفيش وردية — افتح</button>
           ))}
