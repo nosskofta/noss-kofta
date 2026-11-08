@@ -1361,10 +1361,11 @@ const buildReport = async (from, to, shift = null) => {
       ]
     }).lean(),
     Order.find({ status: "cancelled", cancelledAt: { $gt: fromD, $lte: toD } }).select("grandTotal orderId cancelledAfterPrint").lean(),
-    Item.find().select("name category").lean()
+    Item.find().select("name category modifierGroups sizes addons").lean()
   ]);
 
   const catOf = new Map(catalog.map((i) => [i.name, i.category]));
+  const itemByName = new Map(catalog.map((i) => [i.name, i]));
   const payments = {}, byType = {}, byCashier = {};
   const catMap = new Map();
   let total = 0, delivery = 0, discounts = 0, talabat = 0, talabatCash = 0, talabatVisa = 0, driverCash = 0;
@@ -1417,9 +1418,23 @@ const buildReport = async (from, to, shift = null) => {
       const cat = catMap.get(catName);
       cat.qty += qty; cat.total += revenue;
       // افصل أحجام/أنواع الدابل والتربل في تقرير المطبخ بدل دمجها تحت اسم واحد.
-      const mods = Array.isArray(it.modifiers) ? it.modifiers.join(" ") : String(it.modifiers || "");
-      const variantMatch = `${baseName} ${mods}`.match(/\b(double|triple|single|دابل|تربل|سنجل)\b/i);
-      const variant = variantMatch ? variantMatch[0] : "";
+      // التفصيل: نفصل كل اختيار إجباري (زي الحجم: ربع صدر / ربع ورك / نص فرخة) في سطر لوحده بدل دمجهم تحت اسم الصنف
+      const modList = Array.isArray(it.modifiers) ? it.modifiers : [];
+      const catItem = itemByName.get(baseName);
+      const requiredGroups = new Set(catItem ? groupsForItem(catItem).filter((g) => Number(g.min) > 0).map((g) => String(g.name || "").trim()) : []);
+      const variantParts = [];
+      for (const mod of modList) {
+        const text = String(mod || "");
+        const colon = text.indexOf(":");
+        if (colon < 0) continue;
+        if (!requiredGroups.has(text.slice(0, colon).trim())) continue;
+        variantParts.push(text.slice(colon + 1).replace(/\s*\(\s*\+?\s*\d+(?:\.\d+)?\s*ج\s*\)\s*$/, "").trim());
+      }
+      let variant = variantParts.filter(Boolean).join(" + ");
+      if (!variant) {
+        const variantMatch = `${baseName} ${modList.join(" ")}`.match(/\b(double|triple|single|دابل|تربل|سنجل)\b/i);
+        variant = variantMatch ? variantMatch[0] : "";
+      }
       const kitchenName = variant && !baseName.toLowerCase().includes(variant.toLowerCase()) ? `${baseName} - ${variant}` : baseName;
       const row = cat.items.get(kitchenName) || { name: kitchenName, qty: 0, total: 0 };
       row.qty += qty; row.total += revenue;
@@ -1567,25 +1582,18 @@ app.post("/api/shifts/close", requireAuth, async (req, res) => {
     const now = new Date();
     const report = await buildReport(shift.openedAt, now, shift);
     const closeNotes = cleanText(req.body?.notes, 300);
-    // لازم الكاشير يكتب الكاش اللي عدّه في الدرج، والسيستم يحسب الفرق
-    const rawCounted = req.body?.countedCash;
-    const countedCash = Number(rawCounted);
-    if (rawCounted === undefined || rawCounted === null || rawCounted === "" || !Number.isFinite(countedCash) || countedCash < 0) {
-      return res.status(400).json({ error: "اكتب الكاش اللي عدّيته في الدرج (لو مفيش اكتب 0)" });
-    }
-    const difference = Math.round((countedCash - (Number(report.expectedCash) || 0)) * 100) / 100;
     const closed = await Shift.findOneAndUpdate(
       { _id: shift._id, status: "open", openedBy: req.user.name },
       { $set: {
         status: "closed", closedAt: now, closedBy: req.user.name, from: shift.openedAt,
         count: report.count, total: report.total, delivery: report.delivery, payments: report.payments,
         talabat: report.talabat, discounts: report.discounts, cancelled: report.cancelled, orders: report.orders,
-        report, expectedCash: report.expectedCash, countedCash, difference, notes: closeNotes, handoverTo: "", handoverStatus: "none"
-      }, $unset: { handoverCash: 1 } },
+        report, expectedCash: report.expectedCash, notes: closeNotes, handoverTo: "", handoverStatus: "none"
+      }, $unset: { countedCash: 1, difference: 1, handoverCash: 1 } },
       { new: true }
     );
     if (!closed) return res.status(409).json({ error: "الوردية اتقفلت قبل كده، حدّث الصفحة" });
-    void sendTelegramAlert(`🔒 تقفيل وردية\nبواسطة: ${req.user.name}\nإجمالي المبيعات: ${Number(report.total) || 0} ج.م\nالمصروفات: ${Number(report.expensesTotal) || 0} ج.م\nصافي المبيعات (Net Sales): ${Number(report.netSales) || 0} ج.م\nالكاش المتوقع: ${Number(report.expectedCash) || 0} ج.م\nالكاش المعدود: ${countedCash} ج.م\nالفرق: ${difference} ج.م\nإجمالي الخصومات: ${Number(report.discounts) || 0} ج.م`);
+    void sendTelegramAlert(`🔒 تقفيل وردية\nبواسطة: ${req.user.name}\nإجمالي المبيعات: ${Number(report.total) || 0} ج.م\nالمصروفات: ${Number(report.expensesTotal) || 0} ج.م\nصافي المبيعات (Net Sales): ${Number(report.netSales) || 0} ج.م\nإجمالي الخصومات: ${Number(report.discounts) || 0} ج.م`);
     res.json(closed);
   } catch (err) {
     res.status(500).json({ error: err.message });
