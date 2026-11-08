@@ -1992,8 +1992,18 @@ const ReportBody = ({ order }) => {
   const r = order.report || {};
   const m = order.meta || {};
   const pays = r.payments || {};
+  const num = (v) => Number(v) || 0;
   const row = (label, value, cls = '') => <div className={`rc-row ${cls}`}><span>{label}</span><span>{value}</span></div>;
-  const hasDrawer = r.openingCash !== undefined || m.countedCash !== undefined;
+  const section = (t) => (<><div className="rc-line" /><div className="rc-big rc-center">{t}</div></>);
+  const talabatCash = num(r.talabatCash);
+  const talabatVisa = r.talabatVisa !== undefined ? num(r.talabatVisa) : Math.max(0, num(r.talabat) - talabatCash);
+  const hasTalabatSplit = r.talabatCash !== undefined || r.talabatVisa !== undefined;
+  const net = r.netSales ?? r.total;
+  const hasDrawer = r.openingCash !== undefined;
+  const expected = m.expectedCash ?? r.expectedCash;
+  const hasCounted = m.countedCash !== undefined && m.countedCash !== null;
+  const diff = hasCounted ? (m.difference ?? (num(m.countedCash) - num(expected))) : null;
+  const diffText = diff === null ? '' : Math.abs(diff) < 0.005 ? 'مظبوط ✓' : diff < 0 ? `عجز ${money(-diff)}` : `زيادة ${money(diff)}`;
 
   return (
     <>
@@ -2001,78 +2011,70 @@ const ReportBody = ({ order }) => {
       <div className="rc-line" />
       <div>من: {fmtDT(r.from)}</div>
       <div>إلى: {fmtDT(r.to)}</div>
-      {r.openedBy && <div>فتحها: {r.openedBy}</div>}
-      {m.closedBy && <div>قفلها: {m.closedBy}</div>}
-      <div className="rc-line" />
+      {r.openedBy && <div>الكاشير: {r.openedBy}{m.closedBy && m.closedBy !== r.openedBy ? ` (قفلها ${m.closedBy})` : ''}</div>}
 
-      {row('عدد الأوردرات', r.count || 0)}
-      {row('إجمالي المبيعات', money(r.grossSales ?? r.total), 'rc-big')}
+      <div className="rc-line" />
+      <div className="rc-center rc-sub">صافي المبيعات = المبيعات − المصروفات</div>
+      <div className="rc-center rc-kid">{money(net)}</div>
+      {row('عدد الأوردرات', r.count || 0, 'rc-big')}
+      {r.grossSales !== undefined && row('إجمالي المبيعات', money(r.grossSales))}
+      {row('منها رسوم توصيل', money(r.delivery))}
+      {num(r.discounts) > 0 && row('خصومات اتحسبت فعلاً', money(r.discounts))}
+      {num(r.cancelled) > 0 && row(`ملغي (${r.cancelled}) مش محسوب`, money(r.cancelledTotal))}
+
       {(r.expenses || []).length > 0 && (<>
-        <div className="rc-line" /><div className="rc-big rc-center">المصروفات</div>
+        {section('المصروفات')}
         {r.expenses.map((e, i) => <div key={i} className="rc-row rc-small"><span>- {e.reason} ({e.by})</span><span>{money(e.amount)}</span></div>)}
         {row('إجمالي المصروفات', money(r.expensesTotal), 'rc-big')}
-        <div className="rc-line" />
       </>)}
-      {row('صافي المبيعات (Net Sales)', money(r.netSales ?? r.total), 'rc-total')}
-      {row('منها رسوم توصيل', money(r.delivery))}
-      {Number(r.discounts) > 0 && row('إجمالي الخصومات', money(r.discounts))}
-      {Number(r.cancelled) > 0 && row(`أوردرات ملغية (${r.cancelled})`, money(r.cancelledTotal))}
-      <div className="rc-line" />
-
-      <div className="rc-big rc-center">طرق الدفع</div>
-      {row('كاش من غير طلبات', money(Math.max(0, (pays.cash || 0) - (r.talabatCash || 0))))}
-      {['visa', 'instapay', 'wallet'].map(k => row(PAY_LABELS[k], money(pays[k] || 0)))}
-      {r.talabatCash !== undefined || r.talabatVisa !== undefined ? (
-        <>
-          {row('طلبات كاش (داخل الدرج)', money(r.talabatCash))}
-          {row('طلبات فيزا (مستحقات)', money(r.talabatVisa))}
-        </>
-      ) : row('طلبات (تفصيل الدفع القديم غير متاح)', money(r.talabat))}
-
-      {hasDrawer && (
-        <>
-          <div className="rc-line" />
-          <div className="rc-big rc-center">حساب الدرج (كاش)</div>
-          {row('رصيد الافتتاح', money(r.openingCash))}
-          {row('+ مبيعات كاش', money(pays.cash || 0))}
-          {Number(r.cashIn) > 0 && row('+ إيداعات', money(r.cashIn))}
-          {Number(r.cashOut) > 0 && row('- مصروفات', money(r.cashOut))}
-          {Number(r.driverCash) > 0 && row('- كاش في عهدة السواقين', money(r.driverCash))}
-          {row('المتوقع في الدرج', money(m.expectedCash ?? r.expectedCash), 'rc-big')}
-          {m.countedCash !== undefined && m.countedCash !== null && row('المعدود فعلاً', money(m.countedCash), 'rc-big')}
-          {m.countedCash !== undefined && m.countedCash !== null && row('الفرق', diffLabel(m.difference ?? (Number(m.countedCash) - Number(m.expectedCash ?? r.expectedCash))), 'rc-total')}
-          {m.notes && row('ملاحظات التقفيل', m.notes)}
-        </>
-      )}
-
-      {(r.movements || []).length > 0 && (
-        <>
-          <div className="rc-line" />
-          <div className="rc-big rc-center">حركات الدرج</div>
-          {r.movements.map((mv, i) => <div key={i} className="rc-row rc-small"><span>{mv.type === 'in' ? '+' : '-'} {mv.reason} ({mv.by})</span><span>{money(mv.amount)}</span></div>)}
-        </>
-      )}
+      {section('طرق الدفع')}
+      {pays.cash !== undefined && row('كاش', money(pays.cash))}
+      {pays.cash !== undefined && hasTalabatSplit && talabatCash > 0 && <div className="rc-row rc-small"><span>· منه طلبات كاش</span><span>{money(talabatCash)}</span></div>}
+      {num(pays.visa) > 0 && row('فيزا', money(pays.visa))}
+      {num(pays.instapay) > 0 && row('انستا باي', money(pays.instapay))}
+      {num(pays.wallet) > 0 && row('محفظة', money(pays.wallet))}
+      {(hasTalabatSplit ? talabatVisa > 0 : num(r.talabat) > 0) && row(hasTalabatSplit ? 'طلبات فيزا (مستحق من طلبات)' : 'طلبات', money(hasTalabatSplit ? talabatVisa : r.talabat))}
 
       {Object.keys(r.byType || {}).length > 0 && (
         <>
-          <div className="rc-line" />
-          <div className="rc-big rc-center">حسب نوع الأوردر</div>
+          {section('حسب نوع الأوردر')}
           {Object.entries(r.byType).map(([k, v]) => row(`${TYPE_LABELS[k] || k} (${v.count})`, money(v.total)))}
         </>
       )}
 
-      {Object.keys(r.byCashier || {}).length > 0 && (
+      {Object.keys(r.byCashier || {}).length > 1 && (
         <>
-          <div className="rc-line" />
-          <div className="rc-big rc-center">حسب الكاشير</div>
-          {Object.entries(r.byCashier).map(([k, v]) => row(`${k} (${v.count})`, `${money(v.total)} · خصومات ${money(v.discounts || 0)}`))}
+          {section('حسب الكاشير')}
+          {Object.entries(r.byCashier).map(([k, v]) => row(`${k} (${v.count})`, money(v.total)))}
         </>
       )}
 
-      {(r.categories || []).length > 0 && (
+      {hasDrawer && (
         <>
+          {section('حساب الدرج (كاش)')}
+          {row('رصيد الافتتاح', money(r.openingCash))}
+          {row('+ كاش المبيعات', money(pays.cash || 0))}
+          {num(r.cashIn) > 0 && row('+ إيداعات / تسويات سواقين', money(r.cashIn))}
+          {num(r.cashOut) > 0 && row('- مصروفات وسحب', money(r.cashOut))}
+          {num(r.driverCash) > 0 && row('- كاش مع السواقين', money(r.driverCash))}
           <div className="rc-line" />
-          <div className="rc-big rc-center">📦 جرد الأصناف المباعة</div>
+          {row('المتوقع في الدرج', money(expected), 'rc-big')}
+          {hasCounted && row('اللي اتعدّ فعلاً', money(m.countedCash), 'rc-big')}
+          {hasCounted && row('الفرق', diffText, 'rc-total')}
+        </>
+      )}
+      {m.notes && <div className="rc-note">ملاحظة: {m.notes}</div>}
+
+      {(r.movements || []).length > 0 && (
+        <>
+          {section('حركات الدرج')}
+          {r.movements.map((mv, i) => <div key={i} className="rc-row rc-small"><span>{mv.type === 'in' ? '+' : '-'} {mv.reason} ({mv.by})</span><span>{money(mv.amount)}</span></div>)}
+        </>
+      )}
+
+      {m.showItems && (r.categories || []).length > 0 && (
+        <>
+          {section('جرد الأصناف المباعة')}
           {r.categories.map((c, i) => (
             <div key={i} style={{ marginTop: 6 }}>
               <div className="rc-row rc-big"><span>{c.name}</span><span>{c.qty} قطعة</span></div>
@@ -2082,7 +2084,6 @@ const ReportBody = ({ order }) => {
         </>
       )}
 
-      {m.notes && (<><div className="rc-line" /><div>ملاحظات: {m.notes}</div></>)}
       <div className="rc-line" />
       <div className="rc-center rc-sub">طُبع: {fmtDT(order.createdAt)}</div>
     </>
@@ -2293,10 +2294,8 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
   const [settleDriver, setSettleDriver] = useState('');
   const [settleAmount, setSettleAmount] = useState('');
   const [closeOpen, setCloseOpen] = useState(false);
-  const [counted, setCounted] = useState('');
   const [notes, setNotes] = useState('');
-  const [differenceReason, setDifferenceReason] = useState('');
-  const [handoverTo, setHandoverTo] = useState('');
+  const [counted, setCounted] = useState('');
   const [busy, setBusy] = useState(false);
 
   const defRange = () => {
@@ -2310,7 +2309,9 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
   const [rangeBusy, setRangeBusy] = useState(false);
 
   const inp = 'w-full bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm';
+  const card = 'bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5';
   const pays = rep?.payments || {};
+  const num = (v) => Number(v) || 0;
 
   const addMovement = async () => {
     const amount = Number(mv.amount);
@@ -2340,25 +2341,30 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
     setBusy(false);
   };
 
+  // طباعة ملخص المبيعات (Net Sales) من غير تقفيل — متاحة للكاشير والأدمن
+  const printNet = () => {
+    if (!rep) return;
+    if (isAdmin) requestPrint(makePrint('تقرير الوردية (X) - لحظي', rep, { expectedCash: rep.expectedCash }), 'report');
+    else requestPrint(makePrint('ملخص المبيعات (Net Sales) - لحظي', rep, {}), 'report');
+  };
+
   const doClose = async () => {
-    if (counted === '' || Number(counted) < 0) return alert('اكتب الكاش اللي عدّيته في الدرج (لو مفيش اكتب 0)');
-    if (!window.confirm('تأكيد تقفيل الوردية؟ هيتم حفظ صافي المبيعات وتقرير الوردية.')) return;
     setBusy(true);
     try {
-      const r = await authFetch('/api/shifts/close', { method: 'POST', body: JSON.stringify({ countedCash: counted, notes: notes.trim() }) });
+      const r = await authFetch('/api/shifts/close', { method: 'POST', body: JSON.stringify({ notes: notes.trim() }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         alert(d.error || 'حصل خطأ أثناء تقفيل الوردية');
       } else {
         const closedReport = d.report || d.reportSnapshot || rep || {};
         const netSales = Number(closedReport.netSales ?? closedReport.total ?? d.total ?? 0);
-        const closedMeta = { countedCash: d.countedCash, difference: d.difference, closedBy: d.closedBy || '', closedAt: d.closedAt || new Date().toISOString(), expectedCash: closedReport.expectedCash };
-        // اطبع ورقتين منفصلتين: تقرير تقفيل الكاشير، ثم تقرير المطبخ للأصناف والكميات.
-        requestPrint(makePrint('تقرير تقفيل الكاشير (Z)', closedReport, closedMeta), 'report');
+        const closedMeta = { closedBy: d.closedBy || '', closedAt: d.closedAt || new Date().toISOString(), expectedCash: d.expectedCash ?? closedReport.expectedCash, notes: d.notes };
+        // ورقتين: تقرير تقفيل الكاشير (Z) ثم تقرير المطبخ (الأصناف والكميات)
+        requestPrint(makePrint('تقرير تقفيل الوردية (Z)', closedReport, closedMeta), 'report');
         requestPrint(makePrint('تقرير المطبخ - جرد الوردية', closedReport, closedMeta), 'kitchen-summary');
         setCloseOpen(false);
-        alert(`تم تقفيل الوردية بنجاح\nصافي المبيعات: ${money(netSales)}\nالكاش المعدود: ${money(d.countedCash)}\nالفرق: ${diffLabel(d.difference)}\nهيتم طباعة تقرير الكاشير وتقرير المطبخ.`);
-        setCounted(''); setNotes(''); setDifferenceReason(''); setHandoverTo('');
+        alert(`تم تقفيل الوردية\nصافي المبيعات: ${money(netSales)}`);
+        setNotes(''); setCounted('');
         await refreshShift(); await refreshClosed();
       }
     } catch (e) {
@@ -2385,11 +2391,19 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
     </div>
   );
 
-  const expected = rep?.expectedCash || 0;
-  const diffLive = counted === '' ? null : Number(counted) - expected;
+  const payRow = (label, value, sub = false) => (
+    <div className={`flex justify-between items-center py-2 border-b border-[#3A1218] last:border-0 ${sub ? 'pr-4 text-xs text-zinc-400' : 'text-sm'}`}>
+      <span className={sub ? '' : 'text-zinc-200 font-bold'}>{label}</span>
+      <span className={sub ? '' : 'font-black text-white'}>{money(value)}</span>
+    </div>
+  );
+
+  const expected = num(rep?.expectedCash);
+  const talabatCash = num(rep?.talabatCash);
+  const talabatVisa = num(rep?.talabatVisa);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {!shift ? (
         <div className="max-w-md mx-auto bg-[#1C0D10] border border-[#800020]/50 rounded-2xl p-6 space-y-4">
           <h3 className="text-xl font-black text-[#FFD700] text-center">🕒 مفيش وردية مفتوحة</h3>
@@ -2398,51 +2412,71 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
         </div>
       ) : (
         <>
-          <div className="bg-[#1C0D10] border border-green-600/50 rounded-2xl p-5 flex flex-wrap gap-4 items-center justify-between">
-            <div>
-              <p className="font-black text-green-400 text-lg">🟢 وردية مفتوحة</p>
-              <p className="text-zinc-300 text-sm mt-1">فتحها: <strong className="text-white">{shift.openedBy}</strong> · {fmtDT(shift.openedAt)}</p>
-              {isAdmin && <p className="text-zinc-400 text-xs mt-1">رصيد الافتتاح: {money(shift.openingCash)}</p>}
+          {/* الشريط العلوي: حالة الوردية + الأزرار */}
+          <div className="bg-[#1C0D10] border border-green-600/50 rounded-2xl p-4 md:p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-black text-green-400 text-lg">🟢 وردية مفتوحة</p>
+                <p className="text-zinc-300 text-sm mt-1">فتحها <strong className="text-white">{shift.openedBy}</strong> · {fmtDT(shift.openedAt)}{isAdmin ? ` · افتتاح ${money(shift.openingCash)}` : ''}</p>
+              </div>
+              <button type="button" onClick={refreshShift} className="bg-zinc-700 text-white px-4 py-2 rounded-xl text-sm font-bold">🔄 تحديث</button>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={refreshShift} className="bg-zinc-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold">🔄 تحديث</button>
-              {isAdmin && <button type="button" onClick={() => rep && requestPrint(makePrint('تقرير الوردية (X) - لحظي', rep, { expectedCash: rep.expectedCash }), 'report')} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold">🖨️ طباعة تقرير X</button>}
-              <button type="button" onClick={() => setCloseOpen(true)} className="bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-black">🔒 تقفيل الوردية</button>
+            <div className="grid grid-cols-2 gap-3">
+              <button type="button" onClick={printNet} disabled={!rep} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-3 rounded-xl font-black text-sm">🖨️ اطبع ملخص المبيعات<span className="block text-[11px] font-bold text-blue-100">من غير ما تقفل الوردية</span></button>
+              <button type="button" onClick={() => setCloseOpen(true)} className="bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-black text-sm">🔒 تقفيل الوردية<span className="block text-[11px] font-bold text-red-100">وطباعة تقرير الوردية</span></button>
             </div>
           </div>
 
           {rep && (
             <>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {kpi('عدد الأوردرات', rep.count)}
-                {kpi('إجمالي المبيعات', money(rep.grossSales ?? rep.total))}
-                {kpi('صافي المبيعات (بعد المصروفات)', money(rep.netSales ?? rep.total))}
-                {kpi('💸 مصروفات', money(rep.expensesTotal))}
-                {isAdmin && kpi('💵 كاش من غير طلبات', money(Math.max(0, (pays.cash || 0) - (rep.talabatCash || 0))))}
-                {kpi('💳 فيزا', money(pays.visa || 0))}
-                {kpi('📱 انستا باي', money(pays.instapay || 0))}
-                {kpi('👛 محفظة', money(pays.wallet || 0))}
-                {kpi('🛍️ طلبات كاش (الدرج)', money(rep.talabatCash || 0))}
-                {kpi('🛍️ طلبات فيزا (مستحقات)', money(rep.talabatVisa || 0))}
-                {kpi('🛵 رسوم توصيل', money(rep.delivery))}
-                {kpi('🏷️ خصومات', money(rep.discounts))}
-                {kpi(`✖ ملغي (${rep.cancelled})`, money(rep.cancelledTotal))}
+              {/* الرقم الأهم: صافي المبيعات */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2 bg-[#1C0D10] border border-[#FFD700]/40 rounded-2xl p-5">
+                  <p className="text-sm text-zinc-400 font-bold">صافي المبيعات (Net Sales)</p>
+                  <p className="text-4xl font-black text-[#FFD700] mt-1">{money(rep.netSales ?? rep.total)}</p>
+                  <p className="text-[11px] text-zinc-500 mt-1">إجمالي المبيعات {money(rep.grossSales ?? rep.total)} − مصروفات {money(rep.expensesTotal)} (شامل التوصيل، بعد الخصم، من غير الملغي)</p>
+                </div>
+                <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5 flex flex-col justify-center text-center">
+                  <p className="text-sm text-zinc-400 font-bold">الأوردرات</p>
+                  <p className="text-4xl font-black text-white mt-1">{rep.count}</p>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5 space-y-3">
-                  <h4 className="font-black text-[#FFD700] text-lg">💰 حساب الدرج (الكاش)</h4>
-                  {isAdmin && <div className="space-y-1.5 text-sm">
-                    <div className="flex justify-between"><span className="text-zinc-400">رصيد الافتتاح</span><span className="font-bold text-white">{money(rep.openingCash)}</span></div>
-                    <div className="flex justify-between"><span className="text-zinc-400">+ مبيعات كاش (شاملة طلبات كاش)</span><span className="font-bold text-white">{money(pays.cash || 0)}</span></div>
-                    {Number(rep.driverCash) > 0 && <div className="flex justify-between"><span className="text-zinc-400">- كاش في عهدة السواقين</span><span className="font-bold text-orange-300">{money(rep.driverCash)}</span></div>}
-                    <div className="flex justify-between"><span className="text-zinc-400">+ إيداعات</span><span className="font-bold text-green-400">{money(rep.cashIn)}</span></div>
-                    <div className="flex justify-between"><span className="text-zinc-400">- مصروفات / سحب</span><span className="font-bold text-red-400">{money(rep.cashOut)}</span></div>
-                    <div className="flex justify-between border-t border-[#3A1218] pt-2 text-base"><span className="font-black text-white">المتوقع في الدرج</span><span className="font-black text-[#FFD700]">{money(rep.expectedCash)}</span></div>
-                  </div>}
+              <div className="flex flex-wrap gap-2 text-xs font-bold">
+                <span className="bg-[#1C0D10] border border-[#3A1218] rounded-full px-3 py-1.5 text-zinc-300">🛵 رسوم توصيل: <span className="text-white">{money(rep.delivery)}</span></span>
+                <span className="bg-[#1C0D10] border border-[#3A1218] rounded-full px-3 py-1.5 text-zinc-300">🏷️ خصومات: <span className="text-orange-300">{money(rep.discounts)}</span></span>
+                <span className="bg-[#1C0D10] border border-[#3A1218] rounded-full px-3 py-1.5 text-zinc-300">✖ ملغي ({rep.cancelled}): <span className="text-red-300">{money(rep.cancelledTotal)}</span></span>
+              </div>
 
-                  <div className="border-t border-[#3A1218] pt-3 space-y-2">
-                    <p className="text-xs font-bold text-zinc-400">تسجيل حركة في الدرج</p>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* المبيعات حسب طريقة الدفع */}
+                <div className={card}>
+                  <h4 className="font-black text-[#FFD700] text-lg mb-2">💳 المبيعات حسب الدفع</h4>
+                  {isAdmin && payRow('💵 كاش', pays.cash || 0)}
+                  {isAdmin && talabatCash > 0 && payRow('منه طلبات كاش', talabatCash, true)}
+                  {payRow('💳 فيزا', pays.visa || 0)}
+                  {payRow('📱 انستا باي', pays.instapay || 0)}
+                  {payRow('👛 محفظة', pays.wallet || 0)}
+                  {payRow('🛍️ طلبات فيزا (مستحق من طلبات)', talabatVisa)}
+                  {!isAdmin && talabatCash > 0 && payRow('🛍️ طلبات كاش', talabatCash)}
+                </div>
+
+                {/* الدرج */}
+                <div className={card + ' space-y-3'}>
+                  <h4 className="font-black text-[#FFD700] text-lg">💰 الدرج</h4>
+                  {isAdmin ? (
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between"><span className="text-zinc-400">رصيد الافتتاح</span><span className="font-bold text-white">{money(rep.openingCash)}</span></div>
+                      <div className="flex justify-between"><span className="text-zinc-400">+ كاش المبيعات</span><span className="font-bold text-white">{money(pays.cash || 0)}</span></div>
+                      <div className="flex justify-between"><span className="text-zinc-400">+ إيداعات / تسويات سواقين</span><span className="font-bold text-green-400">{money(rep.cashIn)}</span></div>
+                      <div className="flex justify-between"><span className="text-zinc-400">- مصروفات وسحب</span><span className="font-bold text-red-400">{money(rep.cashOut)}</span></div>
+                      {num(rep.driverCash) > 0 && <div className="flex justify-between"><span className="text-zinc-400">- كاش مع السواقين</span><span className="font-bold text-orange-300">{money(rep.driverCash)}</span></div>}
+                      <div className="flex justify-between border-t border-[#3A1218] pt-2 text-base"><span className="font-black text-white">المتوقع في الدرج</span><span className="font-black text-[#FFD700]">{money(rep.expectedCash)}</span></div>
+                    </div>
+                  ) : <p className="text-xs text-zinc-500">أي مصروف أو إيداع من الدرج سجّله هنا عشان الحساب يتظبط وقت التقفيل.</p>}
+
+                  <div className={`${isAdmin ? 'border-t border-[#3A1218] pt-3' : ''} space-y-2`}>
+                    <p className="text-xs font-bold text-zinc-400">تسجيل مصروف أو إيداع</p>
                     <div className="flex flex-wrap gap-1.5 items-center"><span className="text-[11px] text-zinc-500">مصروف سريع:</span>{['ثلج', 'غاز', 'خضار', 'بقشيش', 'صيانة', 'مواصلات', 'أخرى'].map(x => <button key={x} type="button" onClick={() => setMv({ ...mv, type: 'out', reason: x })} className="px-2.5 py-1 rounded-lg text-[11px] font-black border border-red-500/40 text-red-300">{x}</button>)}</div>
 
                     <div className="flex gap-2">
@@ -2450,14 +2484,14 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
                       <button type="button" onClick={() => setMv({ ...mv, type: 'in' })} className={`flex-1 py-2 rounded-lg text-xs font-black border ${mv.type === 'in' ? 'bg-green-600 text-white border-green-400' : 'bg-[#12080A] text-zinc-400 border-[#3A1218]'}`}>➕ إيداع</button>
                     </div>
                     <div className="flex gap-2">
-                      <input type="number" min="0" value={mv.amount} onChange={(e) => setMv({ ...mv, amount: e.target.value })} placeholder="المبلغ" className={inp + ' !w-28'} dir="ltr" />
-                      <input value={mv.reason} onChange={(e) => setMv({ ...mv, reason: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') addMovement(); }} placeholder="السبب (مثال: ثلج، غاز، بقشيش)" className={inp} />
+                      <input type="number" min="0" value={mv.amount} onChange={(e) => setMv({ ...mv, amount: e.target.value })} placeholder="المبلغ" className={inp + ' !w-24'} dir="ltr" />
+                      <input value={mv.reason} onChange={(e) => setMv({ ...mv, reason: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') addMovement(); }} placeholder="السبب (ثلج، غاز، بقشيش...)" className={inp} />
                       <button type="button" disabled={busy} onClick={addMovement} className="bg-[#800020] text-white px-4 rounded-lg text-sm font-black shrink-0">حفظ</button>
                     </div>
                   </div>
 
                   {isAdmin && (rep.movements || []).length > 0 && (
-                    <div className="border-t border-[#3A1218] pt-3 space-y-1.5 max-h-48 overflow-y-auto">
+                    <div className="border-t border-[#3A1218] pt-3 space-y-1.5 max-h-40 overflow-y-auto">
                       {rep.movements.map((m, i) => (
                         <div key={i} className="flex justify-between text-xs">
                           <span className="text-zinc-300">{m.type === 'in' ? '➕' : '➖'} {m.reason} <span className="text-zinc-500">({m.by} · {new Date(m.at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })})</span></span>
@@ -2466,21 +2500,6 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
                       ))}
                     </div>
                   )}
-                </div>
-
-                <div className="space-y-6">
-                  <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5">
-                    <h4 className="font-black text-[#FFD700] text-lg mb-3">👥 حسب الكاشير</h4>
-                    {Object.keys(rep.byCashier || {}).length === 0 ? <p className="text-zinc-500 text-sm">لسه مفيش أوردرات.</p> : Object.entries(rep.byCashier).map(([k, v]) => (
-                      <div key={k} className="flex justify-between items-center gap-3 text-sm py-1.5 border-b border-[#3A1218] last:border-0"><span className="text-white font-bold">{k} <span className="text-zinc-500 font-normal">({v.count} أوردر)</span></span><span className="text-[#FFD700] font-black text-left">{money(v.total)}<span className="block text-[11px] text-orange-300">خصومات: {money(v.discounts || 0)}</span></span></div>
-                    ))}
-                  </div>
-                  <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5">
-                    <h4 className="font-black text-[#FFD700] text-lg mb-3">📦 حسب نوع الأوردر</h4>
-                    {Object.keys(rep.byType || {}).length === 0 ? <p className="text-zinc-500 text-sm">لسه مفيش أوردرات.</p> : Object.entries(rep.byType).map(([k, v]) => (
-                      <div key={k} className="flex justify-between text-sm py-1.5 border-b border-[#3A1218] last:border-0"><span className="text-white font-bold">{TYPE_LABELS[k] || k} <span className="text-zinc-500 font-normal">({v.count})</span></span><span className="text-[#FFD700] font-black">{money(v.total)}</span></div>
-                    ))}
-                  </div>
                 </div>
               </div>
 
@@ -2512,22 +2531,41 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
                 </div>
               )}
 
-              <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5">
-                <h4 className="font-black text-[#FFD700] text-lg mb-1">📦 جرد الأصناف المباعة في الوردية</h4>
-                <p className="text-zinc-500 text-xs mb-3">كل قسم اتباع منه كام قطعة — للمطابقة مع المخزون.</p>
+              {/* تفاصيل إضافية (مطوية عشان الصفحة تفضل بسيطة) */}
+              <details className={card}>
+                <summary className="cursor-pointer font-black text-[#FFD700] text-base">📊 تفاصيل أكتر (حسب الكاشير ونوع الأوردر)</summary>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-4">
+                  <div>
+                    <h5 className="font-black text-white text-sm mb-2">👥 حسب الكاشير</h5>
+                    {Object.keys(rep.byCashier || {}).length === 0 ? <p className="text-zinc-500 text-sm">لسه مفيش أوردرات.</p> : Object.entries(rep.byCashier).map(([k, v]) => (
+                      <div key={k} className="flex justify-between items-center gap-3 text-sm py-1.5 border-b border-[#3A1218] last:border-0"><span className="text-white font-bold">{k} <span className="text-zinc-500 font-normal">({v.count})</span></span><span className="text-[#FFD700] font-black">{money(v.total)}</span></div>
+                    ))}
+                  </div>
+                  <div>
+                    <h5 className="font-black text-white text-sm mb-2">📦 حسب نوع الأوردر</h5>
+                    {Object.keys(rep.byType || {}).length === 0 ? <p className="text-zinc-500 text-sm">لسه مفيش أوردرات.</p> : Object.entries(rep.byType).map(([k, v]) => (
+                      <div key={k} className="flex justify-between text-sm py-1.5 border-b border-[#3A1218] last:border-0"><span className="text-white font-bold">{TYPE_LABELS[k] || k} <span className="text-zinc-500 font-normal">({v.count})</span></span><span className="text-[#FFD700] font-black">{money(v.total)}</span></div>
+                    ))}
+                  </div>
+                </div>
+              </details>
+
+              <details className={card}>
+                <summary className="cursor-pointer font-black text-[#FFD700] text-base">📦 جرد الأصناف المباعة في الوردية</summary>
+                <p className="text-zinc-500 text-xs my-3">كل قسم اتباع منه كام قطعة — للمطابقة مع المخزون.</p>
                 {(rep.categories || []).length === 0 ? <p className="text-zinc-500 text-sm">لسه مفيش مبيعات.</p> : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {rep.categories.map((c, i) => (
-                      <details key={i} className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3" open={i < 2}>
-                        <summary className="cursor-pointer flex justify-between items-center font-black text-white text-sm"><span>{c.name}</span><span className="text-[#FFD700]">{c.qty} قطعة · {money(c.total)}</span></summary>
+                      <div key={i} className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3">
+                        <div className="flex justify-between items-center font-black text-white text-sm"><span>{c.name}</span><span className="text-[#FFD700]">{c.qty} قطعة · {money(c.total)}</span></div>
                         <div className="mt-2 space-y-1">
                           {(c.items || []).map((it, j) => <div key={j} className="flex justify-between text-xs text-zinc-300"><span>{it.name}</span><span className="font-black text-white">× {it.qty}</span></div>)}
                         </div>
-                      </details>
+                      </div>
                     ))}
                   </div>
                 )}
-              </div>
+              </details>
             </>
           )}
         </>
@@ -2563,7 +2601,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
             <div><label className="block text-xs text-zinc-400 mb-1">من</label><input type="datetime-local" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} className={inp} /></div>
             <div><label className="block text-xs text-zinc-400 mb-1">إلى</label><input type="datetime-local" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} className={inp} /></div>
             <button type="button" disabled={rangeBusy} onClick={loadRange} className="bg-[#800020] text-white px-5 py-2.5 rounded-xl font-black text-sm">{rangeBusy ? '...' : '📈 عرض التقرير'}</button>
-            {rangeRep && <button type="button" onClick={() => requestPrint(makePrint('تقرير فترة', rangeRep), 'report')} className="bg-blue-600 text-white px-4 py-2.5 rounded-xl font-bold text-sm">🖨️ طباعة</button>}
+            {rangeRep && <button type="button" onClick={() => requestPrint(makePrint('تقرير فترة', rangeRep, { showItems: true }), 'report')} className="bg-blue-600 text-white px-4 py-2.5 rounded-xl font-bold text-sm">🖨️ طباعة</button>}
           </div>
           {rangeRep && (
             <div className="space-y-3">
@@ -2590,25 +2628,22 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
         </div>
       )}
 
-      {/* نافذة تقفيل بسيطة: صافي المبيعات فقط */}
+      {/* نافذة التقفيل */}
       {closeOpen && shift && (
         <div className="fixed inset-0 z-[130] bg-black/75 flex items-center justify-center p-4" onClick={() => !busy && setCloseOpen(false)}>
           <div dir="rtl" className="bg-[#1C0D10] border border-red-500/60 rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-xl font-black text-red-400">🔒 تقفيل الوردية</h3>
-            <div className="bg-[#12080A] border border-[#3A1218] rounded-xl p-5 text-center space-y-2">
+            <div className="bg-[#12080A] border border-[#3A1218] rounded-xl p-4 text-center space-y-1">
               <div className="text-sm text-zinc-400">صافي المبيعات (Net Sales)</div>
               <div className="text-3xl font-black text-[#FFD700]">{money(rep?.netSales ?? rep?.total ?? 0)}</div>
+              <div className="text-xs text-zinc-400">{rep?.count || 0} أوردر{Number(rep?.discounts) > 0 ? ` · خصومات ${money(rep.discounts)}` : ''}</div>
             </div>
-            <div className="space-y-2">
-              <label className="block text-sm font-black text-white">💵 عدّ الكاش اللي في الدرج دلوقتي *</label>
-              <input type="number" min="0" value={counted} onChange={(e) => setCounted(e.target.value)} placeholder="اكتب المبلغ اللي عدّيته (لو مفيش اكتب 0)" className={inp + ' text-center text-lg'} dir="ltr" />
-              {isAdmin && counted !== '' && <p className="text-xs font-black text-center text-[#FFD700]">الفرق: {diffLabel(Number(counted) - expected)}</p>}
-            </div>
+            {isAdmin && <div className="text-xs bg-[#12080A] border border-[#3A1218] rounded-lg p-2 text-zinc-400">المتوقع في الدرج: <b className="text-white">{money(expected)}</b></div>}
             <div className="space-y-2">
               <label className="block text-sm font-black text-white">ملاحظة (اختياري)</label>
               <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="اكتب هنا لو في حاجة" className={inp} />
             </div>
-            {isAdmin && <div className="text-xs bg-[#12080A] border border-[#3A1218] rounded-lg p-2 text-zinc-400">المتوقع في الدرج: <b className="text-white">{money(expected)}</b></div>}
+            <p className="text-[11px] text-zinc-500 text-center">هتطلع ورقتين: تقرير التقفيل وتقرير المطبخ.</p>
             <div className="flex gap-3">
               <button type="button" disabled={busy} onClick={doClose} className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-black py-3 rounded-xl">{busy ? 'جاري التقفيل...' : 'تقفيل الوردية'}</button>
               <button type="button" disabled={busy} onClick={() => setCloseOpen(false)} className="px-5 bg-zinc-700 text-white font-bold rounded-xl">رجوع</button>
