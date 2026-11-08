@@ -150,6 +150,9 @@ const orderSchema = new mongoose.Schema({
   printedAt: { type: Date },
   printedBy: { type: String },
   cancelledAfterPrint: { type: Boolean, default: false },
+  editedAt: { type: Date },
+  editedBy: { type: String },
+  editLog: { type: Array, default: [] },
   createdBy: { type: String },
   driverName: { type: String },
   cancelReason: { type: String },
@@ -1022,7 +1025,14 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
 // الأدمن والكاشير: كل الأوردرات (الكاشير للعرض والطباعة فقط، الإلغاء بعد الإنهاء ممنوع في PUT)
 app.get("/api/orders", requireAuth, async (req, res) => {
   try {
-    res.json(await Order.find({}).sort({ createdAt: -1 }).limit(3000));
+    if (req.user?.role === "admin") return res.json(await Order.find({}).sort({ createdAt: -1 }).limit(3000));
+    // الكاشير: الأوردرات النشطة + أوردرات ورديته الحالية بس. الأيام اللي فاتت للأدمن فقط.
+    const myShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).select("openedAt").lean();
+    const since = myShift?.openedAt;
+    const cashierFilter = since
+      ? { $or: [{ status: { $in: ["pending", "accepted"] } }, { createdAt: { $gte: since } }, { completedAt: { $gte: since } }, { cancelledAt: { $gte: since } }] }
+      : { status: { $in: ["pending", "accepted"] } };
+    res.json(await Order.find(cashierFilter).sort({ createdAt: -1 }).limit(1000));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1184,6 +1194,99 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
   }
 });
 
+// تعديل أوردر كاشير بعد الإرسال: إضافة/حذف أصناف، تغيير الكمية، طريقة الدفع، الكومنت.
+// مسموح فقط طول ما وردية الأوردر مفتوحة، وكل تعديل بيتسجل ويوصل تنبيه تليجرام.
+app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const query = mongoose.Types.ObjectId.isValid(req.params.id)
+      ? { $or: [{ _id: req.params.id }, { orderId: req.params.id }] }
+      : { orderId: req.params.id };
+    const order = await Order.findOne(query);
+    if (!order) return res.status(404).json({ error: "الأوردر غير موجود" });
+    if (order.source !== "pos") return res.status(400).json({ error: "التعديل لأوردرات الكاشير بس" });
+    if (order.status === "cancelled") return res.status(400).json({ error: "الأوردر ملغي، مينفعش يتعدّل" });
+
+    const shift = order.shiftId ? await Shift.findById(order.shiftId).lean() : null;
+    if (!shift || shift.status !== "open") return res.status(400).json({ error: "وردية الأوردر اتقفلت، مينفعش تعدّله" });
+    if (req.user?.role !== "admin" && shift.openedBy !== req.user.name) return res.status(403).json({ error: "تعديل الأوردر من كاشير وردية الأوردر بس" });
+
+    // طريقة الدفع
+    let paymentMethod = order.paymentMethod;
+    if (body.paymentMethod !== undefined) {
+      if (!POS_PAYMENTS.includes(body.paymentMethod)) return res.status(400).json({ error: "طريقة الدفع غير صحيحة" });
+      if (order.orderType === "talabat" && !["cash", "visa"].includes(body.paymentMethod)) return res.status(400).json({ error: "طلبات: كاش أو فيزا بس" });
+      paymentMethod = body.paymentMethod;
+    }
+
+    // الأصناف: السطور القديمة (keepIndex) بتفضل بسعرها الأصلي، والجديدة بتتسعّر من المنيو
+    let items = order.items;
+    if (body.items !== undefined) {
+      if (!Array.isArray(body.items) || body.items.length === 0) return res.status(400).json({ error: "الأوردر لازم يفضل فيه صنف. لو عايز تلغيه استخدم زرار الإلغاء" });
+      const slots = [];
+      const toPrice = [];
+      for (const raw of body.items.slice(0, 80)) {
+        if (typeof raw?.keepIndex === "number" && Number.isInteger(raw.keepIndex)) {
+          const orig = order.items[raw.keepIndex];
+          if (!orig) return res.status(409).json({ error: "الأوردر اتغيّر، حدّث الصفحة وحاول تاني" });
+          slots.push({ keep: { itemId: orig.itemId, name: orig.name, price: orig.price, quantity: Math.round(clampNumber(raw.quantity, 1, 99)), modifiers: orig.modifiers || [], notes: cleanText(raw.notes, 300) } });
+        } else {
+          slots.push({ fresh: toPrice.length });
+          toPrice.push(raw);
+        }
+      }
+      let pricedNew = [];
+      if (toPrice.length) {
+        const priced = await priceOrderItemsFromCatalog(toPrice, 80, false);
+        if (priced.error) return res.status(400).json({ error: priced.error });
+        pricedNew = priced.items;
+      }
+      items = slots.map((s) => (s.keep ? s.keep : pricedNew[s.fresh]));
+    }
+
+    // الخصم والكومنت
+    let discountPercent = order.discountPercent || 0;
+    let discountReason = order.discountReason || "";
+    if (body.discountPercent !== undefined) {
+      discountPercent = clampNumber(body.discountPercent, 0, 100);
+      discountReason = discountPercent > 0 ? cleanText(body.discountReason ?? order.discountReason, 200) : "";
+      if (discountPercent > 0 && discountReason.length < 2) return res.status(400).json({ error: "سبب الخصم إجباري" });
+    }
+    const orderNote = body.orderNote !== undefined ? cleanText(body.orderNote, 300) : (order.orderNote || "");
+
+    const itemsTotal = items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
+    const discountAmount = Math.round(itemsTotal * discountPercent / 100);
+    const grandTotal = itemsTotal - discountAmount + (Number(order.deliveryFee) || 0);
+
+    const sig = (list) => JSON.stringify((list || []).map((it) => [String(it.itemId || ""), it.name, Number(it.price) || 0, Number(it.quantity) || 0, it.modifiers || [], it.notes || ""]));
+    const itemsChanged = sig(items) !== sig(order.items);
+    const changed = itemsChanged || paymentMethod !== order.paymentMethod || orderNote !== (order.orderNote || "")
+      || discountPercent !== (order.discountPercent || 0) || grandTotal !== order.grandTotal;
+    if (!changed) return res.json({ order, itemsChanged: false, changed: false });
+
+    const entry = {
+      by: req.user.name, at: new Date(), afterPrint: !!order.printedAt,
+      beforeTotal: order.grandTotal, afterTotal: grandTotal,
+      beforePayment: order.paymentMethod || "", afterPayment: paymentMethod || "", itemsChanged
+    };
+    const updated = await Order.findOneAndUpdate(
+      { _id: order._id, status: order.status },
+      {
+        $set: { items, itemsTotal, discountPercent, discountAmount, discountReason, grandTotal, paymentMethod, orderNote, editedAt: new Date(), editedBy: req.user.name },
+        $push: { editLog: { $each: [entry], $slice: -20 } }
+      },
+      { new: true }
+    );
+    if (!updated) return res.status(409).json({ error: "الأوردر اتغيّر قبل كده، حدّث الصفحة" });
+
+    const payLabel = { cash: "كاش", visa: "فيزا", instapay: "انستا باي", wallet: "محفظة" };
+    void sendTelegramAlert(`✏️ تعديل أوردر #${updated.orderId}\nبواسطة: ${req.user.name}\nالإجمالي: ${order.grandTotal} ← ${grandTotal} ج\nالدفع: ${payLabel[order.paymentMethod] || order.paymentMethod || "-"} ← ${payLabel[paymentMethod] || paymentMethod || "-"}\nالأصناف اتغيّرت: ${itemsChanged ? "نعم" : "لا"}\nبعد الطباعة: ${entry.afterPrint ? "نعم" : "لا"}`);
+    res.json({ order: updated, itemsChanged, changed: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/orders/:id/printed", requireAuth, async (req, res) => {
   try {
     const query = mongoose.Types.ObjectId.isValid(req.params.id)
@@ -1328,8 +1431,19 @@ const buildReport = async (from, to, shift = null) => {
     .map((c) => ({ name: c.name, qty: c.qty, total: c.total, items: [...c.items.values()].sort((a, b) => b.qty - a.qty) }))
     .sort((a, b) => b.total - a.total);
 
+  // المصروفات (كل حركة "out" من الدرج) بتتخصم من صافي المبيعات وتتكتب بالتفصيل في التقرير
+  let expenseMoves = [];
+  if (shift) {
+    expenseMoves = (shift.movements || []).filter((m) => m.type === "out");
+  } else {
+    const shiftDocs = await Shift.find({ $or: [{ status: "open" }, { closedAt: { $gt: fromD } }] }).select("movements").lean();
+    for (const sd of shiftDocs) for (const m of sd.movements || []) if (m.type === "out" && new Date(m.at) > fromD && new Date(m.at) <= toD) expenseMoves.push(m);
+  }
+  const expenses = expenseMoves.map((m) => ({ reason: String(m.reason || ""), amount: Number(m.amount) || 0, by: m.by || "", at: m.at }));
+  const expensesTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
+
   const report = {
-    from: fromD, to: toD, count: shiftOrders.length, total, netSales: total, delivery, discounts, talabat, talabatCash, talabatVisa, driverCash,
+    from: fromD, to: toD, count: shiftOrders.length, total, grossSales: total, netSales: total - expensesTotal, expenses, expensesTotal, delivery, discounts, talabat, talabatCash, talabatVisa, driverCash,
     payments, byType, byCashier, cancelled: shiftCancelled.length,
     cancelledTotal: shiftCancelled.reduce((sum, order) => sum + (Number(order.grandTotal) || 0), 0),
     cancelledPrinted: shiftCancelled.filter((order) => order.cancelledAfterPrint).length,
@@ -1453,18 +1567,25 @@ app.post("/api/shifts/close", requireAuth, async (req, res) => {
     const now = new Date();
     const report = await buildReport(shift.openedAt, now, shift);
     const closeNotes = cleanText(req.body?.notes, 300);
+    // لازم الكاشير يكتب الكاش اللي عدّه في الدرج، والسيستم يحسب الفرق
+    const rawCounted = req.body?.countedCash;
+    const countedCash = Number(rawCounted);
+    if (rawCounted === undefined || rawCounted === null || rawCounted === "" || !Number.isFinite(countedCash) || countedCash < 0) {
+      return res.status(400).json({ error: "اكتب الكاش اللي عدّيته في الدرج (لو مفيش اكتب 0)" });
+    }
+    const difference = Math.round((countedCash - (Number(report.expectedCash) || 0)) * 100) / 100;
     const closed = await Shift.findOneAndUpdate(
       { _id: shift._id, status: "open", openedBy: req.user.name },
       { $set: {
         status: "closed", closedAt: now, closedBy: req.user.name, from: shift.openedAt,
         count: report.count, total: report.total, delivery: report.delivery, payments: report.payments,
         talabat: report.talabat, discounts: report.discounts, cancelled: report.cancelled, orders: report.orders,
-        report, expectedCash: report.expectedCash, notes: closeNotes, handoverTo: "", handoverStatus: "none"
-      }, $unset: { countedCash: 1, difference: 1, handoverCash: 1 } },
+        report, expectedCash: report.expectedCash, countedCash, difference, notes: closeNotes, handoverTo: "", handoverStatus: "none"
+      }, $unset: { handoverCash: 1 } },
       { new: true }
     );
     if (!closed) return res.status(409).json({ error: "الوردية اتقفلت قبل كده، حدّث الصفحة" });
-    void sendTelegramAlert(`🔒 تقفيل وردية\nبواسطة: ${req.user.name}\nصافي المبيعات (Net Sales): ${Number(closed.total) || 0} ج.م\nإجمالي الخصومات: ${Number(report.discounts) || 0} ج.م`);
+    void sendTelegramAlert(`🔒 تقفيل وردية\nبواسطة: ${req.user.name}\nإجمالي المبيعات: ${Number(report.total) || 0} ج.م\nالمصروفات: ${Number(report.expensesTotal) || 0} ج.م\nصافي المبيعات (Net Sales): ${Number(report.netSales) || 0} ج.م\nالكاش المتوقع: ${Number(report.expectedCash) || 0} ج.م\nالكاش المعدود: ${countedCash} ج.م\nالفرق: ${difference} ج.م\nإجمالي الخصومات: ${Number(report.discounts) || 0} ج.م`);
     res.json(closed);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1473,7 +1594,9 @@ app.post("/api/shifts/close", requireAuth, async (req, res) => {
 
 app.get("/api/shifts", requireAuth, async (req, res) => {
   try {
-    const filter = req.user?.role === "admin" ? { status: { $ne: "open" } } : { status: "closed", openedBy: req.user.name };
+    // سجل الورديات المقفولة للأدمن فقط
+    if (req.user?.role !== "admin") return res.json([]);
+    const filter = { status: { $ne: "open" } };
     res.json(await Shift.find(filter).sort({ closedAt: -1 }).limit(60));
   } catch (err) {
     res.status(500).json({ error: err.message });
