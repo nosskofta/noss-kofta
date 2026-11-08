@@ -1446,7 +1446,7 @@ const buildReport = async (from, to, shift = null) => {
     .map((c) => ({ name: c.name, qty: c.qty, total: c.total, items: [...c.items.values()].sort((a, b) => b.qty - a.qty) }))
     .sort((a, b) => b.total - a.total);
 
-  // المصروفات (كل حركة "out" من الدرج) بتتخصم من صافي المبيعات وتتكتب بالتفصيل في التقرير
+  // المصروفات (كل حركة "out" من الدرج) بتتخصم من كاش الدرج بس، مش من المبيعات، وتتكتب بالتفصيل في التقرير
   let expenseMoves = [];
   if (shift) {
     expenseMoves = (shift.movements || []).filter((m) => m.type === "out");
@@ -1458,7 +1458,7 @@ const buildReport = async (from, to, shift = null) => {
   const expensesTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
 
   const report = {
-    from: fromD, to: toD, count: shiftOrders.length, total, grossSales: total, netSales: total - expensesTotal, expenses, expensesTotal, delivery, discounts, talabat, talabatCash, talabatVisa, driverCash,
+    from: fromD, to: toD, count: shiftOrders.length, total, grossSales: total, netSales: total, expenses, expensesTotal, delivery, discounts, talabat, talabatCash, talabatVisa, driverCash,
     payments, byType, byCashier, cancelled: shiftCancelled.length,
     cancelledTotal: shiftCancelled.reduce((sum, order) => sum + (Number(order.grandTotal) || 0), 0),
     cancelledPrinted: shiftCancelled.filter((order) => order.cancelledAfterPrint).length,
@@ -1478,6 +1478,15 @@ const buildReport = async (from, to, shift = null) => {
     });
   }
   return report;
+};
+
+// التقارير القديمة اتحفظت بصافي مبيعات = المبيعات − المصروفات. هنا بنصححها وقت القراءة بس (الداتابيز زي ما هي)
+const normalizeShiftReport = (shiftDoc) => {
+  const doc = shiftDoc?.toObject ? shiftDoc.toObject() : shiftDoc;
+  if (!doc?.report) return doc;
+  const r = doc.report;
+  const gross = Number(r.grossSales ?? r.total ?? doc.total) || 0;
+  return { ...doc, report: { ...r, grossSales: gross, netSales: gross } };
 };
 
 const redactCurrentShiftForCashier = (payload) => {
@@ -1541,6 +1550,18 @@ app.post("/api/shifts/movement", requireAuth, async (req, res) => {
     const reason = cleanText(req.body?.reason, 100);
     if (!type || amount <= 0) return res.status(400).json({ error: "اكتب مبلغ صحيح" });
     if (reason.length < 2) return res.status(400).json({ error: "اكتب السبب" });
+    // المصروف بيطلع من كاش الدرج بس: لو الدرج مفيهوش كاش كفاية (مثلاً كل الأوردرات انستا أو طلبات فيزا) نرفضه
+    if (type === "out") {
+      const openShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).lean();
+      if (!openShift) return res.status(400).json({ error: "مفيش شيفت مفتوح" });
+      const drawer = await buildReport(openShift.openedAt, new Date(), openShift);
+      const available = Math.round((Number(drawer.expectedCash) || 0) * 100) / 100;
+      if (amount > available + 0.009) {
+        return res.status(400).json({ error: req.user?.role === "admin"
+          ? `الدرج مفيهوش كاش كفاية. المتاح في الدرج دلوقتي ${available} ج بس`
+          : "الدرج مفيهوش كاش كفاية للمصروف ده، مينفعش تسجله. لو الفلوس موجودة فعلاً سجّلها كإيداع الأول." });
+      }
+    }
     const shift = await Shift.findOneAndUpdate(
       { status: "open", openedBy: req.user.name },
       { $push: { movements: { type, amount, reason, by: req.user.name, at: new Date(), category: "cash_movement" } } },
@@ -1593,8 +1614,8 @@ app.post("/api/shifts/close", requireAuth, async (req, res) => {
       { new: true }
     );
     if (!closed) return res.status(409).json({ error: "الوردية اتقفلت قبل كده، حدّث الصفحة" });
-    void sendTelegramAlert(`🔒 تقفيل وردية\nبواسطة: ${req.user.name}\nإجمالي المبيعات: ${Number(report.total) || 0} ج.م\nالمصروفات: ${Number(report.expensesTotal) || 0} ج.م\nصافي المبيعات (Net Sales): ${Number(report.netSales) || 0} ج.م\nإجمالي الخصومات: ${Number(report.discounts) || 0} ج.م`);
-    res.json(closed);
+    void sendTelegramAlert(`🔒 تقفيل وردية\nبواسطة: ${req.user.name}\nإجمالي المبيعات: ${Number(report.total) || 0} ج.م\nالمصروفات (من الدرج): ${Number(report.expensesTotal) || 0} ج.م\nالمتوقع في الدرج: ${Number(report.expectedCash) || 0} ج.م\nإجمالي الخصومات: ${Number(report.discounts) || 0} ج.م`);
+    res.json(normalizeShiftReport(closed));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1605,7 +1626,7 @@ app.get("/api/shifts", requireAuth, async (req, res) => {
     // سجل الورديات المقفولة للأدمن فقط
     if (req.user?.role !== "admin") return res.json([]);
     const filter = { status: { $ne: "open" } };
-    res.json(await Shift.find(filter).sort({ closedAt: -1 }).limit(60));
+    res.json((await Shift.find(filter).sort({ closedAt: -1 }).limit(60)).map(normalizeShiftReport));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
