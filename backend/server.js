@@ -155,6 +155,7 @@ const orderSchema = new mongoose.Schema({
   editLog: { type: Array, default: [] },
   createdBy: { type: String },
   driverName: { type: String },
+  driverFeePaid: { type: Boolean, default: false },
   cancelReason: { type: String },
   cancelledBy: { type: String },
   cancelledAt: { type: Date }
@@ -1104,6 +1105,16 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
     // الشرط على الحالة القديمة عشان لو دوسين في نفس اللحظة ما يتسجلوش مرتين
     const updatedOrder = await Order.findOneAndUpdate({ _id: order._id, status: order.status }, op, { new: true });
     if (!updatedOrder) return res.status(409).json({ error: "الأوردر اتغيّر قبل كده، حدّث الصفحة" });
+    // أوردر توصيل مدفوع مش كاش: العميل دفع للمطعم، والسواق بياخد أجرته كاش من الدرج
+    if (status === "completed" && updatedOrder.orderType === "delivery" && updatedOrder.paymentMethod && updatedOrder.paymentMethod !== "cash"
+        && !updatedOrder.driverFeePaid && (Number(updatedOrder.deliveryFee) || 0) > 0) {
+      const fee = Number(updatedOrder.deliveryFee) || 0;
+      const feeShift = await Shift.findOneAndUpdate(
+        { status: "open", openedBy: req.user.name },
+        { $push: { movements: { type: "out", amount: fee, reason: `أجرة سواق ${updatedOrder.driverName || ""} - أوردر #${updatedOrder.orderId}`.trim(), by: req.user.name, at: new Date(), category: "driver_fee" } } }
+      );
+      if (feeShift) await Order.updateOne({ _id: updatedOrder._id }, { $set: { driverFeePaid: true } });
+    }
     if (status === "cancelled") {
       void sendTelegramAlert(`⚠️ إلغاء أوردر #${updatedOrder.orderId}\nبواسطة: ${req.user.name}\nبعد الطباعة: ${updatedOrder.cancelledAfterPrint ? "نعم" : "لا"}\nالسبب: ${updatedOrder.cancelReason || "-"}`);
     }
@@ -1320,7 +1331,7 @@ app.delete("/api/orders/:id", requireAuth, requireAdmin, async (req, res) => {
 const getDriverBalances = async () => {
   const [driverOrders, shiftDocs] = await Promise.all([
     Order.find({ status: "completed", orderType: "delivery", paymentMethod: "cash", driverName: { $type: "string", $ne: "" } })
-      .select("driverName grandTotal")
+      .select("driverName grandTotal deliveryFee")
       .lean(),
     Shift.find({}).select("movements").lean()
   ]);
@@ -1329,7 +1340,8 @@ const getDriverBalances = async () => {
     const name = cleanText(order.driverName, 40);
     if (!name) continue;
     const row = balances.get(name) || { driverName: name, due: 0, orders: 0, settled: 0 };
-    row.due += Number(order.grandTotal) || 0;
+    // السواق بيحصّل الفاتورة كلها من العميل بس بيسلّم سعر الأكل بعد الخصم، وبيخلّي أجرة التوصيل لنفسه
+    row.due += Math.max(0, (Number(order.grandTotal) || 0) - (Number(order.deliveryFee) || 0));
     row.orders += 1;
     balances.set(name, row);
   }

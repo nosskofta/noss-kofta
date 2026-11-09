@@ -2601,7 +2601,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
 
                   <div className={`${'border-t border-[#3A1218] pt-3'} space-y-2`}>
                     <p className="text-xs font-bold text-zinc-400">تسجيل مصروف أو إيداع</p>
-                    <div className="flex flex-wrap gap-1.5 items-center"><span className="text-[11px] text-zinc-500">مصروف سريع:</span>{['ثلج', 'غاز', 'خضار', 'بقشيش', 'صيانة', 'مواصلات', 'أخرى'].map(x => <button key={x} type="button" onClick={() => setMv({ ...mv, type: 'out', reason: x })} className="px-2.5 py-1 rounded-lg text-[11px] font-black border border-red-500/40 text-red-300">{x}</button>)}</div>
+                    <div className="flex flex-wrap gap-1.5 items-center"><span className="text-[11px] text-zinc-500">مصروف سريع:</span>{['أجرة سواق', 'ثلج', 'غاز', 'خضار', 'بقشيش', 'صيانة', 'مواصلات', 'أخرى'].map(x => <button key={x} type="button" onClick={() => setMv({ ...mv, type: 'out', reason: x })} className="px-2.5 py-1 rounded-lg text-[11px] font-black border border-red-500/40 text-red-300">{x}</button>)}</div>
 
                     <div className="flex gap-2">
                       <button type="button" onClick={() => setMv({ ...mv, type: 'out' })} className={`flex-1 py-2 rounded-lg text-xs font-black border ${mv.type === 'out' ? 'bg-red-600 text-white border-red-400' : 'bg-[#12080A] text-zinc-400 border-[#3A1218]'}`}>➖ مصروف / سحب</button>
@@ -2639,12 +2639,13 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
               )}
               {(rep.driverBalances || []).length > 0 && (
                 <div className="bg-[#1C0D10] border border-orange-500/30 rounded-2xl p-5 space-y-3">
-                  <h4 className="font-black text-[#FFD700] text-lg">🛵 عهدة السواقين (كاش أوردرات الدليفري غير المُسوّى)</h4>
+                  <h4 className="font-black text-[#FFD700] text-lg">🛵 فلوس مع السواقين (لسه ماسلّموهاش للدرج)</h4>
+                  <p className="text-[11px] text-zinc-400 leading-5">السواق بيحصّل من العميل الفاتورة كلها (شامل التوصيل)، ويسلّمك سعر الأكل بعد الخصم بس ويخلّي أجرته. المبلغ المتبقي هنا هو اللي المفروض يسلّمهولك. دوس "استلمت كله" أول ما يديك الفلوس.</p>
                   <div className="space-y-2">
                     {rep.driverBalances.map((d) => (
                       <div key={d.driverName} className="flex flex-wrap items-center justify-between gap-3 bg-[#12080A] border border-[#3A1218] rounded-xl p-3">
                         <div><p className="font-black text-white">{d.driverName}</p><p className="text-xs text-zinc-400">{d.orders} أوردر · مستحق {money(d.due)} · متسدد {money(d.settled)}</p></div>
-                        <div className="flex items-center gap-2"><strong className="text-orange-300">متبقي {money(d.balance)}</strong><button type="button" onClick={() => { setSettleDriver(d.driverName); setSettleAmount(String(d.balance)); }} className="px-3 py-2 rounded-lg bg-orange-600 text-white text-xs font-black">تسوية كاملة</button></div>
+                        <div className="flex items-center gap-2"><strong className="text-orange-300">متبقي {money(d.balance)}</strong><button type="button" onClick={() => { setSettleDriver(d.driverName); setSettleAmount(String(d.balance)); }} className="px-3 py-2 rounded-lg bg-orange-600 text-white text-xs font-black">استلمت كله</button></div>
                       </div>
                     ))}
                   </div>
