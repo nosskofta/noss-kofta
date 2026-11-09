@@ -1691,65 +1691,103 @@ const shiftDayLabel = (openedAt) => {
   return h >= DAY_START_HOUR && h < 18 ? "شيفت الصبح" : "شيفت الليل";
 };
 
+// بداية اليوم (6 الصبح بتوقيت القاهرة) كوقت حقيقي، بيشتغل صح مع التوقيت الصيفي والشتوي
+const cairoDayStart = (key) => {
+  const [y, m, d] = key.split("-").map(Number);
+  for (const off of [2, 3, 1, 0]) {
+    const t = new Date(Date.UTC(y, m - 1, d, DAY_START_HOUR - off));
+    const c = cairoYMDH(t);
+    if (c.y === y && c.m === m && c.d === d && c.h === DAY_START_HOUR) return t;
+  }
+  return new Date(Date.UTC(y, m - 1, d, DAY_START_HOUR - 2));
+};
+const addDaysKey = (key, days) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+};
+const dayWindow = (key) => ({ from: cairoDayStart(key), to: cairoDayStart(addDaysKey(key, 1)) });
+const dayNum = (x) => Number(x) || 0;
+const dayTotalsOf = (r) => {
+  const talabat = dayNum(r.talabat), talabatCash = dayNum(r.talabatCash);
+  return {
+    count: dayNum(r.count), total: dayNum(r.grossSales ?? r.total), delivery: dayNum(r.delivery), discounts: dayNum(r.discounts),
+    talabat, talabatCash, talabatVisa: r.talabatVisa !== undefined ? dayNum(r.talabatVisa) : Math.max(0, talabat - talabatCash),
+    expensesTotal: dayNum(r.expensesTotal), cancelled: dayNum(r.cancelled), cancelledTotal: dayNum(r.cancelledTotal), payments: r.payments || {}
+  };
+};
+
+// تقرير اليوم: كل أوردرات اليوم (من 6 الصبح لـ 6 الصبح) + تفصيل كل وردية.
+// الإجمالي بيتحسب من الأوردرات نفسها، فلو في أوردرات اتعملت من غير وردية أو وردية عدّت من يوم للتاني، بتظهر ومش بتضيع.
 // الكاشير يشوف النهارده بس، والأدمن يختار أي يوم
 app.get("/api/reports/day", requireAuth, async (req, res) => {
   try {
     const todayKey = businessDayKey(new Date());
     const asked = String(req.query.date || "");
     const key = req.user?.role === "admin" && /^\d{4}-\d{2}-\d{2}$/.test(asked) ? asked : todayKey;
-    const base = new Date(`${key}T00:00:00Z`).getTime();
-    if (isNaN(base)) return res.status(400).json({ error: "التاريخ غير صحيح" });
-
-    const docs = await Shift.find({ openedAt: { $gte: new Date(base - 36 * 3600000), $lt: new Date(base + 60 * 3600000) } }).sort({ openedAt: 1 }).lean();
-    const dayShifts = docs.filter((s) => s.openedAt && businessDayKey(s.openedAt) === key);
+    if (isNaN(new Date(`${key}T00:00:00Z`).getTime())) return res.status(400).json({ error: "التاريخ غير صحيح" });
     const now = new Date();
-    const n = (x) => Number(x) || 0;
+    const { from: dayFrom, to: dayTo } = dayWindow(key);
+    const upTo = dayTo > now ? now : dayTo;
 
-    const totals = { count: 0, total: 0, delivery: 0, discounts: 0, talabat: 0, talabatCash: 0, talabatVisa: 0, expensesTotal: 0, cancelled: 0, cancelledTotal: 0, cashIn: 0, cashOut: 0, driverCash: 0, payments: {} };
-    const catMap = new Map();
+    const docs = await Shift.find({ openedAt: { $lt: dayTo }, $or: [{ status: "open" }, { closedAt: { $gt: dayFrom } }] }).sort({ openedAt: 1 }).lean();
     const shifts = [];
-
-    for (const s of dayShifts) {
+    for (const s of docs) {
       const isOpen = s.status === "open";
-      const r = isOpen ? await buildReport(s.openedAt, now, s) : (s.report || {});
+      const endsAt = isOpen ? now : new Date(s.closedAt);
+      const inside = new Date(s.openedAt) >= dayFrom && endsAt <= dayTo;
+      const r = inside
+        ? (isOpen ? await buildReport(s.openedAt, now, s) : (s.report || {}))
+        : await buildReport(new Date(Math.max(new Date(s.openedAt), dayFrom)), new Date(Math.min(endsAt, dayTo)), s);
       const moves = s.movements || [];
-      const cashIn = moves.filter((m) => m.type === "in").reduce((sum, m) => sum + n(m.amount), 0);
-      const cashOut = moves.filter((m) => m.type === "out").reduce((sum, m) => sum + n(m.amount), 0);
-      const talabat = n(r.talabat ?? s.talabat);
-      const talabatCash = n(r.talabatCash);
-      const row = {
-        id: String(s._id), label: shiftDayLabel(s.openedAt), openedBy: s.openedBy || "", closedBy: s.closedBy || "",
-        openedAt: s.openedAt, closedAt: isOpen ? null : s.closedAt, isOpen,
-        count: n(r.count ?? s.count), total: n(r.grossSales ?? r.total ?? s.total), delivery: n(r.delivery ?? s.delivery),
-        discounts: n(r.discounts ?? s.discounts), talabat, talabatCash,
-        talabatVisa: r.talabatVisa !== undefined ? n(r.talabatVisa) : Math.max(0, talabat - talabatCash),
-        expensesTotal: r.expensesTotal !== undefined ? n(r.expensesTotal) : cashOut,
-        cancelled: n(r.cancelled ?? s.cancelled), cancelledTotal: n(r.cancelledTotal),
-        payments: r.payments || s.payments || {}, openingCash: n(s.openingCash), cashIn, cashOut, driverCash: n(r.driverCash),
-        expectedCash: n(isOpen ? r.expectedCash : (s.expectedCash ?? r.expectedCash))
-      };
-      shifts.push(row);
-
-      for (const k of ["count", "total", "delivery", "discounts", "talabat", "talabatCash", "talabatVisa", "expensesTotal", "cancelled", "cancelledTotal", "cashIn", "cashOut", "driverCash"]) totals[k] += row[k];
-      for (const [pk, pv] of Object.entries(row.payments)) totals.payments[pk] = (totals.payments[pk] || 0) + n(pv);
-
-      for (const c of r.categories || []) {
-        if (!catMap.has(c.name)) catMap.set(c.name, { name: c.name, qty: 0, total: 0, items: new Map() });
-        const cat = catMap.get(c.name);
-        cat.qty += n(c.qty); cat.total += n(c.total);
-        for (const it of c.items || []) {
-          const prev = cat.items.get(it.name) || { name: it.name, qty: 0, total: 0 };
-          prev.qty += n(it.qty); prev.total += n(it.total);
-          cat.items.set(it.name, prev);
-        }
-      }
+      const cashIn = moves.filter((m) => m.type === "in").reduce((sum, m) => sum + dayNum(m.amount), 0);
+      const cashOut = moves.filter((m) => m.type === "out").reduce((sum, m) => sum + dayNum(m.amount), 0);
+      const t = dayTotalsOf({ ...r, count: r.count ?? s.count, total: r.grossSales ?? r.total ?? s.total, delivery: r.delivery ?? s.delivery, discounts: r.discounts ?? s.discounts, talabat: r.talabat ?? s.talabat, cancelled: r.cancelled ?? s.cancelled, expensesTotal: r.expensesTotal !== undefined ? r.expensesTotal : cashOut, payments: r.payments || s.payments });
+      shifts.push({
+        id: String(s._id), label: inside ? shiftDayLabel(s.openedAt) : (new Date(s.openedAt) < dayFrom ? "وردية فاتت من اليوم اللي قبله (الجزء بتاع النهارده)" : `${shiftDayLabel(s.openedAt)} (كملت لليوم اللي بعده)`), openedBy: s.openedBy || "", closedBy: s.closedBy || "",
+        openedAt: s.openedAt, closedAt: isOpen ? null : s.closedAt, isOpen, partial: !inside, ...t,
+        openingCash: dayNum(s.openingCash), cashIn, cashOut, driverCash: dayNum(r.driverCash),
+        expectedCash: dayNum(isOpen || !inside ? r.expectedCash : (s.expectedCash ?? r.expectedCash))
+      });
     }
 
-    const categories = [...catMap.values()]
-      .map((c) => ({ name: c.name, qty: c.qty, total: c.total, items: [...c.items.values()].sort((a, b) => b.qty - a.qty) }))
-      .sort((a, b) => b.total - a.total);
+    const whole = await buildReport(dayFrom, upTo, null);
+    const totals = dayTotalsOf(whole);
+    const sumTotal = shifts.reduce((a, s) => a + s.total, 0), sumCount = shifts.reduce((a, s) => a + s.count, 0);
+    const outside = totals.total - sumTotal > 0.5 || totals.count - sumCount > 0
+      ? { count: Math.max(0, totals.count - sumCount), total: Math.round((totals.total - sumTotal) * 100) / 100 } : null;
 
-    res.json({ day: key, isToday: key === todayKey, generatedAt: now, shifts, totals, categories });
+    res.json({ day: key, isToday: key === todayKey, generatedAt: now, from: dayFrom, to: upTo, shifts, totals, outside, categories: whole.categories || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// داش بورد اليوم (للأدمن فقط): كل أوردرات اليوم كله، مش وردية معينة
+app.get("/api/reports/dashboard", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+    const todayKey = businessDayKey(now);
+    const asked = String(req.query.date || "");
+    const key = /^\d{4}-\d{2}-\d{2}$/.test(asked) && !isNaN(new Date(`${asked}T00:00:00Z`).getTime()) ? asked : todayKey;
+    const { from, to } = dayWindow(key);
+    const upTo = to > now ? now : to;
+    const prevKey = addDaysKey(key, -1);
+    const pw = dayWindow(prevKey);
+    const [r, pr, openShifts] = await Promise.all([
+      buildReport(from, upTo, null),
+      buildReport(pw.from, pw.to, null),
+      Shift.find({ status: "open" }).select("openedBy openedAt").lean()
+    ]);
+    const items = [];
+    for (const c of r.categories || []) for (const it of c.items || []) items.push({ name: it.name, qty: dayNum(it.qty), total: dayNum(it.total) });
+    items.sort((a, b) => b.qty - a.qty);
+    res.json({
+      day: key, isToday: key === todayKey, from, to: upTo, generatedAt: now,
+      totals: dayTotalsOf(r), byType: r.byType || {}, byCashier: r.byCashier || {},
+      prev: { day: prevKey, count: dayNum(pr.count), total: dayNum(pr.grossSales ?? pr.total) },
+      openShifts: openShifts.map((s) => ({ openedBy: s.openedBy, openedAt: s.openedAt })),
+      topItems: items.slice(0, 6)
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

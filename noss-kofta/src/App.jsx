@@ -2114,6 +2114,7 @@ const dayText = (d) => {
     out.push('', `${s.label} (${dayShiftSub(s)})`);
     dayLines(s, true).forEach(([a, b]) => out.push(`${a}: ${b}`));
   });
+  if (d.outside) out.push('', `⚠️ ${d.outside.count} أوردر (${money(d.outside.total)}) من غير وردية، محسوبين في الإجمالي`);
   out.push('', '━━━━━━━━', 'إجمالي اليوم');
   dayLines(d.totals || {}, false).forEach(([a, b]) => out.push(`${a}: ${b}`));
   return out.join('\n');
@@ -2134,12 +2135,128 @@ const DayReportBody = ({ order }) => {
           {lines(s, true)}
         </div>
       ))}
+      {d.outside && <div className="rc-note">⚠️ {d.outside.count} أوردر ({money(d.outside.total)}) من غير وردية، محسوبين في الإجمالي</div>}
       <div className="rc-line" />
       <div className="rc-big rc-center">إجمالي اليوم</div>
       {dayLines(d.totals || {}, false).map(([a, b], i) => <React.Fragment key={i}>{row(a, b, i === 1 ? 'rc-total' : '')}</React.Fragment>)}
       <div className="rc-line" />
       <div className="rc-center rc-sub">طُبع: {fmtDT(order.createdAt)}</div>
     </>
+  );
+};
+
+// ================= داش بورد اليوم (للأدمن فقط) =================
+const DayDashboardCard = ({ authFetch, card, inp }) => {
+  const [date, setDate] = useState('');
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const n = (x) => Number(x) || 0;
+
+  const load = async (silent = false) => {
+    if (!silent) setBusy(true);
+    setMsg('');
+    try {
+      const r = await authFetch(`/api/reports/dashboard${date ? `?date=${date}` : ''}`);
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) setD(j); else { setD(null); setMsg(j.error || 'حصل خطأ'); }
+    } catch (e) { if (e.message !== 'unauthorized') setMsg('تعذر الاتصال بالسيرفر'); }
+    setBusy(false);
+  };
+  useEffect(() => {
+    load();
+    const t = setInterval(() => { if (!date) load(true); }, 60000);
+    return () => clearInterval(t);
+  }, [date]);
+
+  const t = d?.totals || {};
+  const p = t.payments || {};
+  const cashNoTalabat = Math.max(0, n(p.cash) - n(t.talabatCash));
+  const payBoxes = [
+    ['💵 كاش (من غير طلبات)', cashNoTalabat],
+    ['🛍️ طلبات كاش', n(t.talabatCash)],
+    ['💳 فيزا', n(p.visa)],
+    ['🛍️ طلبات فيزا', n(t.talabatVisa)],
+    ['📱 انستا باي', n(p.instapay)],
+    ['👛 محفظة', n(p.wallet)]
+  ];
+  const paySum = payBoxes.reduce((a, b) => a + b[1], 0);
+  const avg = n(t.count) > 0 ? n(t.total) / n(t.count) : 0;
+  const prevTotal = n(d?.prev?.total);
+  const growth = prevTotal > 0 ? Math.round(((n(t.total) - prevTotal) / prevTotal) * 100) : null;
+
+  return (
+    <div className={card + ' space-y-4'}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h4 className="font-black text-[#FFD700] text-lg">📊 داش بورد اليوم <span className="text-xs font-bold text-zinc-400">(للأدمن فقط)</span></h4>
+        <div className="flex items-center gap-2">
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inp + ' !w-auto'} />
+          <button type="button" disabled={busy} onClick={() => load()} className="bg-zinc-700 hover:bg-zinc-600 disabled:opacity-60 text-white px-4 py-2 rounded-xl text-sm font-black">{busy ? '...' : '🔄 تحديث'}</button>
+        </div>
+      </div>
+      {msg && <p className="text-sm font-bold text-orange-300">{msg}</p>}
+      {d && (
+        <>
+          <p className="text-[11px] text-zinc-500">يوم {d.day} (من 6 الصبح لـ 6 الصبح) · كل الأوردرات في كل الورديات{d.isToday ? ' · بيتحدث لوحده كل دقيقة' : ''}</p>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-3 sm:col-span-2 rounded-2xl border border-[#FFD700]/40 bg-black/20 p-5">
+              <p className="text-sm font-bold text-zinc-400">إجمالي مبيعات اليوم</p>
+              <p className="text-4xl font-black text-[#FFD700] mt-1">{money(t.total)}</p>
+              <p className="text-xs text-zinc-400 mt-1">
+                {growth === null ? 'مفيش أرقام أمس للمقارنة' : growth === 0 ? 'زي أمس بالظبط' : (<span className={growth > 0 ? 'text-green-400 font-bold' : 'text-red-400 font-bold'}>{growth > 0 ? '▲' : '▼'} {Math.abs(growth)}% {growth > 0 ? 'أكتر' : 'أقل'} من أمس ({money(prevTotal)})</span>)}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-center flex flex-col justify-center">
+              <p className="text-xs font-bold text-zinc-400">الأوردرات</p>
+              <p className="text-3xl font-black text-white">{n(t.count)}</p>
+              <p className="text-[11px] text-zinc-400">متوسط {money(avg)}</p>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-sm font-black text-white mb-2">طرق الدفع</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {payBoxes.map(([label, v]) => (
+                <div key={label} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2.5">
+                  <p className="text-[11px] font-bold text-zinc-400">{label}</p>
+                  <p className="text-lg font-black text-white">{money(v)}</p>
+                </div>
+              ))}
+            </div>
+            {Math.abs(paySum - n(t.total)) > 0.5 && <p className="text-[11px] text-orange-300 mt-1">⚠️ مجموع طرق الدفع ({money(paySum)}) مختلف عن إجمالي اليوم، في طريقة دفع مش متسجلة.</p>}
+          </div>
+
+          <div className="flex flex-wrap gap-2 text-xs font-bold">
+            <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-zinc-300">🛵 رسوم توصيل: <span className="text-white">{money(t.delivery)}</span></span>
+            <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-zinc-300">🏷️ خصومات: <span className="text-orange-300">{money(t.discounts)}</span></span>
+            <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-zinc-300">✖ ملغي ({n(t.cancelled)}): <span className="text-red-300">{money(t.cancelledTotal)}</span></span>
+            {n(t.expensesTotal) > 0 && <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-zinc-300">💸 مصروفات الدرج: <span className="text-red-300">{money(t.expensesTotal)}</span></span>}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-sm font-black text-white mb-1">📦 حسب نوع الأوردر</p>
+              {Object.keys(d.byType || {}).length === 0 ? <p className="text-xs text-zinc-500">لسه مفيش أوردرات.</p> : Object.entries(d.byType).map(([k, v]) => (
+                <div key={k} className="flex justify-between text-sm py-1 border-b border-white/5 last:border-0"><span className="text-zinc-300">{TYPE_LABELS[k] || k} ({v.count})</span><span className="font-bold text-white">{money(v.total)}</span></div>
+              ))}
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-sm font-black text-white mb-1">👥 حسب الكاشير</p>
+              {Object.keys(d.byCashier || {}).length === 0 ? <p className="text-xs text-zinc-500">لسه مفيش أوردرات.</p> : Object.entries(d.byCashier).map(([k, v]) => (
+                <div key={k} className="flex justify-between text-sm py-1 border-b border-white/5 last:border-0"><span className="text-zinc-300">{k} ({v.count})</span><span className="font-bold text-white">{money(v.total)}</span></div>
+              ))}
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-sm font-black text-white mb-1">🔥 الأكتر مبيعاً</p>
+              {(d.topItems || []).length === 0 ? <p className="text-xs text-zinc-500">لسه مفيش مبيعات.</p> : d.topItems.map((it) => (
+                <div key={it.name} className="flex justify-between text-sm py-1 border-b border-white/5 last:border-0"><span className="text-zinc-300">{it.name}</span><span className="font-bold text-white">× {it.qty}</span></div>
+              ))}
+            </div>
+          </div>
+          {d.isToday && (d.openShifts || []).length > 0 && <p className="text-xs text-zinc-400">🟢 ورديات مفتوحة دلوقتي: {d.openShifts.map((s) => `${s.openedBy} (من ${dayTime(s.openedAt)})`).join(' · ')}</p>}
+        </>
+      )}
+    </div>
   );
 };
 
@@ -2200,8 +2317,9 @@ const DayReportCard = ({ authFetch, isAdmin, requestPrint, card, inp }) => {
         <button type="button" disabled={busy} onClick={printIt} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-4 py-2.5 rounded-xl text-sm font-black">🖨️ طباعة تقرير اليوم</button>
         <button type="button" disabled={busy} onClick={copyIt} className="bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white px-4 py-2.5 rounded-xl text-sm font-black">📋 نسخ للجروب</button>
       </div>
-      <p className="text-[11px] text-zinc-500">بيجمع الشيفتين بنفس أرقام تقارير التقفيل. لو شيفت لسه مفتوح بياخد أرقامه لحد دلوقتي.</p>
+      <p className="text-[11px] text-zinc-500">إجمالي اليوم بيتحسب من كل أوردرات اليوم (من 6 الصبح لـ 6 الصبح)، وتحته تفصيل كل وردية. لو وردية لسه مفتوحة بتاخد أرقامها لحد دلوقتي.</p>
       {msg && <p className="text-sm font-bold text-orange-300">{msg}</p>}
+      {data && data.outside && <p className="text-sm font-bold text-orange-300 bg-orange-500/10 border border-orange-500/30 rounded-xl p-3">⚠️ في {data.outside.count} أوردر بقيمة {money(data.outside.total)} اتعملوا في اليوم ده من غير ما يتحسبوا على أي وردية (مثلاً أوردر اتسلّم والكاشير مش فاتح وردية). هما محسوبين في إجمالي اليوم تحت.</p>}
       {data && ((data.shifts || []).length === 0 ? (
         <p className="text-zinc-500 text-sm">مفيش ورديات في يوم {data.day}.</p>
       ) : (
@@ -2709,6 +2827,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
         </>
       )}
 
+      {isAdmin && <DayDashboardCard authFetch={authFetch} card={card} inp={inp} />}
       <DayReportCard authFetch={authFetch} isAdmin={isAdmin} requestPrint={requestPrint} card={card} inp={inp} />
 
       {/* سجل الورديات (الأدمن فقط) */}
