@@ -111,7 +111,10 @@ const settingsSchema = new mongoose.Schema({
   orderingMode: { type: String, enum: ["auto", "open", "closed"], default: "auto" },
   openTime: { type: String, default: "12:00" },
   closeTime: { type: String, default: "03:00" },
-  closedMessage: { type: String, default: "" }
+  closedMessage: { type: String, default: "" },
+
+  // العهد القديمة للسواقين قبل التاريخ ده مش بتتحسب
+  driverBalancesFrom: { type: Date }
 });
 const Settings = mongoose.model("Settings", settingsSchema);
 
@@ -1329,8 +1332,10 @@ app.delete("/api/orders/:id", requireAuth, requireAdmin, async (req, res) => {
 // SHIFTS + REPORTS
 // =========================
 const getDriverBalances = async () => {
+  const cfg = await Settings.findOne().select("driverBalancesFrom").lean();
+  const from = cfg?.driverBalancesFrom ? new Date(cfg.driverBalancesFrom) : null;
   const [driverOrders, shiftDocs] = await Promise.all([
-    Order.find({ status: "completed", orderType: "delivery", paymentMethod: "cash", driverName: { $type: "string", $ne: "" } })
+    Order.find({ status: "completed", orderType: "delivery", paymentMethod: "cash", driverName: { $type: "string", $ne: "" }, ...(from ? { completedAt: { $gte: from } } : {}) })
       .select("driverName grandTotal deliveryFee")
       .lean(),
     Shift.find({}).select("movements").lean()
@@ -1348,6 +1353,7 @@ const getDriverBalances = async () => {
   for (const shift of shiftDocs) {
     for (const movement of shift.movements || []) {
       if (movement.category !== "driver_settlement" || !movement.driverName) continue;
+      if (from && new Date(movement.at) < from) continue;
       const name = cleanText(movement.driverName, 40);
       const row = balances.get(name) || { driverName: name, due: 0, orders: 0, settled: 0 };
       row.settled += Number(movement.amount) || 0;
@@ -1580,6 +1586,31 @@ app.post("/api/shifts/movement", requireAuth, async (req, res) => {
     if (!shift) return res.status(400).json({ error: "مفيش شيفت مفتوح" });
     if (type === "out") void sendTelegramAlert(`💸 مصروف من الدرج\nالمبلغ: ${amount} ج.م\nالسبب: ${reason}\nبواسطة: ${req.user.name}`);
     res.json(shift);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// مسح العهد القديمة: أي أوردر أو تسوية قبل بداية اليوم الحالي (6 الصبح) مش بيتحسب في "فلوس مع السواقين" (الأدمن فقط)
+app.post("/api/shifts/clear-old-driver-balances", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const [y, m, d] = businessDayKey(new Date()).split("-").map(Number);
+    let start = null;
+    for (const off of [3, 2]) {
+      const cand = new Date(Date.UTC(y, m - 1, d, DAY_START_HOUR) - off * 3600000);
+      const c = cairoYMDH(cand);
+      if (c.h === DAY_START_HOUR && c.d === d) { start = cand; break; }
+    }
+    if (!start) start = new Date(Date.UTC(y, m - 1, d, DAY_START_HOUR) - 2 * 3600000);
+    const before = await getDriverBalances();
+    let s = await Settings.findOne();
+    if (!s) s = new Settings({});
+    s.driverBalancesFrom = start;
+    await s.save();
+    listCache.settings = null;
+    const amount = before.reduce((sum, r) => sum + r.balance, 0);
+    void sendTelegramAlert(`🧹 مسح العهد القديمة للسواقين\nبواسطة: ${req.user.name}\nعدد السواقين: ${before.length}\nإجمالي اللي اتمسح: ${amount} ج.م`);
+    res.json({ ok: true, from: start, cleared: before.length, amount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

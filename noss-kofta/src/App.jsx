@@ -2523,6 +2523,17 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
     </div>
   );
 
+  const clearOldDrivers = async () => {
+    if (!window.confirm('هتمسح كل عهد السواقين القديمة (قبل النهارده) من الشاشة دي؟ ده مش بيغيّر حساب الدرج، وماينفعش ترجعها.')) return;
+    setBusy(true);
+    try {
+      const r = await authFetch('/api/shifts/clear-old-driver-balances', { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) alert(d.error || 'حصل خطأ'); else { await refreshShift(); alert(`تم مسح العهد القديمة (${d.cleared} سواق)`); }
+    } catch (e) {}
+    setBusy(false);
+  };
+
   const expected = num(rep?.expectedCash);
   const talabatCash = num(rep?.talabatCash);
   const talabatVisa = num(rep?.talabatVisa);
@@ -2641,6 +2652,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
                 <div className="bg-[#1C0D10] border border-orange-500/30 rounded-2xl p-5 space-y-3">
                   <h4 className="font-black text-[#FFD700] text-lg">🛵 فلوس مع السواقين (لسه ماسلّموهاش للدرج)</h4>
                   <p className="text-[11px] text-zinc-400 leading-5">السواق بيحصّل من العميل الفاتورة كلها (شامل التوصيل)، ويسلّمك سعر الأكل بعد الخصم بس ويخلّي أجرته. المبلغ المتبقي هنا هو اللي المفروض يسلّمهولك. دوس "استلمت كله" أول ما يديك الفلوس.</p>
+                  {isAdmin && <button type="button" disabled={busy} onClick={clearOldDrivers} className="bg-zinc-700 hover:bg-zinc-600 disabled:opacity-60 text-white px-4 py-2 rounded-xl text-xs font-black">🧹 امسح العهد القديمة (قبل النهارده)</button>}
                   <div className="space-y-2">
                     {rep.driverBalances.map((d) => (
                       <div key={d.driverName} className="flex flex-wrap items-center justify-between gap-3 bg-[#12080A] border border-[#3A1218] rounded-xl p-3">
