@@ -1610,6 +1610,8 @@ app.get("/api/shifts/current", requireAuth, async (req, res) => {
 app.post("/api/shifts/open", requireAuth, async (req, res) => {
   try {
     if (await Shift.findOne({ status: "open", openedBy: req.user.name })) return res.status(400).json({ error: "عندك وردية مفتوحة بالفعل" });
+    const otherOpen = await Shift.findOne({ status: "open", openedBy: { $ne: req.user.name } }).select("openedBy openedAt").lean();
+    if (otherOpen) return res.status(400).json({ error: `مينفعش تفتح وردية: ${otherOpen.openedBy} فاتح وردية لسه. لازم ${otherOpen.openedBy} يقفل ورديته الأول وبعدها تفتح إنت.` });
 
     const openingCash = clampNumber(req.body?.openingCash, 0, 10000000);
     const pendingHandover = await Shift.findOne({ status: "closed", handoverTo: req.user.name, handoverStatus: "pending" }).sort({ closedAt: -1 });
@@ -1757,44 +1759,39 @@ app.get("/api/reports/day", requireAuth, async (req, res) => {
     const { from: dayFrom, to: dayTo } = dayWindow(key);
     const upTo = dayTo > now ? now : dayTo;
 
-    const docs = await Shift.find({ openedAt: { $lt: dayTo }, $or: [{ status: "open" }, { closedAt: { $gt: dayFrom } }] }).sort({ openedAt: 1 }).lean();
+    // كل وردية بتتحسب كاملة على اليوم اللي اتفتحت فيه (شيفت الليل اللي بيقفل بعد 6 الصبح بيفضل في يومه)
+    const docs = await Shift.find({ openedAt: { $gte: dayFrom, $lt: dayTo } }).sort({ openedAt: 1 }).lean();
     const shifts = [];
+    const seenShift = new Set();
     for (const s of docs) {
       const isOpen = s.status === "open";
-      const endsAt = isOpen ? now : new Date(s.closedAt);
-      const inside = new Date(s.openedAt) >= dayFrom && endsAt <= dayTo;
-      const r = inside
-        ? (isOpen ? await buildReport(s.openedAt, now, s) : (s.report || {}))
-        : await buildReport(new Date(Math.max(new Date(s.openedAt), dayFrom)), new Date(Math.min(endsAt, dayTo)), s);
+      const endsAt = isOpen ? now : new Date(s.closedAt || now);
+      const r = isOpen ? await buildReport(s.openedAt, now, s) : (s.report || await buildReport(s.openedAt, endsAt, s));
       const moves = s.movements || [];
       const cashIn = moves.filter((m) => m.type === "in").reduce((sum, m) => sum + dayNum(m.amount), 0);
       const cashOut = moves.filter((m) => m.type === "out").reduce((sum, m) => sum + dayNum(m.amount), 0);
       const t = dayTotalsOf({ ...r, count: r.count ?? s.count, total: r.grossSales ?? r.total ?? s.total, delivery: r.delivery ?? s.delivery, discounts: r.discounts ?? s.discounts, talabat: r.talabat ?? s.talabat, cancelled: r.cancelled ?? s.cancelled, expensesTotal: r.expensesTotal !== undefined ? r.expensesTotal : cashOut, payments: r.payments || s.payments });
+      // نشيل الورديات الفاضية (وردية اتنسى تقفيلها من غير أوردرات ولا فلوس) والمكرر
+      const empty = !t.count && !dayNum(t.total) && !cashIn && !cashOut && !dayNum(s.openingCash);
+      const sig = `${s.openedBy}|${new Date(s.openedAt).getTime()}|${isOpen ? "open" : new Date(s.closedAt).getTime()}`;
+      if (empty || seenShift.has(sig)) continue;
+      seenShift.add(sig);
       shifts.push({
-        id: String(s._id), label: inside ? shiftDayLabel(s.openedAt) : (new Date(s.openedAt) < dayFrom ? "وردية فاتت من اليوم اللي قبله (الجزء بتاع النهارده)" : `${shiftDayLabel(s.openedAt)} (كملت لليوم اللي بعده)`), openedBy: s.openedBy || "", closedBy: s.closedBy || "",
-        openedAt: s.openedAt, closedAt: isOpen ? null : s.closedAt, isOpen, partial: !inside, ...t,
+        id: String(s._id), label: shiftDayLabel(s.openedAt), openedBy: s.openedBy || "", closedBy: s.closedBy || "",
+        openedAt: s.openedAt, closedAt: isOpen ? null : s.closedAt, isOpen, partial: false, ...t,
         openingCash: dayNum(s.openingCash), cashIn, cashOut, driverCash: dayNum(r.driverCash),
-        expectedCash: dayNum(isOpen || !inside ? r.expectedCash : (s.expectedCash ?? r.expectedCash))
+        expectedCash: dayNum(isOpen ? r.expectedCash : (s.expectedCash ?? r.expectedCash))
       });
     }
 
-    // تقرير اليوم يعرض الورديات الفعلية بس: نشيل الورديات الفاضية (من غير أوردرات ولا حركة فلوس، زي وردية اتنسى تقفيلها) وندمج المكرر
-    const seenShift = new Set();
-    for (let i = shifts.length - 1; i >= 0; i -= 1) {
-      const sh = shifts[i];
-      const empty = !sh.count && !dayNum(sh.total) && !dayNum(sh.cashIn) && !dayNum(sh.cashOut) && !dayNum(sh.openingCash);
-      const sig = `${sh.openedBy}|${new Date(sh.openedAt).getTime()}|${sh.closedAt ? new Date(sh.closedAt).getTime() : "open"}`;
-      if (empty || seenShift.has(sig)) { shifts.splice(i, 1); continue; }
-      seenShift.add(sig);
+    // إجمالي اليوم = مجموع الورديات اللي فوق
+    const totals = { count: 0, total: 0, delivery: 0, discounts: 0, talabat: 0, talabatCash: 0, talabatVisa: 0, expensesTotal: 0, cancelled: 0, cancelledTotal: 0, payments: {} };
+    for (const sh of shifts) {
+      for (const k of Object.keys(totals)) if (k !== "payments") totals[k] += dayNum(sh[k]);
+      for (const [pk, pv] of Object.entries(sh.payments || {})) totals.payments[pk] = (totals.payments[pk] || 0) + dayNum(pv);
     }
-
     const whole = await buildReport(dayFrom, upTo, null);
-    const totals = dayTotalsOf(whole);
-    const sumTotal = shifts.reduce((a, s) => a + s.total, 0), sumCount = shifts.reduce((a, s) => a + s.count, 0);
-    const outside = totals.total - sumTotal > 0.5 || totals.count - sumCount > 0
-      ? { count: Math.max(0, totals.count - sumCount), total: Math.round((totals.total - sumTotal) * 100) / 100 } : null;
-
-    res.json({ day: key, isToday: key === todayKey, generatedAt: now, from: dayFrom, to: upTo, shifts, totals, outside, categories: whole.categories || [] });
+    res.json({ day: key, isToday: key === todayKey, generatedAt: now, from: dayFrom, to: upTo, shifts, totals, outside: null, categories: whole.categories || [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
