@@ -1778,6 +1778,16 @@ app.get("/api/reports/day", requireAuth, async (req, res) => {
       });
     }
 
+    // تقرير اليوم يعرض الورديات الفعلية بس: نشيل الورديات الفاضية (من غير أوردرات ولا حركة فلوس، زي وردية اتنسى تقفيلها) وندمج المكرر
+    const seenShift = new Set();
+    for (let i = shifts.length - 1; i >= 0; i -= 1) {
+      const sh = shifts[i];
+      const empty = !sh.count && !dayNum(sh.total) && !dayNum(sh.cashIn) && !dayNum(sh.cashOut) && !dayNum(sh.openingCash);
+      const sig = `${sh.openedBy}|${new Date(sh.openedAt).getTime()}|${sh.closedAt ? new Date(sh.closedAt).getTime() : "open"}`;
+      if (empty || seenShift.has(sig)) { shifts.splice(i, 1); continue; }
+      seenShift.add(sig);
+    }
+
     const whole = await buildReport(dayFrom, upTo, null);
     const totals = dayTotalsOf(whole);
     const sumTotal = shifts.reduce((a, s) => a + s.total, 0), sumCount = shifts.reduce((a, s) => a + s.count, 0);
