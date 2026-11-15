@@ -159,11 +159,28 @@ const orderSchema = new mongoose.Schema({
   createdBy: { type: String },
   driverName: { type: String },
   driverFeePaid: { type: Boolean, default: false },
+  // أوردر دليفري كاش خرج مع السواق ومستني النقدية: بيفضل في النشطة ومش بيتحسب مبيعات لحد ما الكاشير يستلم الفلوس
+  awaitingCash: { type: Boolean, default: false },
+  driverOutAt: { type: Date },
+  cashReceivedAt: { type: Date },
+  cashReceivedBy: { type: String },
   cancelReason: { type: String },
   cancelledBy: { type: String },
   cancelledAt: { type: Date }
 });
 const Order = mongoose.model("Order", orderSchema);
+
+// قاعدة العملاء (للتسويق والإعلانات + تعبئة بيانات العميل لوحده في الدليفري)
+const customerSchema = new mongoose.Schema({
+  phone: { type: String, required: true, unique: true },
+  name: { type: String, default: "" },
+  address: { type: String, default: "" },
+  zoneName: { type: String, default: "" },
+  ordersCount: { type: Number, default: 0 },
+  lastOrderAt: { type: Date },
+  createdAt: { type: Date, default: Date.now }
+});
+const Customer = mongoose.model("Customer", customerSchema);
 
 // عدّاد أرقام أوردرات الكاشير
 const counterSchema = new mongoose.Schema({
@@ -739,6 +756,30 @@ const clampNumber = (value, min, max) => {
   return Math.min(Math.max(n, min), max);
 };
 
+// أرقام التليفونات: بنشيل أي رموز، ونحوّل +20 لـ 0 عشان نفس العميل ما يتسجلش مرتين
+const normPhone = (v) => {
+  let d = String(v ?? "").replace(/\D/g, "");
+  if (d.length === 12 && d.startsWith("20")) d = "0" + d.slice(2);
+  return d;
+};
+const isValidPhone = (v) => /^\d{8,15}$/.test(normPhone(v));
+const upsertCustomer = async ({ phone, name, address, zoneName }) => {
+  try {
+    const p = normPhone(phone);
+    if (!/^\d{8,15}$/.test(p)) return;
+    const set = { lastOrderAt: new Date() };
+    const n = cleanText(name, 80);
+    if (n && n !== "-" && n !== "طلبات") set.name = n;
+    const a = cleanText(address, 300);
+    if (a && a !== "استلام من الفرع" && a !== "طلبات" && a !== "-") set.address = a;
+    const z = cleanText(zoneName, 80);
+    if (z && z !== "استلام من الفرع" && z !== "طلبات") set.zoneName = z;
+    await Customer.findOneAndUpdate({ phone: p }, { $set: set, $inc: { ordersCount: 1 }, $setOnInsert: { phone: p } }, { upsert: true });
+  } catch (err) {
+    if (err?.code !== 11000) console.error("upsertCustomer error:", err.message);
+  }
+};
+
 // =========================
 // STORE HOURS (فتح / قفل استقبال الأوردرات)
 // =========================
@@ -1010,6 +1051,7 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     if (error) return res.status(400).json({ error });
 
     const saved = await new Order(order).save();
+    void upsertCustomer({ phone: saved.customerPhone, name: saved.customerName, address: saved.orderType === "delivery" ? saved.customerAddress : "", zoneName: saved.orderType === "delivery" ? saved.zoneName : "" });
     console.log(`✅ New website order saved: #${saved.orderId}`);
     res.status(201).json({
       ok: true,
@@ -1075,16 +1117,32 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
         const cashierShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).select("_id").lean();
         if (!cashierShift) return res.status(400).json({ error: "افتح ورديتك قبل تسليم الأوردر" });
       }
-      update.completedBy = req.user.name; update.completedAt = new Date();
-      if (order.orderType === "delivery") {
-        const driverName = cleanText(req.body.driverName, 40);
-        if (!driverName) return res.status(400).json({ error: "اكتب اسم السواق قبل خروج الأوردر" });
-        update.driverName = driverName;
-      }
-      if (order.source !== "pos" || !order.paymentMethod) {
-        const paymentMethod = WEBSITE_PAYMENTS.includes(req.body.paymentMethod) ? req.body.paymentMethod : null;
-        if (!paymentMethod) return res.status(400).json({ error: "اختار طريقة الدفع قبل تأكيد التسليم" });
-        update.paymentMethod = paymentMethod;
+      if (order.awaitingCash) {
+        // السواق رجّع الفلوس: دلوقتي بس الأوردر يتقفل ويتحسب مبيعات وكاش في الدرج
+        if (req.body.cashReceived !== true) return res.status(400).json({ error: "الأوردر مع السواق ومستني النقدية. اضغط (استلمت النقدية من السواق)" });
+        update.completedBy = req.user.name; update.completedAt = new Date();
+        update.awaitingCash = false; update.cashReceivedAt = new Date(); update.cashReceivedBy = req.user.name;
+      } else {
+        let driverNameNow = "";
+        if (order.orderType === "delivery") {
+          driverNameNow = cleanText(req.body.driverName, 40);
+          if (!driverNameNow) return res.status(400).json({ error: "اكتب اسم السواق قبل خروج الأوردر" });
+          update.driverName = driverNameNow;
+        }
+        if (order.source !== "pos" || !order.paymentMethod) {
+          const paymentMethod = WEBSITE_PAYMENTS.includes(req.body.paymentMethod) ? req.body.paymentMethod : null;
+          if (!paymentMethod) return res.status(400).json({ error: "اختار طريقة الدفع قبل تأكيد التسليم" });
+          update.paymentMethod = paymentMethod;
+        }
+        const payNow = update.paymentMethod || order.paymentMethod;
+        if (order.orderType === "delivery" && payNow === "cash") {
+          // دليفري كاش: الأوردر يخرج مع السواق ويفضل في النشطة مستني النقدية (مش بيتحسب مبيعات لسه)
+          update.status = "accepted";
+          update.awaitingCash = true; update.driverOutAt = new Date();
+          if (!order.acceptedBy) { update.acceptedBy = req.user.name; update.acceptedAt = new Date(); }
+        } else {
+          update.completedBy = req.user.name; update.completedAt = new Date();
+        }
       }
     }
 
@@ -1097,9 +1155,10 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
       }
       update.cancelReason = reason; update.cancelledBy = req.user.name; update.cancelledAt = new Date();
       update.cancelledAfterPrint = !!order.printedAt;
+      update.awaitingCash = false;
     }
 
-    if (status !== "completed") { unset.completedAt = ""; unset.completedBy = ""; unset.driverName = ""; }
+    if (status !== "completed") { unset.completedAt = ""; unset.completedBy = ""; unset.driverName = ""; update.awaitingCash = false; }
     if (status !== "cancelled") { unset.cancelReason = ""; unset.cancelledBy = ""; unset.cancelledAt = ""; }
 
     const op = { $set: update };
@@ -1109,7 +1168,7 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
     const updatedOrder = await Order.findOneAndUpdate({ _id: order._id, status: order.status }, op, { new: true });
     if (!updatedOrder) return res.status(409).json({ error: "الأوردر اتغيّر قبل كده، حدّث الصفحة" });
     // أوردر توصيل مدفوع مش كاش: العميل دفع للمطعم، والسواق بياخد أجرته كاش من الدرج
-    if (status === "completed" && updatedOrder.orderType === "delivery" && updatedOrder.paymentMethod && updatedOrder.paymentMethod !== "cash"
+    if (status === "completed" && updatedOrder.status === "completed" && updatedOrder.orderType === "delivery" && updatedOrder.paymentMethod && updatedOrder.paymentMethod !== "cash"
         && !updatedOrder.driverFeePaid && (Number(updatedOrder.deliveryFee) || 0) > 0) {
       const fee = Number(updatedOrder.deliveryFee) || 0;
       const feeShift = await Shift.findOneAndUpdate(
@@ -1122,6 +1181,24 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
       void sendTelegramAlert(`⚠️ إلغاء أوردر #${updatedOrder.orderId}\nبواسطة: ${req.user.name}\nبعد الطباعة: ${updatedOrder.cancelledAfterPrint ? "نعم" : "لا"}\nالسبب: ${updatedOrder.cancelReason || "-"}`);
     }
     res.json(updatedOrder);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// البحث عن عميل برقم التليفون (للدليفري): بيرجّع الاسم والعنوان والمنطقة لو العميل اتعامل معانا قبل كده
+app.get("/api/pos/customers/:phone", requireAuth, async (req, res) => {
+  try {
+    const phone = normPhone(req.params.phone);
+    if (!/^\d{8,15}$/.test(phone)) return res.json({ found: false });
+    const c = await Customer.findOne({ phone }).lean();
+    if (c) return res.json({ found: true, name: c.name || "", address: c.address || "", zoneName: c.zoneName || "", ordersCount: c.ordersCount || 0 });
+    // عملاء قدام (قبل قاعدة العملاء): نجيب آخر أوردر بنفس الرقم
+    const tail = phone.slice(-10);
+    const o = await Order.findOne({ customerPhone: new RegExp(`${tail}$`), orderType: "delivery" }).sort({ createdAt: -1 }).select("customerName customerAddress zoneName").lean();
+    if (!o) return res.json({ found: false });
+    const nm = o.customerName && o.customerName !== "-" && o.customerName !== "طلبات" ? o.customerName : "";
+    res.json({ found: true, name: nm, address: o.customerAddress || "", zoneName: o.zoneName || "", ordersCount: 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1161,19 +1238,22 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
     const discountAmount = Math.round(itemsTotal * discountPercent / 100);
 
     let customerName = cleanText(body.customerName, 80) || "-";
-    let customerPhone = cleanText(body.customerPhone, 20) || "-";
+    const rawPhone = cleanText(body.customerPhone, 20);
+    // الدليفري: التليفون إجباري. استلام وطلبات: اختياري (لجمع داتا للإعلانات) بس لو اتكتب لازم يكون صحيح
+    if (orderType === "delivery" && !rawPhone) return res.status(400).json({ error: "اكتب رقم تليفون العميل الأول (إجباري في الدليفري)" });
+    if (rawPhone && !isValidPhone(rawPhone)) return res.status(400).json({ error: "رقم التليفون غير صحيح. اتركه فاضي لو مش عايز تسجله" });
+    let customerPhone = rawPhone || "-";
     let customerAddress = "استلام من الفرع";
     let zoneName = "استلام من الفرع";
     let deliveryFee = 0;
     if (orderType === "delivery") {
       customerAddress = cleanText(body.customerAddress, 300);
       if (!customerAddress) return res.status(400).json({ error: "اكتب عنوان التوصيل" });
-      if (customerPhone !== "-" && !/^\+?\d{6,15}$/.test(customerPhone)) return res.status(400).json({ error: "رقم التليفون غير صحيح" });
       zoneName = cleanText(body.zoneName, 80) || "توصيل";
       const zone = zoneName ? await DeliveryZone.findOne({ name: zoneName }).lean() : null;
       deliveryFee = zone ? Number(zone.fee) || 0 : clampNumber(body.deliveryFee, 0, 500);
     } else if (orderType === "talabat") {
-      customerName = "طلبات"; customerPhone = "-"; customerAddress = "طلبات"; zoneName = "طلبات";
+      customerName = cleanText(body.customerName, 80) || "طلبات"; customerAddress = "طلبات"; zoneName = "طلبات";
     }
 
     const grandTotal = itemsTotal - discountAmount + deliveryFee;
@@ -1195,6 +1275,7 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
     }).save();
 
     console.log(`✅ POS order saved: #${saved.orderId} by ${req.user.name}`);
+    if (customerPhone !== "-") void upsertCustomer({ phone: customerPhone, name: customerName, address: orderType === "delivery" ? customerAddress : "", zoneName: orderType === "delivery" ? zoneName : "" });
     if (discountPercent > MAX_CASHIER_DISCOUNT) {
       void sendTelegramAlert(`🏷️ خصم مرتفع على أوردر #${saved.orderId}\nالنسبة: ${discountPercent}% (${discountAmount} ج)\nالكاشير: ${req.user.name}\nالسبب: ${discountReason}`);
     }
@@ -1283,15 +1364,27 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
       beforeTotal: order.grandTotal, afterTotal: grandTotal,
       beforePayment: order.paymentMethod || "", afterPayment: paymentMethod || "", itemsChanged
     };
+    const setDoc = { items, itemsTotal, discountPercent, discountAmount, discountReason, grandTotal, paymentMethod, orderNote, editedAt: new Date(), editedBy: req.user.name };
+    // أوردر دليفري كان مستني نقدية من السواق واتغيّر دفعه لفيزا/انستا/محفظة: الفلوس وصلت للمطعم، فيتقفل دلوقتي
+    const closesNow = !!order.awaitingCash && paymentMethod !== "cash";
+    if (closesNow) Object.assign(setDoc, { status: "completed", completedAt: new Date(), completedBy: req.user.name, awaitingCash: false });
     const updated = await Order.findOneAndUpdate(
       { _id: order._id, status: order.status },
       {
-        $set: { items, itemsTotal, discountPercent, discountAmount, discountReason, grandTotal, paymentMethod, orderNote, editedAt: new Date(), editedBy: req.user.name },
+        $set: setDoc,
         $push: { editLog: { $each: [entry], $slice: -20 } }
       },
       { new: true }
     );
     if (!updated) return res.status(409).json({ error: "الأوردر اتغيّر قبل كده، حدّث الصفحة" });
+    if (closesNow && !updated.driverFeePaid && (Number(updated.deliveryFee) || 0) > 0) {
+      const fee = Number(updated.deliveryFee) || 0;
+      const feeShift = await Shift.findOneAndUpdate(
+        { _id: shift._id, status: "open" },
+        { $push: { movements: { type: "out", amount: fee, reason: `أجرة سواق ${updated.driverName || ""} - أوردر #${updated.orderId}`.trim(), by: req.user.name, at: new Date(), category: "driver_fee" } } }
+      );
+      if (feeShift) await Order.updateOne({ _id: updated._id }, { $set: { driverFeePaid: true } });
+    }
 
     const payLabel = { cash: "كاش", visa: "فيزا", instapay: "انستا باي", wallet: "محفظة" };
     void sendTelegramAlert(`✏️ تعديل أوردر #${updated.orderId}\nبواسطة: ${req.user.name}\nالإجمالي: ${order.grandTotal} ← ${grandTotal} ج\nالدفع: ${payLabel[order.paymentMethod] || order.paymentMethod || "-"} ← ${payLabel[paymentMethod] || paymentMethod || "-"}\nالأصناف اتغيّرت: ${itemsChanged ? "نعم" : "لا"}\nبعد الطباعة: ${entry.afterPrint ? "نعم" : "لا"}`);
@@ -1331,44 +1424,6 @@ app.delete("/api/orders/:id", requireAuth, requireAdmin, async (req, res) => {
 // =========================
 // SHIFTS + REPORTS
 // =========================
-const getDriverBalances = async () => {
-  const cfg = await Settings.findOne().select("driverBalancesFrom").lean();
-  const from = cfg?.driverBalancesFrom ? new Date(cfg.driverBalancesFrom) : null;
-  const [driverOrders, shiftDocs] = await Promise.all([
-    Order.find({ status: "completed", orderType: "delivery", paymentMethod: "cash", driverName: { $type: "string", $ne: "" }, ...(from ? { completedAt: { $gte: from } } : {}) })
-      .select("driverName grandTotal deliveryFee")
-      .lean(),
-    Shift.find({}).select("movements").lean()
-  ]);
-  const balances = new Map();
-  for (const order of driverOrders) {
-    const name = cleanText(order.driverName, 40);
-    if (!name) continue;
-    const row = balances.get(name) || { driverName: name, due: 0, orders: 0, settled: 0 };
-    // السواق بيحصّل الفاتورة كلها من العميل بس بيسلّم سعر الأكل بعد الخصم، وبيخلّي أجرة التوصيل لنفسه
-    row.due += Math.max(0, (Number(order.grandTotal) || 0) - (Number(order.deliveryFee) || 0));
-    row.orders += 1;
-    balances.set(name, row);
-  }
-  for (const shift of shiftDocs) {
-    for (const movement of shift.movements || []) {
-      if (movement.category !== "driver_settlement" || !movement.driverName) continue;
-      if (from && new Date(movement.at) < from) continue;
-      const name = cleanText(movement.driverName, 40);
-      const row = balances.get(name) || { driverName: name, due: 0, orders: 0, settled: 0 };
-      row.settled += Number(movement.amount) || 0;
-      balances.set(name, row);
-    }
-  }
-  return [...balances.values()]
-    .map((row) => {
-      const balance = Math.max(0, row.due - row.settled);
-      return { ...row, balance: Number(balance.toFixed(2)) };
-    })
-    .filter((row) => row.balance > 0.009)
-    .sort((a, b) => b.balance - a.balance);
-};
-
 const buildReport = async (from, to, shift = null) => {
   const fromD = new Date(from), toD = new Date(to);
   const [orders, cancelledList, catalog] = await Promise.all([
@@ -1386,6 +1441,7 @@ const buildReport = async (from, to, shift = null) => {
   const itemByName = new Map(catalog.map((i) => [i.name, i]));
   const payments = {}, byType = {}, byCashier = {};
   const catMap = new Map();
+  const boxMap = new Map();
   let total = 0, delivery = 0, discounts = 0, talabat = 0, talabatCash = 0, talabatVisa = 0, driverCash = 0;
 
   // كل تقرير وردية يخص الكاشير الذي فتحها فقط، ولا يخلط مبيعات الكاشير الآخر.
@@ -1403,8 +1459,11 @@ const buildReport = async (from, to, shift = null) => {
   shiftOrders.sort((a, b) => new Date(a.completedAt || a.createdAt) - new Date(b.completedAt || b.createdAt));
   for (const o of shiftOrders) {
     const g = Number(o.grandTotal) || 0;
-    total += g;
-    delivery += Number(o.deliveryFee) || 0;
+    // أجرة التوصيل بتروح للسواق مباشرة، فمش بتتحسب ضمن المبيعات
+    const fee = o.orderType === "delivery" ? Math.min(g, Number(o.deliveryFee) || 0) : 0;
+    const sale = g - fee;
+    total += sale;
+    delivery += fee;
     discounts += Number(o.discountAmount) || 0;
 
     if (o.orderType === "talabat") {
@@ -1417,15 +1476,15 @@ const buildReport = async (from, to, shift = null) => {
       }
     } else {
       const k = o.paymentMethod || "cash";
-      payments[k] = (payments[k] || 0) + g;
-      if (o.orderType === "delivery" && k === "cash") driverCash += g;
+      // كاش: اللي دخل الدرج فعلاً = المبيعات (السواق خد الأجرة من العميل). فيزا/انستا/محفظة: اللي العميل دفعه كامل
+      payments[k] = (payments[k] || 0) + (k === "cash" ? sale : g);
     }
 
     const type = (byType[o.orderType] = byType[o.orderType] || { count: 0, total: 0 });
-    type.count += 1; type.total += g;
+    type.count += 1; type.total += sale;
     const who = o.source === "pos" ? (o.createdBy || o.completedBy || "-") : (o.completedBy || o.createdBy || "-");
     const cashier = (byCashier[who] = byCashier[who] || { count: 0, total: 0, discounts: 0 });
-    cashier.count += 1; cashier.total += g; cashier.discounts += Number(o.discountAmount) || 0;
+    cashier.count += 1; cashier.total += sale; cashier.discounts += Number(o.discountAmount) || 0;
 
     for (const it of o.items || []) {
       const baseName = String(it.name || "صنف بدون اسم");
@@ -1439,10 +1498,14 @@ const buildReport = async (from, to, shift = null) => {
       // التفصيل: نفصل كل اختيار إجباري (زي الحجم: ربع صدر / ربع ورك / نص فرخة) في سطر لوحده بدل دمجهم تحت اسم الصنف
       const modList = Array.isArray(it.modifiers) ? it.modifiers : [];
       const catItem = itemByName.get(baseName);
-      const requiredGroups = new Set(catItem ? groupsForItem(catItem).filter((g) => Number(g.min) > 0).map((g) => String(g.name || "").trim()) : []);
+      // أي اختيار إجباري، أو مجموعة اسمها حجم / نوع / سنجل دابل تربل، بيتفصل في سطر لوحده في الجرد
+      const requiredGroups = new Set(catItem ? groupsForItem(catItem).filter((g) => Number(g.min) > 0 || /حجم|حجمه|size|نوع|وزن|سنجل|دابل|تربل/i.test(String(g.name || ""))).map((g) => String(g.name || "").trim()) : []);
       const variantParts = [];
       for (const mod of modList) {
         const text = String(mod || "");
+        // محتويات البوكس ("2× كفتة"): بتتجمع في قسم لوحدها عشان الجرد يعرف الكميات الفعلية
+        const boxM = /^\s*(\d+)\s*×\s*(.+?)\s*$/.exec(text);
+        if (boxM) { boxMap.set(boxM[2], (boxMap.get(boxM[2]) || 0) + Number(boxM[1]) * qty); continue; }
         const colon = text.indexOf(":");
         if (colon < 0) continue;
         if (!requiredGroups.has(text.slice(0, colon).trim())) continue;
@@ -1460,6 +1523,10 @@ const buildReport = async (from, to, shift = null) => {
     }
   }
 
+  if (boxMap.size) {
+    const boxItems = new Map([...boxMap.entries()].map(([name, qty]) => [name, { name, qty, total: 0 }]));
+    catMap.set("محتويات البوكسات", { name: "محتويات البوكسات", qty: [...boxMap.values()].reduce((a, b) => a + b, 0), total: 0, items: boxItems });
+  }
   const categories = [...catMap.values()]
     .map((c) => ({ name: c.name, qty: c.qty, total: c.total, items: [...c.items.values()].sort((a, b) => b.qty - a.qty) }))
     .sort((a, b) => b.total - a.total);
@@ -1481,18 +1548,20 @@ const buildReport = async (from, to, shift = null) => {
     cancelledTotal: shiftCancelled.reduce((sum, order) => sum + (Number(order.grandTotal) || 0), 0),
     cancelledPrinted: shiftCancelled.filter((order) => order.cancelledAfterPrint).length,
     categories,
-    orders: shiftOrders.map((o) => ({ id: o.orderId, total: Number(o.grandTotal) || 0 }))
+    orders: shiftOrders.map((o) => ({ id: o.orderId, total: (Number(o.grandTotal) || 0) - (o.orderType === "delivery" ? (Number(o.deliveryFee) || 0) : 0) }))
   };
 
   if (shift) {
     const moves = shift.movements || [];
     const cashIn = moves.filter((m) => m.type === "in").reduce((sum, m) => sum + (Number(m.amount) || 0), 0);
     const cashOut = moves.filter((m) => m.type === "out").reduce((sum, m) => sum + (Number(m.amount) || 0), 0);
-    const driverBalances = await getDriverBalances();
+    // أوردرات دليفري كاش خرجت مع السواق ولسه النقدية ما اتسلمتش (مش محسوبة في المبيعات ولا الدرج)
+    const awaiting = await Order.find({ status: "accepted", awaitingCash: true }).select("orderId shiftReceiptNo driverName grandTotal deliveryFee").lean();
+    const awaitingOrders = awaiting.map((o) => ({ id: o.orderId, no: o.shiftReceiptNo || null, driverName: o.driverName || "", amount: Math.max(0, (Number(o.grandTotal) || 0) - (Number(o.deliveryFee) || 0)) }));
     Object.assign(report, {
-      openedBy: shift.openedBy, openingCash: shift.openingCash || 0, movements: moves, cashIn, cashOut, driverBalances,
-      driverBalancesTotal: driverBalances.reduce((sum, driver) => sum + driver.balance, 0),
-      expectedCash: (shift.openingCash || 0) + (payments.cash || 0) + cashIn - cashOut - driverCash
+      openedBy: shift.openedBy, openingCash: shift.openingCash || 0, movements: moves, cashIn, cashOut,
+      awaitingOrders, awaitingTotal: awaitingOrders.reduce((sum, o) => sum + o.amount, 0),
+      expectedCash: (shift.openingCash || 0) + (payments.cash || 0) + cashIn - cashOut
     });
   }
   return report;
@@ -1591,56 +1660,15 @@ app.post("/api/shifts/movement", requireAuth, async (req, res) => {
   }
 });
 
-// مسح العهد القديمة: أي أوردر أو تسوية قبل بداية اليوم الحالي (6 الصبح) مش بيتحسب في "فلوس مع السواقين" (الأدمن فقط)
-app.post("/api/shifts/clear-old-driver-balances", requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const [y, m, d] = businessDayKey(new Date()).split("-").map(Number);
-    let start = null;
-    for (const off of [3, 2]) {
-      const cand = new Date(Date.UTC(y, m - 1, d, DAY_START_HOUR) - off * 3600000);
-      const c = cairoYMDH(cand);
-      if (c.h === DAY_START_HOUR && c.d === d) { start = cand; break; }
-    }
-    if (!start) start = new Date(Date.UTC(y, m - 1, d, DAY_START_HOUR) - 2 * 3600000);
-    const before = await getDriverBalances();
-    let s = await Settings.findOne();
-    if (!s) s = new Settings({});
-    s.driverBalancesFrom = start;
-    await s.save();
-    listCache.settings = null;
-    const amount = before.reduce((sum, r) => sum + r.balance, 0);
-    void sendTelegramAlert(`🧹 مسح العهد القديمة للسواقين\nبواسطة: ${req.user.name}\nعدد السواقين: ${before.length}\nإجمالي اللي اتمسح: ${amount} ج.م`);
-    res.json({ ok: true, from: start, cleared: before.length, amount });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post("/api/shifts/driver-settlement", requireAuth, async (req, res) => {
-  try {
-    const driverName = cleanText(req.body?.driverName, 40);
-    const amount = clampNumber(req.body?.amount, 0, 10000000);
-    if (!driverName) return res.status(400).json({ error: "اكتب اسم السواق" });
-    if (amount <= 0) return res.status(400).json({ error: "اكتب مبلغ تسوية صحيح" });
-    const shift = await Shift.findOne({ status: "open", openedBy: req.user.name });
-    if (!shift) return res.status(400).json({ error: "مفيش وردية مفتوحة لحسابك" });
-    const balances = await getDriverBalances();
-    const row = balances.find((item) => item.driverName === driverName);
-    const balance = row?.balance || 0;
-    if (amount > balance + 0.009) return res.status(400).json({ error: `المبلغ أكبر من عهدة السواق المتبقية (${balance} ج.م)` });
-    shift.movements.push({ type: "in", category: "driver_settlement", driverName, amount, reason: `تسوية عهدة السواق: ${driverName}`, by: req.user.name, at: new Date() });
-    await shift.save();
-    void sendTelegramAlert(`✅ تسوية عهدة سواق\nالسواق: ${driverName}\nالمبلغ: ${amount} ج.م\nبواسطة: ${req.user.name}`);
-    res.json({ ok: true, driverName, amount, balance: Math.round((balance - amount) * 100) / 100 });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 app.post("/api/shifts/close", requireAuth, async (req, res) => {
   try {
     const shift = await Shift.findOne({ status: "open", openedBy: req.user.name });
     if (!shift) return res.status(400).json({ error: "مفيش وردية مفتوحة لحسابك" });
+    const awaitingNow = await Order.find({ status: "accepted", awaitingCash: true }).select("orderId shiftReceiptNo driverName").lean();
+    if (awaitingNow.length > 0) {
+      const list = awaitingNow.map((o) => `#${o.shiftReceiptNo || o.orderId}${o.driverName ? ` (${o.driverName})` : ""}`).join("، ");
+      return res.status(400).json({ error: `مينفعش تقفل الوردية: فيه ${awaitingNow.length} أوردر دليفري مع السواق ومستني النقدية: ${list}. استلم الفلوس من السواق الأول (أو ألغي الأوردر لو ماتسلّمش).` });
+    }
     const now = new Date();
     const report = await buildReport(shift.openedAt, now, shift);
     const closeNotes = cleanText(req.body?.notes, 300);
