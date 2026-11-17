@@ -2,6 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import zlib from 'zlib';
 import { promisify } from 'util';
 import './reset-once.js';
 
@@ -16,8 +17,17 @@ app.set('trust proxy', 1);
 // =========================
 // CORS
 // =========================
+app.disable("x-powered-by");
+// لو ضفت ALLOWED_ORIGINS في Railway (روابط الموقع مفصولة بفاصلة) السيرفر بيقبل طلبات المتصفح منها بس. لو مش مضافة، بيشتغل زي الأول.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((v) => v.trim().replace(/\/$/, "")).filter(Boolean);
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (!ALLOWED_ORIGINS.length) res.header("Access-Control-Allow-Origin", "*");
+  else if (origin && ALLOWED_ORIGINS.includes(origin)) { res.header("Access-Control-Allow-Origin", origin); res.header("Vary", "Origin"); }
+  res.header("X-Content-Type-Options", "nosniff");
+  res.header("X-Frame-Options", "DENY");
+  res.header("Referrer-Policy", "no-referrer");
+  res.header("Strict-Transport-Security", "max-age=15552000");
   res.header("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS");
   res.header(
     "Access-Control-Allow-Headers",
@@ -27,8 +37,29 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+// حجم الطلب: الصور بس (أصناف/إعدادات/أقسام) بتاخد حد كبير، وباقي السيرفر 1 ميجا (كان 50 ميجا = أي حد يقدر يوقع السيرفر بطلبات تقيلة)
+app.use(["/api/items", "/api/settings", "/api/categories"], express.json({ limit: "15mb" }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ limit: "1mb", extended: true }));
+
+// ضغط ردود JSON (gzip): الصفحات والأوردرات بتوصل أسرع وبنت أقل
+app.use((req, res, next) => {
+  if (!/\bgzip\b/.test(req.headers["accept-encoding"] || "")) return next();
+  const origJson = res.json.bind(res);
+  res.json = (obj) => {
+    let body;
+    try { body = JSON.stringify(obj); } catch (e) { return origJson(obj); }
+    res.type("json");
+    if (body === undefined || body.length < 1024) return res.send(body);
+    zlib.gzip(Buffer.from(body), { level: 4 }, (err, buf) => {
+      if (err) return res.send(body);
+      res.set({ "Content-Encoding": "gzip", Vary: "Accept-Encoding" });
+      res.send(buf);
+    });
+    return res;
+  };
+  next();
+});
 
 // =========================
 // كاش في الذاكرة لقائمة الأصناف والإعدادات (بيتمسح لوحده أول ما الأدمن يعدّل أي حاجة)
@@ -172,6 +203,12 @@ const orderSchema = new mongoose.Schema({
   cancelledAt: { type: Date }
 });
 orderSchema.index({ clientRef: 1 }, { sparse: true });
+// فهارس سرّعت البحث في الأوردرات (من غيرها كل طلب بيقلّب كل الأوردرات ويبطّأ كل ما الداتا تكبر)
+orderSchema.index({ createdAt: -1 });
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ completedAt: 1 });
+orderSchema.index({ cancelledAt: 1 }, { sparse: true });
+orderSchema.index({ shiftId: 1 });
 const Order = mongoose.model("Order", orderSchema);
 
 // قاعدة العملاء (للتسويق والإعلانات + تعبئة بيانات العميل لوحده في الدليفري)
@@ -323,6 +360,18 @@ const hitBucket = (key, windowMs) => {
   bucket.count += 1;
   return bucket;
 };
+
+// حد عام لكل الـ API: الزائر العادي 150 طلب في الدقيقة، والكاشير/الأدمن (معاه توكن) 900 (الكاشير بيعمل تحديث تلقائي كل كام ثانية)
+app.use("/api", (req, res, next) => {
+  if (req.path === "/health" || req.method === "OPTIONS") return next();
+  const authed = !!req.headers.authorization;
+  const bucket = hitBucket(`api:${req.ip}:${authed ? "a" : "p"}`, 60 * 1000);
+  if (bucket.count > (authed ? 900 : 150)) {
+    res.set("Retry-After", "30");
+    return res.status(429).json({ error: "طلبات كتير أوي في وقت قصير، استنى شوية وحاول تاني" });
+  }
+  next();
+});
 
 const peekBucket = (key) => {
   const bucket = buckets.get(key);
@@ -1110,7 +1159,7 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
 // الأدمن والكاشير: كل الأوردرات (الكاشير للعرض والطباعة فقط، الإلغاء بعد الإنهاء ممنوع في PUT)
 app.get("/api/orders", requireAuth, async (req, res) => {
   try {
-    if (req.user?.role === "admin") return res.json(await Order.find({}).sort({ createdAt: -1 }).limit(3000));
+    if (req.user?.role === "admin") return res.json(await Order.find({}).sort({ createdAt: -1 }).limit(2000).lean());
     // الكاشير: الأوردرات النشطة + أوردرات ورديته الحالية بس. الأيام اللي فاتت للأدمن فقط.
     const myShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).select("openedAt").lean();
     const since = myShift?.openedAt;
@@ -1963,5 +2012,5 @@ if (!MONGO_URI) {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 السيرفر شغال على البورت ${PORT}`);
 });
-//123
+
 connectToDatabase();
