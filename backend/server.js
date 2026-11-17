@@ -239,6 +239,7 @@ const shiftSchema = new mongoose.Schema({
   handoverTo: { type: String, default: "" },
   handoverCash: { type: Number },
   handoverStatus: { type: String, default: "none" },
+  autoClosed: { type: Boolean, default: false },
   handoverAcceptedBy: { type: String, default: "" },
   handoverAcceptedAt: { type: Date },
   openingCash: { type: Number, default: 0 },
@@ -2052,12 +2053,44 @@ const mergeDuplicateOpenShifts = async () => {
   }
 };
 
+// وردية نسيها الكاشير مفتوحة: أي وردية فاتحة من قبل بداية اليوم (6 الصبح) بتتقفل تلقائي على 6 الصبح بتقريرها،
+// فلما الكاشير يجي الصبح يفتح وردية جديدة نضيفة ومفيش لخبطة بين اليومين.
+const autoCloseForgottenShifts = async () => {
+  try {
+    const now = new Date();
+    const dayStart = cairoDayStart(businessDayKey(now));
+    const stale = await Shift.find({ status: "open", openedAt: { $lt: dayStart } });
+    for (const shift of stale) {
+      const report = await buildReport(shift.openedAt, dayStart, shift);
+      const note = "اتقفلت تلقائي الساعة 6 الصبح لأن الكاشير نسي يقفلها";
+      const closed = await Shift.findOneAndUpdate(
+        { _id: shift._id, status: "open" },
+        { $set: {
+          status: "closed", closedAt: dayStart, closedBy: "تقفيل تلقائي", from: shift.openedAt, autoClosed: true,
+          count: report.count, total: report.total, delivery: report.delivery, payments: report.payments,
+          talabat: report.talabat, discounts: report.discounts, cancelled: report.cancelled, orders: report.orders,
+          report, expectedCash: report.expectedCash, notes: note, handoverTo: "", handoverStatus: "none"
+        }, $unset: { countedCash: 1, difference: 1, handoverCash: 1 } },
+        { new: true }
+      );
+      if (closed) {
+        console.log(`🔒 تقفيل تلقائي لوردية ${shift.openedBy}`);
+        void sendTelegramAlert(`⚠️ وردية ${shift.openedBy} اتقفلت تلقائي (نسي يقفلها)\nالمبيعات: ${Number(report.total) || 0} ج.م\nالمصروفات (من الدرج): ${Number(report.expensesTotal) || 0} ج.م\nالمتوقع في الدرج: ${Number(report.expectedCash) || 0} ج.م\nراجع الدرج الفعلي مع الكاشير`);
+      }
+    }
+  } catch (err) {
+    console.error("autoCloseForgottenShifts failed:", err.message);
+  }
+};
+setInterval(autoCloseForgottenShifts, 5 * 60 * 1000);
+
 const connectToDatabase = async () => {
   while (true) {
     try {
       await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 15000 });
       console.log("✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح");
       await removeLegacyAdminAccounts();
+      await autoCloseForgottenShifts();
       await mergeDuplicateOpenShifts();
       return;
     } catch (err) {
