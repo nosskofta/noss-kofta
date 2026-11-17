@@ -261,6 +261,8 @@ const shiftSchema = new mongoose.Schema({
   difference: { type: Number },
   notes: { type: String }
 });
+// وردية واحدة مفتوحة بس لكل كاشير (بيمنع الوردية المكررة لو دوست مرتين بسرعة)
+shiftSchema.index({ openedBy: 1 }, { unique: true, partialFilterExpression: { status: "open" } });
 const Shift = mongoose.model("Shift", shiftSchema);
 
 // =========================
@@ -1748,7 +1750,13 @@ app.post("/api/shifts/open", requireAuth, async (req, res) => {
       pendingHandover.handoverAcceptedAt = new Date();
       await pendingHandover.save();
     }
-    const shift = await Shift.create({ status: "open", openedAt: new Date(), openedBy: req.user.name, openedById: String(req.user.id || ""), openingCash });
+    let shift;
+    try {
+      shift = await Shift.create({ status: "open", openedAt: new Date(), openedBy: req.user.name, openedById: String(req.user.id || ""), openingCash });
+    } catch (e) {
+      if (e?.code === 11000) return res.status(400).json({ error: "عندك وردية مفتوحة بالفعل" });
+      throw e;
+    }
     void sendTelegramAlert(`🟢 فتح وردية\nبواسطة: ${req.user.name}\nرصيد الافتتاح: ${openingCash} ج.م`);
     res.status(201).json(shift);
   } catch (err) {
@@ -1909,14 +1917,36 @@ app.get("/api/reports/day", requireAuth, async (req, res) => {
       });
     }
 
-    // إجمالي اليوم = مجموع الورديات اللي فوق
-    const totals = { count: 0, total: 0, delivery: 0, discounts: 0, talabat: 0, talabatCash: 0, talabatVisa: 0, expensesTotal: 0, cancelled: 0, cancelledTotal: 0, payments: {} };
+    // نجمّع الورديات في صف واحد لكل نوع: شيفت الصبح / شيفت الليل (لو أكتر من كاشير في نفس الشيفت بيتجمعوا)
+    const merged = new Map();
+    const numKeys = ["count", "total", "delivery", "discounts", "talabat", "talabatCash", "talabatVisa", "expensesTotal", "cancelled", "cancelledTotal", "cashIn", "cashOut", "driverCash"];
     for (const sh of shifts) {
-      for (const k of Object.keys(totals)) if (k !== "payments") totals[k] += dayNum(sh[k]);
-      for (const [pk, pv] of Object.entries(sh.payments || {})) totals.payments[pk] = (totals.payments[pk] || 0) + dayNum(pv);
+      const m = merged.get(sh.label);
+      if (!m) { merged.set(sh.label, { ...sh, payments: { ...(sh.payments || {}) }, names: [sh.openedBy], _open0: sh.openingCash, _net: sh.expectedCash - sh.openingCash }); continue; }
+      for (const k of numKeys) m[k] = dayNum(m[k]) + dayNum(sh[k]);
+      for (const [pk, pv] of Object.entries(sh.payments || {})) m.payments[pk] = (m.payments[pk] || 0) + dayNum(pv);
+      m._net += sh.expectedCash - sh.openingCash;
+      if (sh.openedBy && !m.names.includes(sh.openedBy)) m.names.push(sh.openedBy);
+      if (new Date(sh.openedAt) < new Date(m.openedAt)) m.openedAt = sh.openedAt;
+      m.isOpen = m.isOpen || sh.isOpen;
+      m.closedAt = m.isOpen ? null : (new Date(sh.closedAt) > new Date(m.closedAt) ? sh.closedAt : m.closedAt);
     }
+    shifts.length = 0;
+    for (const m of merged.values()) {
+      m.openedBy = m.names.join(" + ");
+      m.openingCash = m._open0;
+      m.expectedCash = dayNum(m._open0 + m._net);
+      delete m._open0; delete m._net; delete m.names;
+      shifts.push(m);
+    }
+    shifts.sort((a, b) => new Date(a.openedAt) - new Date(b.openedAt));
     const whole = await buildReport(dayFrom, upTo, null);
-    res.json({ day: key, isToday: key === todayKey, generatedAt: now, from: dayFrom, to: upTo, shifts, totals, outside: null, categories: whole.categories || [] });
+    // إجمالي اليوم من كل أوردرات اليوم نفسها (مش مجموع الورديات) عشان ما يتحسبش أوردر مرتين
+    const totals = dayTotalsOf(whole);
+    const sumTotal = shifts.reduce((a, x) => a + dayNum(x.total), 0), sumCount = shifts.reduce((a, x) => a + dayNum(x.count), 0);
+    const outside = totals.total - sumTotal > 0.5 || totals.count - sumCount > 0
+      ? { count: Math.max(0, totals.count - sumCount), total: Math.round((totals.total - sumTotal) * 100) / 100 } : null;
+    res.json({ day: key, isToday: key === todayKey, generatedAt: now, from: dayFrom, to: upTo, shifts, totals, outside, categories: whole.categories || [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1990,12 +2020,45 @@ const removeLegacyAdminAccounts = async () => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// لو كاشير اتفتحله وردية مرتين (دوسة مكررة): ندمجهم في وردية واحدة (المصروفات والأوردرات بتتنقل للأساسية) ونمسح المكررة
+const mergeDuplicateOpenShifts = async () => {
+  try {
+    const opens = await Shift.find({ status: "open" }).sort({ openedAt: 1 });
+    const byUser = new Map();
+    for (const sh of opens) {
+      const k = sh.openedBy || "";
+      if (!byUser.has(k)) byUser.set(k, []);
+      byUser.get(k).push(sh);
+    }
+    for (const [user, list] of byUser) {
+      if (list.length < 2) continue;
+      list.sort((a, b) => (b.movements?.length || 0) - (a.movements?.length || 0) || new Date(a.openedAt) - new Date(b.openedAt));
+      const primary = list[0];
+      for (const dup of list.slice(1)) {
+        console.log("🧹 دمج وردية مكررة:", JSON.stringify(dup));
+        for (const m of dup.movements || []) primary.movements.push(m);
+        primary.markModified("movements");
+        primary.receiptSeq = Math.max(primary.receiptSeq || 0, dup.receiptSeq || 0);
+        if (!primary.openingCash && dup.openingCash) primary.openingCash = dup.openingCash;
+        await Order.updateMany({ shiftId: dup._id }, { $set: { shiftId: primary._id } });
+        await Shift.deleteOne({ _id: dup._id });
+      }
+      await primary.save();
+      void sendTelegramAlert(`🧹 اتدمجت ${list.length - 1} وردية مكررة للكاشير ${user} في وردية واحدة`);
+    }
+    await Shift.createIndexes();
+  } catch (err) {
+    console.error("mergeDuplicateOpenShifts failed:", err.message);
+  }
+};
+
 const connectToDatabase = async () => {
   while (true) {
     try {
       await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 15000 });
       console.log("✅ تم الاتصال بقاعدة بيانات MongoDB بنجاح");
       await removeLegacyAdminAccounts();
+      await mergeDuplicateOpenShifts();
       return;
     } catch (err) {
       console.error("❌ فشل الاتصال بقاعدة البيانات، هحاول تاني بعد 5 ثواني:", err.message);
