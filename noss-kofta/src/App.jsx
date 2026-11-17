@@ -2613,12 +2613,261 @@ const OpenShiftForm = ({ authFetch, onDone, pendingHandover = null }) => {
   );
 };
 
+// ================= تقرير فترة تفصيلي + السلف (للأدمن) =================
+// بيجيب تقرير يوم بيوم من السيرفر (GET /api/reports/period)، وبيطبع ورقة A4
+// أو ينزّل ملف CSV بيفتح في Excel. اليوم بيتحسب من 6 الصبح لـ 6 الصبح زي تقرير اليوم.
+const periodLocalYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const periodBizToday = () => { const n = new Date(); if (n.getHours() < 6) n.setDate(n.getDate() - 1); return periodLocalYMD(n); };
+const periodAddDays = (key, n) => { const d = new Date(`${key}T12:00:00`); d.setDate(d.getDate() + n); return periodLocalYMD(d); };
+const periodWeekday = (key) => { try { return new Date(`${key}T12:00:00`).toLocaleDateString('ar-EG', { weekday: 'long' }); } catch (e) { return ''; } };
+const periodTime = (v) => (v ? new Date(v).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '-');
+const periodDateTime = (v) => (v ? new Date(v).toLocaleString('ar-EG') : '-');
+const periodEsc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const periodCsvCell = (v) => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+const periodDownload = (filename, content, type) => {
+  const blob = new Blob([content], { type: type || 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const PeriodReportPanel = ({ authFetch, card, inp }) => {
+  const [from, setFrom] = useState(() => periodAddDays(periodBizToday(), -6));
+  const [to, setTo] = useState(() => periodBizToday());
+  const [rep, setRep] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const load = async (f, t) => {
+    const ff = f || from, tt = t || to;
+    if (!ff || !tt || tt < ff) return alert('اختار فترة صحيحة (تاريخ النهاية بعد البداية)');
+    setBusy(true); setMsg(''); setRep(null);
+    try {
+      const r = await authFetch(`/api/reports/period?from=${encodeURIComponent(ff)}&to=${encodeURIComponent(tt)}`);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) setMsg(d.error || 'حصل خطأ'); else setRep(d);
+    } catch (e) { setMsg('تعذر الاتصال بالسيرفر'); }
+    setBusy(false);
+  };
+
+  const preset = (kind) => {
+    const today = periodBizToday();
+    let f = today, t = today;
+    if (kind === 'week') f = periodAddDays(today, -6);
+    if (kind === 'month') f = periodAddDays(today, -29);
+    if (kind === 'thisMonth') f = `${today.slice(0, 7)}-01`;
+    if (kind === 'lastMonth') { const d = new Date(`${today.slice(0, 7)}-01T12:00:00`); d.setDate(0); t = periodLocalYMD(d); f = `${t.slice(0, 7)}-01`; }
+    setFrom(f); setTo(t); load(f, t);
+  };
+
+  const printReport = () => {
+    if (!rep) return;
+    const t = rep.totals || {};
+    const pays = t.payments || {};
+    const tbl = (head, rows) => `<table><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+    const advRows = (list) => list.map((a) => `<tr><td>${periodEsc(a.day || '')}</td><td>${periodTime(a.at)}</td><td><strong>${periodEsc(a.person)}</strong></td><td>${money(a.amount)}</td><td>${periodEsc(a.reason)}</td><td>${periodEsc(a.by)}</td><td>${periodEsc(a.shiftBy)}</td></tr>`).join('');
+    const expRows = (list) => list.filter((m) => !m.isAdvance).map((m) => `<tr><td>${periodTime(m.at)}</td><td>${periodEsc(m.reason)}</td><td>${money(m.amount)}</td><td>${periodEsc(m.by)}</td></tr>`).join('');
+    const daysHtml = (rep.days || []).map((d) => {
+      const dp = d.payments || {};
+      const parts = [];
+      parts.push(`<div class="day"><h2>📅 ${d.date} — ${periodWeekday(d.date)}</h2>`);
+      parts.push(`<p class="line">أوردرات: <strong>${d.count || 0}</strong> · مبيعات: <strong>${money(d.total)}</strong> · كاش ${money(dp.cash || 0)} · فيزا ${money(dp.visa || 0)} · انستا ${money(dp.instapay || 0)} · محفظة ${money(dp.wallet || 0)} · طلبات ${money(d.talabat)} · خصومات ${money(d.discounts)} · ملغي ${d.cancelled || 0} (${money(d.cancelledTotal)}) · مصروفات ${money(d.expensesTotal)} · سلف ${money(d.advancesTotal)}</p>`);
+      if ((d.shifts || []).length > 0) {
+        parts.push('<h3>الورديات</h3>' + tbl(['الكاشير', 'الشيفت', 'فتح', 'قفل', 'أوردرات', 'مبيعات', 'متوقع الدرج', 'سلف الوردية'], (d.shifts || []).map((s) => `<tr><td>${periodEsc(s.openedBy)}</td><td>${periodEsc(s.label)}</td><td>${periodDateTime(s.openedAt)}</td><td>${s.closedAt ? periodDateTime(s.closedAt) : 'لسه مفتوحة'}</td><td>${s.count || 0}</td><td>${money(s.total)}</td><td>${s.expectedCash === null || s.expectedCash === undefined ? '-' : money(s.expectedCash)}</td><td>${money(s.advancesTotal)}</td></tr>`).join('')));
+      }
+      if ((d.advances || []).length > 0) parts.push('<h3>💰 السلف</h3>' + tbl(['التاريخ', 'الوقت', 'الاسم', 'المبلغ', 'السبب', 'سجّلها', 'وردية'], advRows(d.advances)));
+      const others = (d.expenses || []).filter((m) => !m.isAdvance);
+      if (others.length > 0) parts.push('<h3>💸 مصروفات أخرى</h3>' + tbl(['الوقت', 'البيان', 'المبلغ', 'سجّلها'], expRows(d.expenses)));
+      if ((d.advances || []).length === 0 && others.length === 0 && (d.shifts || []).length === 0 && !(d.count > 0)) parts.push('<p class="muted">مفيش نشاط مسجل في اليوم ده.</p>');
+      parts.push('</div>');
+      return parts.join('');
+    }).join('');
+
+    const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تقرير فترة ${rep.from} - ${rep.to}</title><style>
+      body{font-family:Tahoma,Arial,sans-serif;color:#111;margin:24px} h1{font-size:22px;margin:0} h2{font-size:17px;margin:22px 0 6px} h3{font-size:14px;margin:14px 0 4px}
+      .sub{color:#555;font-size:13px} table{width:100%;border-collapse:collapse;margin:6px 0 10px} th,td{border:1px solid #999;padding:6px 8px;font-size:13px;text-align:right} th{background:#eee}
+      .line{font-size:13px;line-height:1.9} .muted{color:#777;font-size:13px} .day{page-break-inside:avoid} hr{border:none;border-top:2px solid #333;margin:14px 0}
+      @media print{ body{margin:12px} }
+    </style></head><body>
+      <h1>${periodEsc(RESTAURANT_NAME)} — تقرير فترة تفصيلي</h1>
+      <p class="sub">من ${rep.from} إلى ${rep.to} (${rep.daysCount} يوم) · اتعمل بتاريخ ${periodDateTime(rep.generatedAt)} · اليوم بيتحسب من 6 الصبح لـ 6 الصبح</p>
+      <hr>
+      <h2>📌 إجمالي الفترة</h2>
+      <p class="line">أوردرات: <strong>${t.count || 0}</strong> · مبيعات: <strong>${money(t.total)}</strong> · كاش ${money(pays.cash || 0)} · فيزا ${money(pays.visa || 0)} · انستا ${money(pays.instapay || 0)} · محفظة ${money(pays.wallet || 0)} · طلبات ${money(t.talabat)} · خصومات ${money(t.discounts)} · ملغي ${t.cancelled || 0} (${money(t.cancelledTotal)}) · إيداعات ${money(t.depositsTotal)}</p>
+      <p class="line">💰 إجمالي السلف: <strong>${money(t.advancesTotal)}</strong> (${t.advancesCount || 0} سلفة) · 💸 مصروفات أخرى: <strong>${money(t.otherExpensesTotal)}</strong> · إجمالي الخارج من الدرج: <strong>${money(t.expensesTotal)}</strong></p>
+      ${(rep.advancesByPerson || []).length > 0 ? `<h2>💰 السلف حسب الشخص</h2>` + tbl(['الاسم', 'عدد السلف', 'الإجمالي', 'آخر سلفة'], (rep.advancesByPerson || []).map((p) => `<tr><td><strong>${periodEsc(p.person)}</strong></td><td>${p.count}</td><td>${money(p.total)}</td><td>${periodDateTime(p.lastAt)}</td></tr>`).join('')) : ''}
+      ${(rep.advances || []).length > 0 ? `<h2>💰 كل السلف بالتفصيل</h2>` + tbl(['التاريخ', 'الوقت', 'الاسم', 'المبلغ', 'السبب', 'سجّلها', 'وردية'], advRows(rep.advances)) : '<p class="muted">مفيش سلف في الفترة دي.</p>'}
+      <hr>
+      ${daysHtml}
+      <script>window.onload = function () { setTimeout(function () { window.print(); }, 250); };<\/script>
+    </body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) return alert('المتصفح منع فتح نافذة الطباعة. اسمح بالنوافذ المنبثقة وحاول تاني.');
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+  };
+
+  const downloadExcel = () => {
+    if (!rep) return;
+    const t = rep.totals || {};
+    const lines = [];
+    lines.push(['التاريخ', 'اليوم', 'نوع الصف', 'الوقت', 'البيان / الاسم', 'المبلغ (ج)', 'سجّلها', 'ملاحظات'].map(periodCsvCell).join(','));
+    lines.push([rep.from, '', 'إجمالي الفترة', '', `مبيعات ${t.total || 0} — أوردرات ${t.count || 0} — سلف ${t.advancesTotal || 0} (${t.advancesCount || 0}) — مصروفات أخرى ${t.otherExpensesTotal || 0}`, t.total || 0, '', ''].map(periodCsvCell).join(','));
+    (rep.days || []).forEach((d) => {
+      const dp = d.payments || {};
+      lines.push([d.date, periodWeekday(d.date), 'ملخص يوم', '', `أوردرات ${d.count || 0} — كاش ${dp.cash || 0} — فيزا ${dp.visa || 0} — انستا ${dp.instapay || 0} — محفظة ${dp.wallet || 0} — طلبات ${d.talabat || 0} — خصومات ${d.discounts || 0} — ملغي ${d.cancelled || 0}`, d.total || 0, '', ''].map(periodCsvCell).join(','));
+      (d.shifts || []).forEach((s) => lines.push([d.date, periodWeekday(d.date), 'وردية', `${periodTime(s.openedAt)} - ${s.closedAt ? periodTime(s.closedAt) : 'مفتوحة'}`, `${s.label} — ${s.openedBy}`, s.total || 0, s.openedBy, `متوقع الدرج: ${s.expectedCash ?? '-'} — سلف الوردية: ${s.advancesTotal || 0} — ${s.notes || ''}`].map(periodCsvCell).join(',')));
+      (d.advances || []).forEach((a) => lines.push([d.date, periodWeekday(d.date), 'سلفة', periodTime(a.at), a.person, a.amount, a.by, `${a.reason} — وردية: ${a.shiftBy}`].map(periodCsvCell).join(',')));
+      (d.expenses || []).filter((m) => !m.isAdvance).forEach((m) => lines.push([d.date, periodWeekday(d.date), 'مصروف', periodTime(m.at), m.reason, m.amount, m.by, `وردية: ${m.shiftBy}`].map(periodCsvCell).join(',')));
+      (d.deposits || []).forEach((m) => lines.push([d.date, periodWeekday(d.date), 'إيداع', periodTime(m.at), m.reason, m.amount, m.by, `وردية: ${m.shiftBy}`].map(periodCsvCell).join(',')));
+    });
+    periodDownload(`period-report-${rep.from}_to_${rep.to}.csv`, '\uFEFF' + lines.join('\r\n'), 'text/csv;charset=utf-8');
+  };
+
+  const downloadAdvances = () => {
+    if (!rep) return;
+    const lines = [];
+    lines.push(['التاريخ', 'اليوم', 'الوقت', 'الاسم', 'المبلغ (ج)', 'السبب', 'سجّلها', 'وردية الكاشير'].map(periodCsvCell).join(','));
+    (rep.advances || []).forEach((a) => lines.push([a.day || '', periodWeekday(a.day || rep.from), periodTime(a.at), a.person, a.amount, a.reason, a.by, a.shiftBy].map(periodCsvCell).join(',')));
+    lines.push(['', '', '', 'الإجمالي', rep.totals?.advancesTotal || 0, '', '', ''].map(periodCsvCell).join(','));
+    periodDownload(`advances-${rep.from}_to_${rep.to}.csv`, '\uFEFF' + lines.join('\r\n'), 'text/csv;charset=utf-8');
+  };
+
+  const t = rep?.totals || {};
+  const kpi2 = (label, value, hot) => (
+    <div className={`rounded-xl px-4 py-3 border ${hot ? 'bg-amber-500/10 border-amber-500/50' : 'bg-black/20 border-white/10'}`}>
+      <p className="text-xs text-zinc-400 font-bold">{label}</p>
+      <p className={`text-xl font-black mt-1 ${hot ? 'text-amber-300' : 'text-white'}`}>{value}</p>
+    </div>
+  );
+
+  return (
+    <div className={card + ' space-y-4'}>
+      <div>
+        <h4 className="font-black text-lg text-white">📋 تقرير فترة تفصيلي + السلف</h4>
+        <p className="text-xs text-zinc-400 mt-1 leading-5">اختار أي فترة (أسبوع إجازة، شهر كامل، لحد 92 يوم) وشوف كل يوم لوحده: المبيعات والورديات والمصروفات، والسلف بالاسم والمبلغ والوقت ومين سجّلها. اليوم بيتحسب من 6 الصبح لـ 6 الصبح.</p>
+      </div>
+
+      <div className="flex flex-wrap gap-3 items-end">
+        <div><label className="block text-xs text-zinc-400 mb-1">من يوم</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={inp} /></div>
+        <div><label className="block text-xs text-zinc-400 mb-1">إلى يوم</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={inp} /></div>
+        <button type="button" disabled={busy} onClick={() => load()} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl font-black text-sm">{busy ? '... جاري التحميل' : '📈 عرض التقرير'}</button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => preset('today')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">اليوم</button>
+        <button type="button" onClick={() => preset('week')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">آخر 7 أيام (أسبوع الإجازة)</button>
+        <button type="button" onClick={() => preset('month')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">آخر 30 يوم</button>
+        <button type="button" onClick={() => preset('thisMonth')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">الشهر الحالي</button>
+        <button type="button" onClick={() => preset('lastMonth')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">الشهر اللي فات</button>
+      </div>
+
+      {msg && <p className="text-red-400 text-sm font-bold">{msg}</p>}
+
+      {rep && (
+        <>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={printReport} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-black text-sm">🖨️ طباعة التقرير (A4 / PDF)</button>
+            <button type="button" onClick={downloadExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl font-black text-sm">📥 تحميل Excel — كل التفاصيل</button>
+            <button type="button" onClick={downloadAdvances} className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-xl font-black text-sm">💰 تحميل السلف فقط (Excel)</button>
+          </div>
+          <p className="text-[11px] text-zinc-500">ملف الـ Excel بصيغة CSV وبيفتح في Excel و Google Sheets بالعربي عادي. من الطباعة تقدر تختار "حفظ كـ PDF".</p>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {kpi2('عدد الأوردرات', t.count || 0)}
+            {kpi2('إجمالي المبيعات', money(t.total))}
+            {kpi2('💰 إجمالي السلف', `${money(t.advancesTotal)} (${t.advancesCount || 0})`, true)}
+            {kpi2('💸 مصروفات أخرى', money(t.otherExpensesTotal))}
+            {kpi2('💵 كاش', money(t.payments?.cash || 0))}
+            {kpi2('💳 فيزا', money(t.payments?.visa || 0))}
+            {kpi2('📱 انستا باي', money(t.payments?.instapay || 0))}
+            {kpi2('🛍️ طلبات', money(t.talabat))}
+            {kpi2('🏷️ خصومات', money(t.discounts))}
+            {kpi2('❌ ملغي', `${t.cancelled || 0} · ${money(t.cancelledTotal)}`)}
+            {kpi2('➕ إيداعات', money(t.depositsTotal))}
+            {kpi2('خارج من الدرج', money(t.expensesTotal))}
+          </div>
+
+          {(rep.advancesByPerson || []).length > 0 && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 space-y-2">
+              <h5 className="font-black text-amber-300">💰 السلف حسب الشخص — {money(t.advancesTotal)}</h5>
+              {(rep.advancesByPerson || []).map((p) => (
+                <div key={p.person} className="flex flex-wrap items-center justify-between gap-2 text-sm py-1.5 border-b border-white/5 last:border-0">
+                  <span className="font-black text-white">{p.person}</span>
+                  <span className="text-zinc-400 text-xs">{p.count} سلفة · آخر سلفة {periodDateTime(p.lastAt)}</span>
+                  <span className="font-black text-amber-300">{money(p.total)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {(rep.days || []).map((d) => (
+              <details key={d.date} open={(rep.days || []).length <= 7} className="rounded-xl border border-white/10 bg-black/20 p-4">
+                <summary className="cursor-pointer flex flex-wrap items-center justify-between gap-2 font-black text-white text-sm">
+                  <span>📅 {d.date} — {periodWeekday(d.date)}</span>
+                  <span className="text-xs font-bold text-zinc-300">{d.count || 0} أوردر · مبيعات {money(d.total)} · سلف <span className="text-amber-300">{money(d.advancesTotal)}</span></span>
+                </summary>
+                <div className="mt-3 space-y-3 text-sm">
+                  <p className="text-xs text-zinc-400 leading-5">كاش {money(d.payments?.cash || 0)} · فيزا {money(d.payments?.visa || 0)} · انستا {money(d.payments?.instapay || 0)} · محفظة {money(d.payments?.wallet || 0)} · طلبات {money(d.talabat)} · خصومات {money(d.discounts)} · ملغي {d.cancelled || 0} ({money(d.cancelledTotal)}) · إيداعات {money(d.depositsTotal)}</p>
+
+                  {(d.shifts || []).length > 0 && (
+                    <div className="space-y-1">
+                      <p className="font-black text-white text-xs">🕒 الورديات</p>
+                      {(d.shifts || []).map((s) => (
+                        <div key={s.id} className="flex flex-wrap justify-between gap-2 text-xs bg-black/30 rounded-lg px-3 py-2">
+                          <span className="text-zinc-200">{s.label} — <strong className="text-white">{s.openedBy}</strong> · {periodTime(s.openedAt)} ← {s.closedAt ? periodTime(s.closedAt) : 'لسه مفتوحة'}</span>
+                          <span className="text-zinc-300">{s.count || 0} أوردر · {money(s.total)}{s.expectedCash !== null && s.expectedCash !== undefined ? ` · متوقع الدرج ${money(s.expectedCash)}` : ''} · سلف {money(s.advancesTotal)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {(d.advances || []).length > 0 && (
+                    <div className="space-y-1">
+                      <p className="font-black text-amber-300 text-xs">💰 سلف اليوم — {money(d.advancesTotal)}</p>
+                      {(d.advances || []).map((a, i) => (
+                        <div key={i} className="flex flex-wrap justify-between gap-2 text-xs bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+                          <span className="text-zinc-200"><strong className="text-white">{a.person}</strong> · {periodTime(a.at)} · {a.reason} <span className="text-zinc-500">(سجّلها {a.by} · وردية {a.shiftBy})</span></span>
+                          <span className="font-black text-amber-300">{money(a.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {(d.expenses || []).filter((m) => !m.isAdvance).length > 0 && (
+                    <div className="space-y-1">
+                      <p className="font-black text-white text-xs">💸 مصروفات أخرى — {money(d.otherExpensesTotal)}</p>
+                      {(d.expenses || []).filter((m) => !m.isAdvance).map((m, i) => (
+                        <div key={i} className="flex flex-wrap justify-between gap-2 text-xs px-3 py-1.5 border-b border-white/5 last:border-0">
+                          <span className="text-zinc-300">{m.reason} <span className="text-zinc-500">({periodTime(m.at)} · {m.by})</span></span>
+                          <span className="font-black text-red-400">- {money(m.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {!(d.count > 0) && (d.shifts || []).length === 0 && (d.expenses || []).length === 0 && (d.deposits || []).length === 0 && (
+                    <p className="text-xs text-zinc-500">مفيش نشاط مسجل في اليوم ده.</p>
+                  )}
+                </div>
+              </details>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+
 // ================= تبويب الوردية والتقفيل =================
 const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts, refreshClosed, requestPrint, activeCount }) => {
   const shift = shiftData?.shift;
   const rep = shiftData?.report;
 
-  const [mv, setMv] = useState({ type: 'out', amount: '', reason: '' });
+  const [mv, setMv] = useState({ type: 'out', kind: 'expense', amount: '', reason: '', recipient: '' });
   const [closeOpen, setCloseOpen] = useState(false);
   const [notes, setNotes] = useState('');
   const [counted, setCounted] = useState('');
@@ -2641,13 +2890,19 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
 
   const addMovement = async () => {
     const amount = Number(mv.amount);
+    const isAdvance = mv.type === 'out' && mv.kind === 'advance';
+    const recipient = (mv.recipient || '').trim();
     if (!(amount > 0)) return alert('اكتب مبلغ صحيح');
-    if (mv.reason.trim().length < 2) return alert('اكتب السبب');
+    if (isAdvance && recipient.length < 2) return alert('اكتب اسم اللي خد السلفة');
+    const note = mv.reason.trim();
+    if (!isAdvance && note.length < 2) return alert('اكتب السبب');
+    // السبب بيتكتب فيه اسم اللي خد السلفة عشان يظهر في كل التقارير القديمة والجديدة
+    const reason = isAdvance ? (note ? `سلفة ${recipient} — ${note}` : `سلفة: ${recipient}`) : note;
     setBusy(true);
     try {
-      const r = await authFetch('/api/shifts/movement', { method: 'POST', body: JSON.stringify({ type: mv.type, amount, reason: mv.reason.trim() }) });
+      const r = await authFetch('/api/shifts/movement', { method: 'POST', body: JSON.stringify({ type: mv.type, amount, reason, category: isAdvance ? 'advance' : 'cash_movement', recipient: isAdvance ? recipient : '' }) });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) alert(d.error || 'حصل خطأ'); else { setMv({ type: mv.type, amount: '', reason: '' }); await refreshShift(); }
+      if (!r.ok) alert(d.error || 'حصل خطأ'); else { setMv({ type: mv.type, kind: mv.kind, amount: '', reason: '', recipient: '' }); await refreshShift(); }
     } catch (e) {}
     setBusy(false);
   };
@@ -2795,15 +3050,24 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
 
                   <div className={`${'border-t border-[#3A1218] pt-3'} space-y-2`}>
                     <p className="text-xs font-bold text-zinc-400">تسجيل مصروف أو إيداع</p>
-                    <div className="flex flex-wrap gap-1.5 items-center"><span className="text-[11px] text-zinc-500">مصروف سريع:</span>{['أجرة سواق', 'ثلج', 'غاز', 'خضار', 'بقشيش', 'صيانة', 'مواصلات', 'أخرى'].map(x => <button key={x} type="button" onClick={() => setMv({ ...mv, type: 'out', reason: x })} className="px-2.5 py-1 rounded-lg text-[11px] font-black border border-red-500/40 text-red-300">{x}</button>)}</div>
+                    <div className="flex flex-wrap gap-1.5 items-center"><span className="text-[11px] text-zinc-500">مصروف سريع:</span>{['أجرة سواق', 'ثلج', 'غاز', 'خضار', 'بقشيش', 'صيانة', 'مواصلات', 'أخرى'].map(x => <button key={x} type="button" onClick={() => setMv({ ...mv, type: 'out', kind: 'expense', reason: x })} className="px-2.5 py-1 rounded-lg text-[11px] font-black border border-red-500/40 text-red-300">{x}</button>)}</div>
 
                     <div className="flex gap-2">
                       <button type="button" onClick={() => setMv({ ...mv, type: 'out' })} className={`flex-1 py-2 rounded-lg text-xs font-black border ${mv.type === 'out' ? 'bg-red-600 text-white border-red-400' : 'bg-[#12080A] text-zinc-400 border-[#3A1218]'}`}>➖ مصروف / سحب</button>
                       <button type="button" onClick={() => setMv({ ...mv, type: 'in' })} className={`flex-1 py-2 rounded-lg text-xs font-black border ${mv.type === 'in' ? 'bg-green-600 text-white border-green-400' : 'bg-[#12080A] text-zinc-400 border-[#3A1218]'}`}>➕ إيداع</button>
                     </div>
+                    {mv.type === 'out' && (
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setMv({ ...mv, kind: 'expense' })} className={`flex-1 py-2 rounded-lg text-xs font-black border ${mv.kind === 'advance' ? 'bg-zinc-800 text-zinc-300 border-zinc-600' : 'bg-red-600 text-white border-red-400'}`}>💸 مصروف عادي</button>
+                        <button type="button" onClick={() => setMv({ ...mv, kind: 'advance' })} className={`flex-1 py-2 rounded-lg text-xs font-black border ${mv.kind === 'advance' ? 'bg-amber-600 text-white border-amber-400' : 'bg-zinc-800 text-zinc-300 border-zinc-600'}`}>💰 سلفة لشخص</button>
+                      </div>
+                    )}
+                    {mv.type === 'out' && mv.kind === 'advance' && (
+                      <input value={mv.recipient} onChange={(e) => setMv({ ...mv, recipient: e.target.value })} placeholder="اسم اللي خد السلفة (مثال: أحمد)" className={inp} />
+                    )}
                     <div className="flex gap-2">
                       <input type="number" min="0" value={mv.amount} onChange={(e) => setMv({ ...mv, amount: e.target.value })} placeholder="المبلغ" className={inp + ' !w-24'} dir="ltr" />
-                      <input value={mv.reason} onChange={(e) => setMv({ ...mv, reason: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') addMovement(); }} placeholder="السبب (ثلج، غاز، بقشيش...)" className={inp} />
+                      <input value={mv.reason} onChange={(e) => setMv({ ...mv, reason: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') addMovement(); }} placeholder={mv.type === 'out' && mv.kind === 'advance' ? 'ملاحظة اختيارية عن السلفة' : 'السبب (ثلج، غاز، بقشيش...)'} className={inp} />
                       <button type="button" disabled={busy} onClick={addMovement} className="bg-[#800020] text-white px-4 rounded-lg text-sm font-black shrink-0">حفظ</button>
                     </div>
                     <p className="text-[11px] text-orange-400 font-bold">المصروف بيطلع من كاش الدرج بس. لو الدرج مفيهوش كاش كفاية هيترفض. لو الفلوس موجودة فعلاً من برا الدرج سجّلها كإيداع الأول وبعدها سجّل المصروف.</p>
@@ -2813,7 +3077,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
                     <div className="border-t border-[#3A1218] pt-3 space-y-1.5 max-h-40 overflow-y-auto">
                       {rep.movements.map((m, i) => (
                         <div key={i} className="flex justify-between text-xs">
-                          <span className="text-zinc-300">{m.type === 'in' ? '➕' : '➖'} {m.reason} <span className="text-zinc-500">({m.by} · {new Date(m.at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })})</span></span>
+                          <span className="text-zinc-300">{m.type === 'in' ? '➕' : (m.category === 'advance' ? '💰' : '➖')} {m.reason} <span className="text-zinc-500">({m.by} · {new Date(m.at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })})</span></span>
                           <span className={`font-black ${m.type === 'in' ? 'text-green-400' : 'text-red-400'}`}>{money(m.amount)}</span>
                         </div>
                       ))}
@@ -2941,6 +3205,8 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
           )}
         </div>
       )}
+
+      {isAdmin && <PeriodReportPanel authFetch={authFetch} card={card} inp={inp} />}
 
       {/* نافذة التقفيل */}
       {closeOpen && shift && (

@@ -1771,8 +1771,20 @@ app.post("/api/shifts/movement", requireAuth, async (req, res) => {
     const type = req.body?.type === "in" ? "in" : req.body?.type === "out" ? "out" : null;
     const amount = clampNumber(req.body?.amount, 0, 10000000);
     const reason = cleanText(req.body?.reason, 100);
+    // السلفة: نوع مخصوص من حركات الدرج عشان تقرير الفترة يجمّعها بالاسم.
+    // بتتحدد من الـ category اللي بيبعتها الكاشير، أو تلقائيًا لو السبب فيه كلمة "سلف".
+    const wantsAdvance = String(req.body?.category || "").trim() === "advance";
+    const reasonMentionsAdvance = /سلف/.test(reason);
+    const movementCategory = type === "out" && (wantsAdvance || reasonMentionsAdvance) ? "advance" : "cash_movement";
+    let advanceRecipient = cleanText(req.body?.recipient, 60);
+    if (movementCategory === "advance" && !advanceRecipient) {
+      // "سلفة أحمد" / "سلفة: أحمد" / "سلفة لـ أحمد" → نطلع الاسم من السبب نفسه
+      const nameMatch = /سلف[ةه]?\s*(?:لـ?|:|-)?\s*(.+)$/.exec(reason);
+      if (nameMatch && nameMatch[1].trim() && nameMatch[1].trim() !== reason) advanceRecipient = nameMatch[1].trim().slice(0, 60);
+    }
     if (!type || amount <= 0) return res.status(400).json({ error: "اكتب مبلغ صحيح" });
     if (reason.length < 2) return res.status(400).json({ error: "اكتب السبب" });
+    if (movementCategory === "advance" && advanceRecipient.length < 2) return res.status(400).json({ error: "اكتب اسم اللي خد السلفة (مثال: سلفة أحمد)" });
     // المصروف بيطلع من كاش الدرج بس: لو الدرج مفيهوش كاش كفاية (مثلاً كل الأوردرات انستا أو طلبات فيزا) نرفضه
     if (type === "out") {
       const openShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).lean();
@@ -1783,13 +1795,15 @@ app.post("/api/shifts/movement", requireAuth, async (req, res) => {
         return res.status(400).json({ error: `الدرج مفيهوش كاش كفاية. المتاح في الدرج دلوقتي ${available} ج بس` + " لو الفلوس موجودة فعلاً من برا الدرج سجّلها كإيداع الأول." });
       }
     }
+    const movement = { type, amount, reason, by: req.user.name, at: new Date(), category: movementCategory };
+    if (movementCategory === "advance" && advanceRecipient) movement.recipient = advanceRecipient;
     const shift = await Shift.findOneAndUpdate(
       { status: "open", openedBy: req.user.name },
-      { $push: { movements: { type, amount, reason, by: req.user.name, at: new Date(), category: "cash_movement" } } },
+      { $push: { movements: movement } },
       { new: true }
     );
     if (!shift) return res.status(400).json({ error: "مفيش شيفت مفتوح" });
-    if (type === "out") void sendTelegramAlert(`💸 مصروف من الدرج\nالمبلغ: ${amount} ج.م\nالسبب: ${reason}\nبواسطة: ${req.user.name}`);
+    if (type === "out") void sendTelegramAlert(movementCategory === "advance" ? `💰 سلفة من الدرج\nالمبلغ: ${amount} ج.م\nلـ: ${advanceRecipient}\nالسبب: ${reason}\nبواسطة: ${req.user.name}` : `💸 مصروف من الدرج\nالمبلغ: ${amount} ج.م\nالسبب: ${reason}\nبواسطة: ${req.user.name}`);
     res.json(shift);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1978,6 +1992,140 @@ app.get("/api/reports/dashboard", requireAuth, requireAdmin, async (req, res) =>
       prev: { day: prevKey, count: dayNum(pr.count), total: dayNum(pr.grossSales ?? pr.total) },
       openShifts: openShifts.map((s) => ({ openedBy: s.openedBy, openedAt: s.openedAt })),
       topItems: items.slice(0, 6)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================
+// تقرير فترة تفصيلي (يوم بيوم) + السلف — للأدمن فقط
+// اليوم التجاري بيتحسب من 6 الصبح لـ 6 الصبح بتوقيت القاهرة (نفس منطق تقرير اليوم)،
+// فشيفت الليل اللي بيقفل الفجر بيتحسب على يوم فتحه، والسلفة بتتحسب على يوم/وقت تسجيلها.
+// السلفة = أي حركة "out" من الدرج متسجلة كـ category: "advance" أو السبب فيه كلمة "سلف"،
+// فالسلف القديمة اللي اتكتبت في السبب بتظهر برضه من غير ما تحتاج تعديل.
+// =========================
+const ADVANCE_WORD_RE = /سلف/;
+const periodMovementIsAdvance = (m) => m?.type === "out" && (m?.category === "advance" || ADVANCE_WORD_RE.test(String(m?.reason || "")));
+const periodAdvancePerson = (m) => {
+  const fromField = cleanText(m?.recipient || "", 60);
+  if (fromField) return fromField;
+  const reason = String(m?.reason || "").trim();
+  const mm = /سلف[ةه]?\s*(?:لـ?|:|-)?\s*(.+)$/.exec(reason);
+  const name = mm ? mm[1].trim() : "";
+  return name && name !== reason ? name.slice(0, 60) : "غير محدد";
+};
+const periodNormalizeMovement = (m, shift) => ({
+  at: m?.at || null,
+  day: m?.at ? businessDayKey(m.at) : null,
+  type: m?.type || "out",
+  category: m?.category || "cash_movement",
+  amount: Number(m?.amount) || 0,
+  reason: String(m?.reason || ""),
+  recipient: String(m?.recipient || ""),
+  person: periodMovementIsAdvance(m) ? periodAdvancePerson(m) : "",
+  by: m?.by || "",
+  shiftBy: shift?.openedBy || "",
+  shiftOpenedAt: shift?.openedAt || null,
+  isAdvance: periodMovementIsAdvance(m)
+});
+
+app.get("/api/reports/period", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const fromKey = String(req.query.from || "");
+    const toKey = String(req.query.to || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fromKey) || !/^\d{4}-\d{2}-\d{2}$/.test(toKey)) {
+      return res.status(400).json({ error: "اختار تاريخ البداية والنهاية" });
+    }
+    const fromD0 = new Date(`${fromKey}T00:00:00Z`);
+    const toD0 = new Date(`${toKey}T00:00:00Z`);
+    if (isNaN(fromD0) || isNaN(toD0) || toD0 < fromD0) return res.status(400).json({ error: "الفترة غير صحيحة" });
+    const spanDays = Math.round((toD0 - fromD0) / 86400000) + 1;
+    if (spanDays > 92) return res.status(400).json({ error: "الفترة أقصاها 92 يوم، قسّمها على فترتين" });
+
+    const keys = [];
+    for (let k = fromKey; ; k = addDaysKey(k, 1)) { keys.push(k); if (k === toKey) break; }
+    const now = new Date();
+    const { from: periodFrom } = dayWindow(fromKey);
+    const { to: periodTo } = dayWindow(toKey);
+
+    // الورديات اللي اتفتحت في الفترة (زائد اللي اتفتحت قبلها بيومين) عشان حركات الدرج اللي اتسجلت جوّه الفترة ماتضيعش
+    const shiftDocs = await Shift.find({ openedAt: { $gte: new Date(periodFrom.getTime() - 2 * 86400000), $lt: periodTo } }).sort({ openedAt: 1 }).lean();
+    const allMovements = [];
+    const shiftSummaries = [];
+    for (const s of shiftDocs) {
+      const moves = (s.movements || []).map((m) => periodNormalizeMovement(m, s)).filter((m) => m.at && new Date(m.at) >= periodFrom && new Date(m.at) < periodTo);
+      allMovements.push(...moves);
+      const dayKey = businessDayKey(s.openedAt);
+      if (dayKey < fromKey || dayKey > toKey) continue; // وردية من قبل الفترة: حركاتها بس اللي تتحسب
+      const r = s.report || {};
+      const cashIn = (s.movements || []).filter((m) => m.type === "in").reduce((a, m) => a + (Number(m.amount) || 0), 0);
+      const cashOut = (s.movements || []).filter((m) => m.type === "out").reduce((a, m) => a + (Number(m.amount) || 0), 0);
+      shiftSummaries.push({
+        id: String(s._id), day: dayKey, label: shiftDayLabel(s.openedAt),
+        openedBy: s.openedBy || "", closedBy: s.closedBy || "", status: s.status,
+        openedAt: s.openedAt, closedAt: s.status === "open" ? null : (s.closedAt || null),
+        count: Number(r.count ?? s.count) || 0,
+        total: Number(r.grossSales ?? r.total ?? s.total) || 0,
+        openingCash: Number(s.openingCash) || 0, cashIn, cashOut,
+        expectedCash: s.status === "open" ? null : (Number(s.expectedCash ?? r.expectedCash) || 0),
+        advancesTotal: moves.filter((m) => m.isAdvance).reduce((a, m) => a + m.amount, 0),
+        expensesTotal: moves.filter((m) => m.type === "out").reduce((a, m) => a + m.amount, 0),
+        notes: s.notes || ""
+      });
+    }
+    allMovements.sort((a, b) => new Date(a.at) - new Date(b.at));
+
+    const days = [];
+    for (const key of keys) {
+      const { from: dayFrom, to: dayTo } = dayWindow(key);
+      const upTo = dayTo > now ? now : dayTo;
+      const rep = await buildReport(dayFrom, upTo, null);
+      const t = dayTotalsOf(rep);
+      const dayMoves = allMovements.filter((m) => m.day === key);
+      const advances = dayMoves.filter((m) => m.isAdvance);
+      const expenses = dayMoves.filter((m) => m.type === "out");
+      const deposits = dayMoves.filter((m) => m.type === "in");
+      days.push({
+        date: key,
+        from: dayFrom, to: upTo,
+        count: t.count, total: t.total, delivery: t.delivery, discounts: t.discounts,
+        talabat: t.talabat, talabatCash: t.talabatCash, talabatVisa: t.talabatVisa,
+        cancelled: t.cancelled, cancelledTotal: t.cancelledTotal,
+        payments: t.payments || {},
+        advances, advancesTotal: advances.reduce((a, m) => a + m.amount, 0), advancesCount: advances.length,
+        expenses, expensesTotal: expenses.reduce((a, m) => a + m.amount, 0),
+        otherExpensesTotal: expenses.reduce((a, m) => a + (m.isAdvance ? 0 : m.amount), 0),
+        deposits, depositsTotal: deposits.reduce((a, m) => a + m.amount, 0),
+        shifts: shiftSummaries.filter((s) => s.day === key),
+        categories: rep.categories || []
+      });
+    }
+
+    const advancesAll = allMovements.filter((m) => m.isAdvance);
+    const byPersonMap = new Map();
+    for (const a of advancesAll) {
+      const row = byPersonMap.get(a.person) || { person: a.person, count: 0, total: 0, lastAt: null };
+      row.count += 1; row.total += a.amount;
+      if (!row.lastAt || new Date(a.at) > new Date(row.lastAt)) row.lastAt = a.at;
+      byPersonMap.set(a.person, row);
+    }
+    const advancesByPerson = [...byPersonMap.values()].sort((a, b) => b.total - a.total);
+    const payments = {};
+    for (const d of days) for (const [k, v] of Object.entries(d.payments || {})) payments[k] = (payments[k] || 0) + (Number(v) || 0);
+    const sum = (k) => days.reduce((a, d) => a + (Number(d[k]) || 0), 0);
+    res.json({
+      from: fromKey, to: toKey, daysCount: spanDays, generatedAt: now,
+      totals: {
+        count: sum("count"), total: sum("total"), delivery: sum("delivery"), discounts: sum("discounts"),
+        talabat: sum("talabat"), talabatCash: sum("talabatCash"), talabatVisa: sum("talabatVisa"),
+        cancelled: sum("cancelled"), cancelledTotal: sum("cancelledTotal"),
+        payments, advancesTotal: sum("advancesTotal"), advancesCount: sum("advancesCount"),
+        expensesTotal: sum("expensesTotal"), otherExpensesTotal: sum("otherExpensesTotal"), depositsTotal: sum("depositsTotal")
+      },
+      advances: advancesAll, advancesByPerson,
+      expenses: allMovements.filter((m) => m.type === "out"),
+      shifts: shiftSummaries, days
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
