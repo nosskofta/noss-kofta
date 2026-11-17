@@ -159,6 +159,9 @@ const orderSchema = new mongoose.Schema({
   createdBy: { type: String },
   driverName: { type: String },
   driverFeePaid: { type: Boolean, default: false },
+  clientRef: { type: String },
+  // دفع مقسّم (كاش + انستا مثلًا): paymentMethod بيبقى "split" والتفاصيل هنا، ومجموعها لازم = إجمالي الأوردر
+  paymentSplit: { type: [new mongoose.Schema({ method: String, amount: Number }, { _id: false })], default: undefined },
   // أوردر دليفري كاش خرج مع السواق ومستني النقدية: بيفضل في النشطة ومش بيتحسب مبيعات لحد ما الكاشير يستلم الفلوس
   awaitingCash: { type: Boolean, default: false },
   driverOutAt: { type: Date },
@@ -168,6 +171,7 @@ const orderSchema = new mongoose.Schema({
   cancelledBy: { type: String },
   cancelledAt: { type: Date }
 });
+orderSchema.index({ clientRef: 1 }, { sparse: true });
 const Order = mongoose.model("Order", orderSchema);
 
 // قاعدة العملاء (للتسويق والإعلانات + تعبئة بيانات العميل لوحده في الدليفري)
@@ -864,6 +868,41 @@ app.put("/api/store-hours", requireAuth, requireAdmin, async (req, res) => {
 
 const POS_PAYMENTS = ["cash", "visa", "instapay", "wallet"];
 const WEBSITE_PAYMENTS = ["cash", "visa", "instapay"];
+const PAY_LABEL_AR = { cash: "كاش", visa: "فيزا", instapay: "انستا باي", wallet: "محفظة", split: "مقسّم" };
+const splitOf = (o) => (Array.isArray(o?.paymentSplit) && o.paymentSplit.length ? o.paymentSplit.map((p) => ({ method: p.method, amount: Number(p.amount) || 0 })) : null);
+// الجزء الكاش من الأوردر (اللي بيدخل الدرج أو اللي السواق بيحصّله)
+const cashPartOf = (o) => {
+  const sp = splitOf(o);
+  if (sp) return sp.filter((p) => p.method === "cash").reduce((a, p) => a + p.amount, 0);
+  return o?.paymentMethod === "cash" ? Number(o.grandTotal) || 0 : 0;
+};
+const describePayment = (o) => {
+  const sp = splitOf(o);
+  return sp ? sp.map((p) => `${PAY_LABEL_AR[p.method] || p.method} ${p.amount}`).join(" + ") : (PAY_LABEL_AR[o?.paymentMethod] || o?.paymentMethod || "-");
+};
+// تحقق صارم من تقسيم الدفع: 2-4 طرق مختلفة، كل مبلغ موجب، والمجموع = الإجمالي بالظبط
+const validateSplit = (raw, grand, orderType, fee) => {
+  if (orderType === "talabat") return { error: "طلبات: كاش أو فيزا بس، مفيش تقسيم" };
+  if (!Array.isArray(raw) || raw.length < 2 || raw.length > 4) return { error: "تقسيم الدفع لازم يكون من 2 لـ 4 طرق دفع" };
+  const seen = new Set();
+  const split = [];
+  for (const p of raw) {
+    const method = String(p?.method || "");
+    if (!POS_PAYMENTS.includes(method)) return { error: "طريقة دفع غير صحيحة في التقسيم" };
+    if (seen.has(method)) return { error: "نفس طريقة الدفع مكررة في التقسيم" };
+    seen.add(method);
+    const amount = Math.round(Number(p?.amount) * 100) / 100;
+    if (!(amount > 0) || amount > 10000000) return { error: "كل مبلغ في التقسيم لازم يكون أكبر من صفر" };
+    split.push({ method, amount });
+  }
+  const sum = Math.round(split.reduce((a, p) => a + p.amount, 0) * 100) / 100;
+  if (Math.abs(sum - grand) > 0.009) return { error: `مجموع التقسيم (${sum} ج) مش بيساوي إجمالي الأوردر (${grand} ج)` };
+  if (orderType === "delivery") {
+    const cash = split.filter((p) => p.method === "cash").reduce((a, p) => a + p.amount, 0);
+    if (cash > 0 && cash < (Number(fee) || 0) - 0.009) return { error: `الكاش في الدليفري لازم يغطي أجرة التوصيل (${fee} ج) أو يبقى صفر` };
+  }
+  return { split };
+};
 const MAX_CASHIER_DISCOUNT = 15;
 
 const sendTelegramAlert = async (message) => {
@@ -1134,8 +1173,8 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
           if (!paymentMethod) return res.status(400).json({ error: "اختار طريقة الدفع قبل تأكيد التسليم" });
           update.paymentMethod = paymentMethod;
         }
-        const payNow = update.paymentMethod || order.paymentMethod;
-        if (order.orderType === "delivery" && payNow === "cash") {
+        const cashNow = update.paymentMethod ? update.paymentMethod === "cash" : cashPartOf(order) > 0;
+        if (order.orderType === "delivery" && cashNow) {
           // دليفري كاش: الأوردر يخرج مع السواق ويفضل في النشطة مستني النقدية (مش بيتحسب مبيعات لسه)
           update.status = "accepted";
           update.awaitingCash = true; update.driverOutAt = new Date();
@@ -1168,7 +1207,7 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
     const updatedOrder = await Order.findOneAndUpdate({ _id: order._id, status: order.status }, op, { new: true });
     if (!updatedOrder) return res.status(409).json({ error: "الأوردر اتغيّر قبل كده، حدّث الصفحة" });
     // أوردر توصيل مدفوع مش كاش: العميل دفع للمطعم، والسواق بياخد أجرته كاش من الدرج
-    if (status === "completed" && updatedOrder.status === "completed" && updatedOrder.orderType === "delivery" && updatedOrder.paymentMethod && updatedOrder.paymentMethod !== "cash"
+    if (status === "completed" && updatedOrder.status === "completed" && updatedOrder.orderType === "delivery" && updatedOrder.paymentMethod && cashPartOf(updatedOrder) <= 0
         && !updatedOrder.driverFeePaid && (Number(updatedOrder.deliveryFee) || 0) > 0) {
       const fee = Number(updatedOrder.deliveryFee) || 0;
       const feeShift = await Shift.findOneAndUpdate(
@@ -1207,13 +1246,22 @@ app.get("/api/pos/customers/:phone", requireAuth, async (req, res) => {
 app.post("/api/pos/orders", requireAuth, async (req, res) => {
   try {
     const body = req.body || {};
-    const openShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).select("_id").lean();
+    const openShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).select("_id openedAt").lean();
     if (!openShift) return res.status(400).json({ error: "افتح ورديتك الأول" });
+    // أوردر اتسجل أوفلاين: لو اتبعت قبل كده (clientRef) نرجّع نفس الأوردر بدل ما نكرره
+    const clientRef = cleanText(body.clientRef, 60);
+    if (clientRef) {
+      const dup = await Order.findOne({ clientRef });
+      if (dup) return res.status(200).json(dup);
+    }
+    const offlineAtRaw = body.offlineAt ? new Date(body.offlineAt) : null;
+    const offlineAt = offlineAtRaw && !isNaN(offlineAtRaw) && offlineAtRaw >= new Date(openShift.openedAt) && offlineAtRaw <= new Date() ? offlineAtRaw : null;
 
     const orderType = ["pickup", "delivery", "talabat"].includes(body.orderType) ? body.orderType : null;
     if (!orderType) return res.status(400).json({ error: "نوع الأوردر غير صحيح" });
 
-    const paymentMethod = POS_PAYMENTS.includes(body.paymentMethod) ? body.paymentMethod : null;
+    const wantsSplit = body.paymentMethod === "split";
+    const paymentMethod = wantsSplit ? "split" : (POS_PAYMENTS.includes(body.paymentMethod) ? body.paymentMethod : null);
     if (!paymentMethod) return res.status(400).json({ error: "اختار طريقة الدفع" });
     if (orderType === "talabat" && !["cash", "visa"].includes(paymentMethod)) return res.status(400).json({ error: "طلبات: كاش أو فيزا بس" });
 
@@ -1257,6 +1305,12 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
     }
 
     const grandTotal = itemsTotal - discountAmount + deliveryFee;
+    let paymentSplit = null;
+    if (wantsSplit) {
+      const v = validateSplit(body.paymentSplit, grandTotal, orderType, deliveryFee);
+      if (v.error) return res.status(400).json({ error: v.error });
+      paymentSplit = v.split;
+    }
     // رقم قاعدة البيانات يظل فريدًا، أما رقم الإيصال فيبدأ من 1 في كل وردية.
     const currentShift = await Shift.findOneAndUpdate(
       { _id: openShift._id, status: "open", openedBy: req.user.name },
@@ -1269,11 +1323,15 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
     const saved = await new Order({
       orderId, shiftReceiptNo: currentShift.receiptSeq, shiftId: currentShift._id,
       customerName, customerPhone, orderType, customerAddress, zoneName, deliveryFee,
-      items, itemsTotal, grandTotal, status: "accepted", source: "pos", paymentMethod,
+      items, itemsTotal, grandTotal, status: "accepted", source: "pos", paymentMethod, ...(paymentSplit ? { paymentSplit } : {}),
       talabatNo, discountPercent, discountAmount, discountReason, orderNote,
-      createdBy: req.user.name, acceptedBy: req.user.name, acceptedAt: new Date()
+      createdBy: req.user.name, acceptedBy: req.user.name, acceptedAt: offlineAt || new Date(),
+      ...(clientRef ? { clientRef } : {}), ...(offlineAt ? { createdAt: offlineAt } : {})
     }).save();
 
+    if (paymentSplit) {
+      void sendTelegramAlert(`💳 دفع مقسّم - أوردر #${saved.orderId}\nالإجمالي: ${grandTotal} ج\nالتقسيم: ${describePayment(saved)}\nالكاشير: ${req.user.name}`);
+    }
     console.log(`✅ POS order saved: #${saved.orderId} by ${req.user.name}`);
     if (customerPhone !== "-") void upsertCustomer({ phone: customerPhone, name: customerName, address: orderType === "delivery" ? customerAddress : "", zoneName: orderType === "delivery" ? zoneName : "" });
     if (discountPercent > MAX_CASHIER_DISCOUNT) {
@@ -1308,10 +1366,17 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
 
     // طريقة الدفع
     let paymentMethod = order.paymentMethod;
+    let paymentSplit = splitOf(order);
     if (body.paymentMethod !== undefined) {
-      if (!POS_PAYMENTS.includes(body.paymentMethod)) return res.status(400).json({ error: "طريقة الدفع غير صحيحة" });
-      if (order.orderType === "talabat" && !["cash", "visa"].includes(body.paymentMethod)) return res.status(400).json({ error: "طلبات: كاش أو فيزا بس" });
-      paymentMethod = body.paymentMethod;
+      if (body.paymentMethod === "split") {
+        if (order.orderType === "talabat") return res.status(400).json({ error: "طلبات: كاش أو فيزا بس" });
+        paymentMethod = "split";
+      } else {
+        if (!POS_PAYMENTS.includes(body.paymentMethod)) return res.status(400).json({ error: "طريقة الدفع غير صحيحة" });
+        if (order.orderType === "talabat" && !["cash", "visa"].includes(body.paymentMethod)) return res.status(400).json({ error: "طلبات: كاش أو فيزا بس" });
+        paymentMethod = body.paymentMethod;
+        paymentSplit = null;
+      }
     }
 
     // الأصناف: السطور القديمة (keepIndex) بتفضل بسعرها الأصلي، والجديدة بتتسعّر من المنيو
@@ -1353,25 +1418,33 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
     const discountAmount = Math.round(itemsTotal * discountPercent / 100);
     const grandTotal = itemsTotal - discountAmount + (Number(order.deliveryFee) || 0);
 
+    if (paymentMethod === "split") {
+      const raw = body.paymentSplit !== undefined ? body.paymentSplit : order.paymentSplit;
+      const v = validateSplit(raw, grandTotal, order.orderType, Number(order.deliveryFee) || 0);
+      if (v.error) return res.status(400).json({ error: body.paymentSplit === undefined && Math.abs(grandTotal - order.grandTotal) > 0.009 ? "إجمالي الأوردر اتغيّر. قسّم الدفع من جديد (زرار 💳 الدفع)" : v.error });
+      paymentSplit = v.split;
+    }
+
     const sig = (list) => JSON.stringify((list || []).map((it) => [String(it.itemId || ""), it.name, Number(it.price) || 0, Number(it.quantity) || 0, it.modifiers || [], it.notes || ""]));
     const itemsChanged = sig(items) !== sig(order.items);
-    const changed = itemsChanged || paymentMethod !== order.paymentMethod || orderNote !== (order.orderNote || "")
+    const changed = itemsChanged || paymentMethod !== order.paymentMethod || JSON.stringify(paymentSplit || []) !== JSON.stringify(splitOf(order) || []) || orderNote !== (order.orderNote || "")
       || discountPercent !== (order.discountPercent || 0) || grandTotal !== order.grandTotal;
     if (!changed) return res.json({ order, itemsChanged: false, changed: false });
 
     const entry = {
       by: req.user.name, at: new Date(), afterPrint: !!order.printedAt,
       beforeTotal: order.grandTotal, afterTotal: grandTotal,
-      beforePayment: order.paymentMethod || "", afterPayment: paymentMethod || "", itemsChanged
+      beforePayment: describePayment(order), afterPayment: describePayment({ paymentMethod, paymentSplit }), itemsChanged
     };
-    const setDoc = { items, itemsTotal, discountPercent, discountAmount, discountReason, grandTotal, paymentMethod, orderNote, editedAt: new Date(), editedBy: req.user.name };
+    const setDoc = { items, itemsTotal, discountPercent, discountAmount, discountReason, grandTotal, paymentMethod, orderNote, editedAt: new Date(), editedBy: req.user.name, ...(paymentSplit ? { paymentSplit } : {}) };
     // أوردر دليفري كان مستني نقدية من السواق واتغيّر دفعه لفيزا/انستا/محفظة: الفلوس وصلت للمطعم، فيتقفل دلوقتي
-    const closesNow = !!order.awaitingCash && paymentMethod !== "cash";
+    const closesNow = !!order.awaitingCash && cashPartOf({ paymentMethod, paymentSplit, grandTotal }) <= 0;
     if (closesNow) Object.assign(setDoc, { status: "completed", completedAt: new Date(), completedBy: req.user.name, awaitingCash: false });
     const updated = await Order.findOneAndUpdate(
       { _id: order._id, status: order.status },
       {
         $set: setDoc,
+        ...(paymentSplit ? {} : { $unset: { paymentSplit: "" } }),
         $push: { editLog: { $each: [entry], $slice: -20 } }
       },
       { new: true }
@@ -1387,7 +1460,7 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
     }
 
     const payLabel = { cash: "كاش", visa: "فيزا", instapay: "انستا باي", wallet: "محفظة" };
-    void sendTelegramAlert(`✏️ تعديل أوردر #${updated.orderId}\nبواسطة: ${req.user.name}\nالإجمالي: ${order.grandTotal} ← ${grandTotal} ج\nالدفع: ${payLabel[order.paymentMethod] || order.paymentMethod || "-"} ← ${payLabel[paymentMethod] || paymentMethod || "-"}\nالأصناف اتغيّرت: ${itemsChanged ? "نعم" : "لا"}\nبعد الطباعة: ${entry.afterPrint ? "نعم" : "لا"}`);
+    void sendTelegramAlert(`✏️ تعديل أوردر #${updated.orderId}\nبواسطة: ${req.user.name}\nالإجمالي: ${order.grandTotal} ← ${grandTotal} ج\nالدفع: ${entry.beforePayment} ← ${entry.afterPayment}\nالأصناف اتغيّرت: ${itemsChanged ? "نعم" : "لا"}\nبعد الطباعة: ${entry.afterPrint ? "نعم" : "لا"}`);
     res.json({ order: updated, itemsChanged, changed: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1475,9 +1548,9 @@ const buildReport = async (from, to, shift = null) => {
         talabatVisa += g;
       }
     } else {
-      const k = o.paymentMethod || "cash";
-      // كاش: اللي دخل الدرج فعلاً = المبيعات (السواق خد الأجرة من العميل). فيزا/انستا/محفظة: اللي العميل دفعه كامل
-      payments[k] = (payments[k] || 0) + (k === "cash" ? sale : g);
+      // كاش: اللي دخل الدرج فعلاً = الجزء الكاش − الأجرة. فيزا/انستا/محفظة: اللي العميل دفعه للمطعم. المقسّم بيتوزّع على طرقه
+      const parts = splitOf(o) || [{ method: o.paymentMethod || "cash", amount: g }];
+      for (const p of parts) payments[p.method] = (payments[p.method] || 0) + (p.method === "cash" ? Math.max(0, p.amount - fee) : p.amount);
     }
 
     const type = (byType[o.orderType] = byType[o.orderType] || { count: 0, total: 0 });
@@ -1501,11 +1574,12 @@ const buildReport = async (from, to, shift = null) => {
       // أي اختيار إجباري، أو مجموعة اسمها حجم / نوع / سنجل دابل تربل، بيتفصل في سطر لوحده في الجرد
       const requiredGroups = new Set(catItem ? groupsForItem(catItem).filter((g) => Number(g.min) > 0 || /حجم|حجمه|size|نوع|وزن|سنجل|دابل|تربل/i.test(String(g.name || ""))).map((g) => String(g.name || "").trim()) : []);
       const variantParts = [];
+      const boxParts = [];
       for (const mod of modList) {
         const text = String(mod || "");
         // محتويات البوكس ("2× كفتة"): بتتجمع في قسم لوحدها عشان الجرد يعرف الكميات الفعلية
         const boxM = /^\s*(\d+)\s*×\s*(.+?)\s*$/.exec(text);
-        if (boxM) { boxMap.set(boxM[2], (boxMap.get(boxM[2]) || 0) + Number(boxM[1]) * qty); continue; }
+        if (boxM) { boxMap.set(boxM[2], (boxMap.get(boxM[2]) || 0) + Number(boxM[1]) * qty); boxParts.push(`${boxM[1]}× ${boxM[2]}`); continue; }
         const colon = text.indexOf(":");
         if (colon < 0) continue;
         if (!requiredGroups.has(text.slice(0, colon).trim())) continue;
@@ -1516,7 +1590,9 @@ const buildReport = async (from, to, shift = null) => {
         const variantMatch = `${baseName} ${modList.join(" ")}`.match(/\b(double|triple|single|دابل|تربل|سنجل)\b/i);
         variant = variantMatch ? variantMatch[0] : "";
       }
-      const kitchenName = variant && !baseName.toLowerCase().includes(variant.toLowerCase()) ? `${baseName} - ${variant}` : baseName;
+      let kitchenName = variant && !baseName.toLowerCase().includes(variant.toLowerCase()) ? `${baseName} - ${variant}` : baseName;
+      // البوكس: نظهر محتوياته جنب اسمه ("بوكس 3 (2× كفتة، 1× ...)")
+      if (boxParts.length) kitchenName = `${kitchenName} (${boxParts.join("، ")})`;
       const row = cat.items.get(kitchenName) || { name: kitchenName, qty: 0, total: 0 };
       row.qty += qty; row.total += revenue;
       cat.items.set(kitchenName, row);
@@ -1556,8 +1632,8 @@ const buildReport = async (from, to, shift = null) => {
     const cashIn = moves.filter((m) => m.type === "in").reduce((sum, m) => sum + (Number(m.amount) || 0), 0);
     const cashOut = moves.filter((m) => m.type === "out").reduce((sum, m) => sum + (Number(m.amount) || 0), 0);
     // أوردرات دليفري كاش خرجت مع السواق ولسه النقدية ما اتسلمتش (مش محسوبة في المبيعات ولا الدرج)
-    const awaiting = await Order.find({ status: "accepted", awaitingCash: true }).select("orderId shiftReceiptNo driverName grandTotal deliveryFee").lean();
-    const awaitingOrders = awaiting.map((o) => ({ id: o.orderId, no: o.shiftReceiptNo || null, driverName: o.driverName || "", amount: Math.max(0, (Number(o.grandTotal) || 0) - (Number(o.deliveryFee) || 0)) }));
+    const awaiting = await Order.find({ status: "accepted", awaitingCash: true }).select("orderId shiftReceiptNo driverName grandTotal deliveryFee paymentMethod paymentSplit").lean();
+    const awaitingOrders = awaiting.map((o) => ({ id: o.orderId, no: o.shiftReceiptNo || null, driverName: o.driverName || "", amount: Math.max(0, cashPartOf(o) - (Number(o.deliveryFee) || 0)) }));
     Object.assign(report, {
       openedBy: shift.openedBy, openingCash: shift.openingCash || 0, movements: moves, cashIn, cashOut,
       awaitingOrders, awaitingTotal: awaitingOrders.reduce((sum, o) => sum + o.amount, 0),
@@ -1887,5 +1963,5 @@ if (!MONGO_URI) {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 السيرفر شغال على البورت ${PORT}`);
 });
-
+//123
 connectToDatabase();

@@ -2535,7 +2535,7 @@ const Receipt80 = ({ order, type, cashierName }) => {
           {discount > 0 && <div className="rc-row"><span>خصم {order.discountPercent}%</span><span>- {discount} ج</span></div>}
           {isDelivery && <div className="rc-row"><span>التوصيل</span><span>{fee} ج</span></div>}
           <div className="rc-row rc-total"><span>الإجمالي</span><span>{total} ج</span></div>
-          {order.paymentMethod && <div className="rc-row"><span>الدفع</span><span>{PAY_LABELS[order.paymentMethod] || order.paymentMethod}</span></div>}
+          {order.paymentMethod && <div className="rc-row"><span>الدفع</span><span>{payText(order)}</span></div>}
           <div className="rc-line" />
           <div className="rc-center rc-sub">شكراً لاختياركم {RESTAURANT_NAME} ❤️</div>
           <div className="rc-center rc-sub">بالهنا والشفا</div>
@@ -2971,6 +2971,51 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
 
 // ================= شاشة البيع (POS) داخل الكاشير =================
 const POS_PAYS = [['cash', '💵 كاش'], ['visa', '💳 فيزا'], ['instapay', '📱 انستا باي'], ['wallet', '👛 محفظة']];
+const cashPartOf = (o) => {
+  if (Array.isArray(o?.paymentSplit) && o.paymentSplit.length) return o.paymentSplit.filter(p => p.method === 'cash').reduce((a, p) => a + (Number(p.amount) || 0), 0);
+  return o?.paymentMethod === 'cash' ? (Number(o.grandTotal) || 0) : 0;
+};
+const payText = (o) => (Array.isArray(o?.paymentSplit) && o.paymentSplit.length)
+  ? o.paymentSplit.map(p => `${PAY_LABELS[p.method] || p.method} ${p.amount}`).join(' + ')
+  : (PAY_LABELS[o?.paymentMethod] || o?.paymentMethod || '');
+const splitLeft = (rows, total) => Math.round((Number(total) - rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)) * 100) / 100;
+const splitError = (rows, total) => {
+  if (rows.length < 2) return 'اختار طريقتين دفع على الأقل';
+  const ms = rows.map(r => r.method);
+  if (new Set(ms).size !== ms.length) return 'طريقة الدفع متكررة، اختار طرق مختلفة';
+  if (rows.some(r => !(Number(r.amount) > 0))) return 'اكتب مبلغ لكل طريقة دفع';
+  const left = splitLeft(rows, total);
+  if (left !== 0) return left > 0 ? `لسه ناقص ${left} ج في التقسيم` : `التقسيم زيادة ${-left} ج عن الإجمالي`;
+  return '';
+};
+// محرر تقسيم الدفع: المجموع لازم يساوي إجمالي الأوردر بالظبط
+const SplitEditor = ({ total, rows, setRows }) => {
+  const left = splitLeft(rows, total);
+  const setRow = (i, patch) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const setAmount = (i, v) => {
+    const clean = v.replace(/[^\d.]/g, '');
+    if (rows.length === 2) {
+      const other = Math.max(0, Math.round((Number(total) - (Number(clean) || 0)) * 100) / 100);
+      setRows(rows.map((r, j) => (j === i ? { ...r, amount: clean } : { ...r, amount: clean === '' ? '' : String(other) })));
+    } else setRow(i, { amount: clean });
+  };
+  return (
+    <div className="space-y-2 bg-[#050304] border border-green-500/40 rounded-xl p-2.5">
+      <p className="text-[11px] text-zinc-400 font-bold">✂️ قسّم {total} ج على طرق الدفع (المجموع لازم يساوي الإجمالي)</p>
+      {rows.map((r, i) => (
+        <div key={i} className="flex gap-1.5 items-center">
+          <select value={r.method} onChange={(e) => setRow(i, { method: e.target.value })} className="bg-[#100609] border border-[#1F0A0E] rounded-lg px-2 py-2 text-white text-xs">
+            {POS_PAYS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+          <input value={r.amount} onChange={(e) => setAmount(i, e.target.value)} inputMode="decimal" placeholder="المبلغ" className="flex-1 min-w-0 bg-[#100609] border border-[#1F0A0E] rounded-lg px-2 py-2 text-white text-sm" dir="ltr" />
+          {rows.length > 2 && <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} className="text-red-400 px-2 font-black">✖</button>}
+        </div>
+      ))}
+      {rows.length < 4 && <button type="button" onClick={() => setRows([...rows, { method: POS_PAYS.map(p => p[0]).find(k => !rows.some(r => r.method === k)) || 'wallet', amount: left > 0 ? String(left) : '' }])} className="text-xs text-green-300 font-bold">＋ طريقة دفع تالتة</button>}
+      <div className={`text-xs font-black ${left === 0 && !splitError(rows, total) ? 'text-green-400' : 'text-red-400'}`}>{left === 0 ? (splitError(rows, total) || '✅ التقسيم مظبوط') : left > 0 ? `⚠️ المتبقي ${left} ج` : `⚠️ زيادة ${-left} ج`}</div>
+    </div>
+  );
+};
 
 const readPosPresets = () => {
   try {
@@ -3014,6 +3059,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
 
   const [orderType, setOrderType] = useState('pickup'); // pickup | delivery | talabat
   const [pay, setPay] = useState('cash');
+  const [splitRows, setSplitRows] = useState([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]);
   const [talabatNo, setTalabatNo] = useState('');
   const [discount, setDiscount] = useState(0);
   const [discountReason, setDiscountReason] = useState('');
@@ -3059,7 +3105,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
   }, [custPhone]);
 
   const resetForm = () => {
-    setDiscount(0); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setOrderType('pickup');
+    setDiscount(0); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setOrderType('pickup');
   };
   const cancelEdit = () => {
     setCart(stashRef.current || []); stashRef.current = null; resetForm();
@@ -3075,6 +3121,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     })));
     setOrderType(editOrder.orderType === 'delivery' ? 'delivery' : editOrder.orderType === 'talabat' ? 'talabat' : 'pickup');
     setPay(editOrder.paymentMethod || 'cash');
+    if (editOrder.paymentMethod === 'split' && Array.isArray(editOrder.paymentSplit)) setSplitRows(editOrder.paymentSplit.map(p => ({ method: p.method, amount: String(p.amount) })));
     setTalabatNo(editOrder.talabatNo || '');
     setDiscount(Number(editOrder.discountPercent) || 0);
     setDiscountReason(editOrder.discountReason || '');
@@ -3224,6 +3271,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     if (editOrder) return;
     setOrderType(t);
     if (t === 'talabat' && !['cash', 'visa'].includes(pay)) setPay('cash');
+    if (t === 'delivery' || t === 'pickup') setSplitRows(rows => rows);
   };
 
   const editPresets = () => {
@@ -3244,9 +3292,11 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     if (busy) return;
     if (cart.length === 0) return alert('الأوردر لازم يفضل فيه صنف. لو عايز تلغيه استخدم زرار الإلغاء');
     if (discount > 0 && discountReason.trim().length < 2) return alert('اكتب سبب الخصم');
+    if (pay === 'split') { const se = splitError(splitRows, total); if (se) return alert(se); }
     setBusy(true);
     try {
       const payload = {
+        ...(pay === 'split' ? { paymentSplit: splitRows.map(r => ({ method: r.method, amount: Number(r.amount) })) } : {}),
         paymentMethod: pay, orderNote: orderNote.trim(), discountPercent: discount, discountReason: discountReason.trim(),
         items: cart.map(l => (l.keepIndex !== undefined
           ? { keepIndex: l.keepIndex, quantity: l.qty, notes: l.notes }
@@ -3278,13 +3328,16 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     if (orderType === 'delivery' && !phoneDigits) return alert('اكتب رقم تليفون العميل الأول (إجباري في الدليفري)');
     if (phoneDigits && (phoneDigits.length < 8 || phoneDigits.length > 15)) return alert('رقم العميل غير صحيح. صححه أو امسحه (اختياري في الاستلام وطلبات)');
     if (orderType === 'delivery' && !address.trim()) return alert('اكتب عنوان التوصيل');
+    if (pay === 'split') { const se = splitError(splitRows, total); if (se) return alert(se); }
     setBusy(true);
     try {
       const payload = {
+        ...(pay === 'split' ? { paymentSplit: splitRows.map(r => ({ method: r.method, amount: Number(r.amount) })) } : {}),
         orderType, paymentMethod: pay, talabatNo: talabatNo.trim(), discountPercent: discount,
         discountReason: discountReason.trim(), orderNote: orderNote.trim(),
         customerName: custName.trim(), customerPhone: custPhone.trim(), customerAddress: address.trim(),
         zoneName: zone ? zone.name : (orderType === 'delivery' ? 'توصيل' : ''), deliveryFee: fee,
+        offlineSnapshot: { items: cart.map(l => ({ name: l.name, quantity: l.qty, price: l.unit, modifiers: l.modifiersInfo, notes: l.notes })), itemsTotal, discountAmount, deliveryFee: fee, grandTotal: total },
         items: cart.map(l => ({ itemId: l._id, name: l.name, quantity: l.qty, selections: Array.isArray(l.modifierSelections) ? l.modifierSelections : undefined, modifiers: l.modifiersInfo, notes: l.notes }))
       };
       const res = await authFetch('/api/pos/orders', { method: 'POST', body: JSON.stringify(payload) });
@@ -3294,7 +3347,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
       } else {
         onCreated(data);
         setToast(`✅ أوردر #${data.orderId} اتبعت للمطبخ`);
-        setCart([]); setDiscount(0); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setCustLookup(null);
+        setCart([]); setDiscount(0); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setCustLookup(null);
       }
     } catch (e) {
       alert('النت قاطع، الأوردر ما اتسجلش. استخدم الكاشير الأوفلاين لحد ما النت يرجع.');
@@ -3414,7 +3467,9 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
             {POS_PAYS.filter(([k]) => orderType !== 'talabat' || ['cash', 'visa'].includes(k)).map(([k, label]) => (
               <button key={k} type="button" onClick={() => setPay(k)} className={`py-2.5 rounded-xl text-xs font-black border transition ${orderType === 'talabat' ? 'col-span-2' : ''} ${pay === k ? 'bg-green-600 text-white border-green-400' : 'bg-[#12080A] text-zinc-300 border-[#3A1218] hover:border-green-500'}`}>{label}</button>
             ))}
+            {orderType !== 'talabat' && <button type="button" onClick={() => setPay('split')} className={`col-span-4 py-2 rounded-xl text-xs font-black border transition ${pay === 'split' ? 'bg-green-600 text-white border-green-400' : 'bg-[#12080A] text-green-300 border-green-500/40 hover:border-green-500'}`}>✂️ دفع مقسّم (كاش + انستا / محفظة...)</button>}
           </div>
+          {pay === 'split' && orderType !== 'talabat' && <SplitEditor total={total} rows={splitRows} setRows={setSplitRows} />}
 
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -3602,6 +3657,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
   const [cancelReason, setCancelReason] = useState('');
   const [cancelPin, setCancelPin] = useState('');
   const [payModal, setPayModal] = useState(null);
+  const [paySplitRows, setPaySplitRows] = useState(null);
 
   const [staff, setStaff] = useState([]);
   const [newName, setNewName] = useState('');
@@ -3898,7 +3954,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
   };
   // السواق رجّع الفلوس: دلوقتي بس الأوردر يتقفل ويتحسب مبيعات وكاش في الدرج
   const receiveCash = async (ord) => {
-    const amount = Math.max(0, (Number(ord.grandTotal) || 0) - (Number(ord.deliveryFee) || 0));
+    const amount = Math.max(0, cashPartOf(ord) - (Number(ord.deliveryFee) || 0));
     if (!window.confirm(`استلمت ${amount} ج من السواق ${ord.driverName || ''} على أوردر #${ord.orderId}؟`)) return;
     await updateOrderStatus(ord._id || ord.orderId, 'completed', { cashReceived: true });
   };
@@ -3945,8 +4001,20 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
     setCancelPin('');
   };
 
+  const saveSplitPayment = async (ord) => {
+    const se = splitError(paySplitRows || [], Number(ord.grandTotal) || 0);
+    if (se) return alert(se);
+    const rows = paySplitRows.map(r => ({ method: r.method, amount: Number(r.amount) }));
+    setPayModal(null); setPaySplitRows(null);
+    try {
+      const res = await authFetch(`/api/pos/orders/${ord._id || ord.orderId}`, { method: 'PUT', body: JSON.stringify({ paymentMethod: 'split', paymentSplit: rows }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) return alert(d.error || 'تعذر حفظ التقسيم');
+      fetchOrders(); refreshShift();
+    } catch (err) { if (err.message !== 'unauthorized') alert('تعذر الاتصال بالسيرفر'); }
+  };
   const changePayment = async (ord, method) => {
-    setPayModal(null);
+    setPayModal(null); setPaySplitRows(null);
     if (!method || method === ord.paymentMethod) return;
     try {
       const res = await authFetch(`/api/pos/orders/${ord._id || ord.orderId}`, { method: 'PUT', body: JSON.stringify({ paymentMethod: method }) });
@@ -4066,7 +4134,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
           {ord.orderType !== 'talabat' && ord.customerName && ord.customerName !== '-' && <p>👤 <strong className="text-white">{ord.customerName}</strong></p>}
           {ord.customerPhone && ord.customerPhone !== '-' && <p>📞 <strong className="text-white">{ord.customerPhone}</strong></p>}
           <p>📦 <strong className="text-white">{ord.orderType === 'delivery' ? `توصيل (${ord.zoneName})` : typeLabel(ord)}</strong>{ord.source === 'pos' && <span className="text-[10px] text-zinc-500 mr-2">من الكاشير</span>}</p>
-          {ord.paymentMethod && <p>💰 <span className="text-zinc-300 text-xs">{PAY_LABELS[ord.paymentMethod] || ord.paymentMethod}{ord.discountAmount > 0 ? ` · خصم ${ord.discountPercent}% (${ord.discountAmount} ج)` : ''}</span></p>}
+          {ord.paymentMethod && <p>💰 <span className="text-zinc-300 text-xs">{payText(ord)}{ord.discountAmount > 0 ? ` · خصم ${ord.discountPercent}% (${ord.discountAmount} ج)` : ''}</span></p>}
           {ord.orderNote && <p className="bg-[#FFD700]/10 border border-[#FFD700]/40 rounded-lg px-2 py-1">📝 <strong className="text-[#FFD700]">{ord.orderNote}</strong></p>}
           {ord.driverName && <p>🛵 <span className="text-zinc-300 text-xs">السواق: {ord.driverName}</span></p>}
           {ord.status === 'cancelled' && <p>✖ <span className="text-red-400 text-xs">سبب الإلغاء: {ord.cancelReason} ({ord.cancelledBy})</span></p>}
@@ -4102,7 +4170,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
             <button onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">✅ قبول الأوردر (إيقاف الصوت)</button>
           )}
           {ord.status === 'accepted' && ord.awaitingCash && (
-            <button onClick={() => receiveCash(ord)} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">💵 استلمت النقدية من السواق ({Math.max(0, (Number(ord.grandTotal) || 0) - (Number(ord.deliveryFee) || 0))} ج)</button>
+            <button onClick={() => receiveCash(ord)} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">💵 استلمت النقدية من السواق ({Math.max(0, cashPartOf(ord) - (Number(ord.deliveryFee) || 0))} ج)</button>
           )}
           {ord.status === 'accepted' && !ord.awaitingCash && (
             <button onClick={() => finishOrder(ord)} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold transition">{ord.orderType === 'delivery' ? '🛵 جاهز للتوصيل' : '🏁 تم التسليم'}</button>
@@ -4361,13 +4429,24 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
         <div className="fixed inset-0 z-[130] bg-black/75 flex items-center justify-center p-4" onClick={() => setPayModal(null)}>
           <div dir="rtl" className="bg-[#1C0D10] border border-green-500/60 rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-xl font-black text-green-400">💳 تغيير طريقة الدفع — أوردر #{payModal.shiftReceiptNo || payModal.orderId}</h3>
-            <p className="text-xs text-zinc-400">الحالية: {PAY_LABELS[payModal.paymentMethod] || '-'} · الإجمالي {payModal.grandTotal} ج</p>
+            <p className="text-xs text-zinc-400">الحالية: {payText(payModal) || '-'} · الإجمالي {payModal.grandTotal} ج</p>
             <div className="grid grid-cols-2 gap-2">
               {POS_PAYS.filter(([k]) => payModal.orderType !== 'talabat' || ['cash', 'visa'].includes(k)).map(([k, label]) => (
                 <button key={k} type="button" onClick={() => changePayment(payModal, k)} className={`py-3 rounded-xl text-sm font-black border ${payModal.paymentMethod === k ? 'bg-green-600 text-white border-green-400' : 'bg-[#12080A] text-zinc-300 border-[#3A1218]'}`}>{label}</button>
               ))}
             </div>
-            <button type="button" onClick={() => setPayModal(null)} className="w-full py-2.5 bg-zinc-700 text-white font-bold rounded-xl">رجوع</button>
+            {payModal.orderType !== 'talabat' && !payModal.outForDeliveryAt && (
+              <div className="space-y-2">
+                <button type="button" onClick={() => setPaySplitRows(payModal.paymentSplit && payModal.paymentSplit.length ? payModal.paymentSplit.map(p => ({ method: p.method, amount: String(p.amount) })) : (paySplitRows || [{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]))} className="w-full py-2.5 rounded-xl text-sm font-black border bg-[#050304] text-green-300 border-green-500/40">✂️ دفع مقسّم</button>
+                {paySplitRows && (
+                  <>
+                    <SplitEditor total={Number(payModal.grandTotal) || 0} rows={paySplitRows} setRows={setPaySplitRows} />
+                    <button type="button" onClick={() => saveSplitPayment(payModal)} className="w-full py-2.5 bg-green-600 text-white font-black rounded-xl">حفظ التقسيم</button>
+                  </>
+                )}
+              </div>
+            )}
+            <button type="button" onClick={() => { setPayModal(null); setPaySplitRows(null); }} className="w-full py-2.5 bg-zinc-700 text-white font-bold rounded-xl">رجوع</button>
           </div>
         </div>
       )}
@@ -4838,5 +4917,5 @@ function App() {
     </div>
   );
 }
-
+//123
 export default App;
