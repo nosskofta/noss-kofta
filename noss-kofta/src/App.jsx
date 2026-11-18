@@ -34,6 +34,52 @@ const clearCustomer = () => {
   try { localStorage.removeItem(CUSTOMER_KEY); } catch {}
 };
 
+// ================= توكن شات الضيوف — مفتاح منفصل عن جلسة الكاشير وحساب العميل =================
+const CHAT_KEY = 'nossKoftaChat';
+const readChatIdentity = () => {
+  try { return JSON.parse(localStorage.getItem(CHAT_KEY)) || null; }
+  catch { return null; }
+};
+const saveChatIdentity = (data) => {
+  try { localStorage.setItem(CHAT_KEY, JSON.stringify(data)); } catch {}
+};
+const clearChatIdentity = () => {
+  try { localStorage.removeItem(CHAT_KEY); } catch {}
+};
+
+// صوت تنبيه الشات عند العميل (بيشتغل بعد أول تفاعل مع الصفحة — قيد المتصفح)
+let chatAudioCtx = null;
+const unlockChatAudio = () => {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!chatAudioCtx) chatAudioCtx = new AudioCtx();
+    if (chatAudioCtx.state === 'suspended') chatAudioCtx.resume();
+  } catch {}
+};
+const playChatBeep = () => {
+  try {
+    const ctx = chatAudioCtx;
+    if (!ctx || ctx.state !== 'running') { unlockChatAudio(); return; }
+    const beep = (start, freq) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const t0 = ctx.currentTime + start;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.5, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.35);
+      osc.start(t0);
+      osc.stop(t0 + 0.4);
+    };
+    beep(0, 880); beep(0.35, 1174);
+  } catch {}
+};
+const chatTime = (v) => (v ? new Date(v).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '');
+
 // طلب للسيرفر ومعاه التوكن. لو السيرفر رد "غير مصرح" بنقفل الجلسة ونرجّع لشاشة الدخول.
 const authRequest = async (token, path, options = {}, onUnauthorized) => {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -4268,13 +4314,139 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
   );
 };
 
+
+// ================= شات دعم العملاء — شاشة الكاشير =================
+const ChatPanel = ({ authFetch, onActivity }) => {
+  const [convs, setConvs] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [thread, setThread] = useState([]);
+  const [reply, setReply] = useState('');
+  const [sending, setSending] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef(null);
+  const sendingRef = useRef(false);
+
+  const loadConvs = async () => {
+    try {
+      const res = await authFetch('/api/chat/conversations');
+      const data = await res.json();
+      if (Array.isArray(data)) setConvs(data);
+    } catch (err) {}
+  };
+
+  const loadThread = async (phone) => {
+    try {
+      const res = await authFetch(`/api/chat/conversations/${phone}/messages`);
+      const data = await res.json();
+      if (Array.isArray(data)) setThread(data);
+    } catch (err) {}
+  };
+
+  useEffect(() => { loadConvs(); }, []);
+  useEffect(() => {
+    const t = setInterval(loadConvs, 5000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (!selected) return;
+    loadThread(selected);
+    const t = setInterval(() => loadThread(selected), 5000);
+    return () => clearInterval(t);
+  }, [selected]);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [thread, selected]);
+
+  const openConv = (phone) => {
+    setSelected(phone);
+    setThread([]);
+    setLoading(true);
+    loadThread(phone).finally(() => { setLoading(false); loadConvs(); if (onActivity) onActivity(); });
+  };
+
+  const sendReply = async () => {
+    const text = reply.trim();
+    if (!text || !selected || sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    try {
+      const res = await authFetch(`/api/chat/conversations/${selected}/reply`, { method: 'POST', body: JSON.stringify({ text: text.slice(0, 500) }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return alert(data.error || 'حصل خطأ، حاول تاني');
+      setReply('');
+      await loadThread(selected);
+      loadConvs();
+    } catch (err) {
+      alert(err.message === 'unauthorized' ? 'انتهت الجلسة، سجّل دخول تاني.' : 'تعذّر الوصول للسيرفر، حاول تاني.');
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  };
+
+  const selectedConv = convs.find(c => c.phone === selected);
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden ${selected ? 'hidden md:block' : ''}`}>
+        <h3 className="text-lg font-black text-[#FFD700] px-4 py-3 border-b border-[#3A1218]">💬 محادثات العملاء</h3>
+        {convs.length === 0 ? (
+          <p className="text-zinc-500 text-center py-10 text-sm">لسه مفيش رسايل من العملاء</p>
+        ) : (
+          <div className="max-h-[60vh] overflow-y-auto">
+            {convs.map(c => (
+              <button key={c.phone} type="button" onClick={() => openConv(c.phone)} className={`w-full text-right px-4 py-3 border-b border-[#3A1218] hover:bg-[#800020]/20 transition ${selected === c.phone ? 'bg-[#800020]/30' : ''}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-white text-sm">{c.name || 'عميل'} <span className="text-zinc-400 font-normal" dir="ltr">{c.phone}</span></span>
+                  {c.unread > 0 && <span className="bg-red-600 text-white text-xs font-black px-2 py-0.5 rounded-full shrink-0">{c.unread} جديد</span>}
+                </div>
+                <p className="text-zinc-400 text-xs truncate mt-1">{c.lastFrom === 'staff' ? 'أنت: ' : ''}{c.lastText}</p>
+                <p className="text-zinc-500 text-[11px] mt-1">{chatTime(c.lastAt)}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className={`md:col-span-2 bg-[#1C0D10] border border-[#3A1218] rounded-2xl flex flex-col overflow-hidden ${!selected ? 'hidden md:flex' : ''}`}>
+        {!selected ? (
+          <p className="text-zinc-500 text-center py-20">اختار محادثة من القايمة عشان ترد عليها</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-[#3A1218]">
+              <button type="button" onClick={() => setSelected(null)} className="md:hidden text-zinc-300 font-bold">→ رجوع</button>
+              <p className="font-black text-white">{selectedConv?.name || 'عميل'} <span className="text-zinc-400 font-normal text-sm" dir="ltr">{selected}</span></p>
+            </div>
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[55vh] min-h-[300px] bg-[#12080A]">
+              {loading && thread.length === 0 ? <p className="text-zinc-500 text-center py-10 text-sm">بيحمّل...</p> : thread.map(m => (
+                <div key={m._id} className={`flex ${m.from === 'staff' ? 'justify-start' : 'justify-end'}`}>
+                  <div className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm leading-6 whitespace-pre-wrap break-words ${m.from === 'staff' ? 'bg-[#800020] text-white rounded-tr-sm' : 'bg-zinc-800 text-zinc-100 rounded-tl-sm'}`}>
+                    {m.from === 'staff' && m.staffName && <p className="text-[11px] text-[#FFD700] font-bold mb-0.5">{m.staffName}</p>}
+                    <p>{m.text}</p>
+                    <p className="text-[10px] opacity-60 mt-1 text-left">{chatTime(m.createdAt)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 p-3 border-t border-[#3A1218]">
+              <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendReply(); }} maxLength={500} placeholder="اكتب الرد..." className="flex-1 bg-[#12080A] border border-[#3A1218] rounded-xl px-4 py-3 text-white text-sm" />
+              <button type="button" onClick={sendReply} disabled={sending || !reply.trim()} className="bg-[#800020] text-white font-black px-5 rounded-xl disabled:opacity-50">إرسال 📩</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ================= 5. شاشة الكاشير (بحسابات وأدوار) =================
 const CashierDashboard = ({ initialTab = 'active' }) => {
   const [session, setSession] = useState(readSession);
   const [orders, setOrders] = useState([]);
   const [archive, setArchive] = useState(null);
   const [editingOrder, setEditingOrder] = useState(null);
-  const [cashierTab, setCashierTab] = useState(initialTab === 'archive' ? 'active' : initialTab); // pos | active | shift | archive | stock | staff
+  const [cashierTab, setCashierTab] = useState(initialTab === 'archive' ? 'active' : initialTab); // pos | active | shift | archive | stock | staff | chat
   const [soundReady, setSoundReady] = useState(false);
 
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem('nossKoftaPosTheme') || 'light'; } catch (e) { return 'light'; } });
@@ -4556,6 +4728,30 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
       if (Array.isArray(data)) setStaff(data);
     } catch (err) {}
   };
+
+  // ===== شات العملاء: عدّاد الرسايل غير المقروءة + صوت عند رسالة جديدة (من غير أي تغيير في جرس الأوردرات) =====
+  const [chatUnread, setChatUnread] = useState(0);
+  const chatUnreadRef = useRef(0);
+  const chatSeededRef = useRef(false);
+  const fetchChatSummary = async () => {
+    try {
+      const res = await authFetch('/api/chat/conversations');
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      const total = data.reduce((s, c) => s + (c.unread || 0), 0);
+      if (chatSeededRef.current && total > chatUnreadRef.current) playBeep();
+      chatUnreadRef.current = total;
+      chatSeededRef.current = true;
+      setChatUnread(total);
+    } catch (err) {}
+  };
+  useEffect(() => {
+    if (!token) return;
+    chatSeededRef.current = false;
+    fetchChatSummary();
+    const interval = setInterval(fetchChatSummary, 5000);
+    return () => clearInterval(interval);
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -4914,6 +5110,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
         {tabBtn('archive', `📦 الأرشيف (${doneOrders.length + cancelledOrders.length})`)}
         {tabBtn('stock', '🍽️ الأصناف المتاحة')}
         {isAdmin && tabBtn('staff', '👥 إدارة الكاشيرات')}
+        {tabBtn('chat', `💬 رسايل العملاء${chatUnread > 0 ? ` (${chatUnread})` : ''}`)}
       </div>
 
       {cashierTab === 'pos' && <PosScreen authFetch={authFetch} isAdmin={isAdmin} onCreated={(o) => { handlePosCreated(o); refreshShift(); }} shiftOpen={shiftOpen} onShiftOpened={refreshShift} editOrder={editingOrder} onEditFinished={() => setEditingOrder(null)} onEditSaved={handleOrderEdited} />}
@@ -5048,6 +5245,8 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
           </div>
         </div>
       )}
+
+      {cashierTab === 'chat' && <ChatPanel authFetch={authFetch} onActivity={fetchChatSummary} />}
 
       {driverModal && (
         <div className="fixed inset-0 z-[130] bg-black/75 flex items-center justify-center p-4" onClick={() => setDriverModal(null)}>
@@ -5273,6 +5472,179 @@ const KoftaLoader = () => {
 };
 
 // ================= التطبيق الرئيسي =================
+
+// ================= شات دعم العملاء — ودجت العميل (شاشات العملاء بس) =================
+const CustomerChatWidget = () => {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
+  const [unread, setUnread] = useState(0);
+  const [chatName, setChatName] = useState('');
+  const [chatPhone, setChatPhone] = useState('');
+  const [formError, setFormError] = useState('');
+  const [guestInfo, setGuestInfo] = useState(null);
+  const [identity, setIdentity] = useState(readChatIdentity);
+  const seenRef = useRef(new Set());
+  const seededRef = useRef(false);
+  const sendingRef = useRef(false);
+  const scrollRef = useRef(null);
+  const openRef = useRef(false);
+  openRef.current = open;
+
+  const customer = readCustomer();
+  const token = customer?.token || identity?.token || null;
+  const identified = !!token;
+  const showForm = !identified && !guestInfo;
+
+  const loadMessages = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/messages`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.status === 401) {
+        if (!customer?.token) { clearChatIdentity(); setIdentity(null); }
+        return;
+      }
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      const freshStaff = data.filter(m => m.from === 'staff' && !seenRef.current.has(String(m._id)));
+      if (seededRef.current && freshStaff.length > 0) {
+        playChatBeep();
+        if (!openRef.current) setUnread(u => u + freshStaff.length);
+      }
+      data.forEach(m => seenRef.current.add(String(m._id)));
+      if (openRef.current) setUnread(0);
+      seededRef.current = true;
+      setMessages(data);
+    } catch (err) {}
+  };
+
+  useEffect(() => {
+    if (!identified) return;
+    seededRef.current = false;
+    loadMessages();
+    const t = setInterval(loadMessages, open ? 5000 : 15000);
+    return () => clearInterval(t);
+  }, [identified, open, token]);
+
+  useEffect(() => {
+    window.addEventListener('pointerdown', unlockChatAudio, { once: true });
+    window.addEventListener('keydown', unlockChatAudio, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockChatAudio);
+      window.removeEventListener('keydown', unlockChatAudio);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, open]);
+
+  const toggleOpen = () => {
+    if (!open) { setUnread(0); if (token) loadMessages(); }
+    setOpen(!open);
+  };
+
+  const startChat = () => {
+    let d = String(chatPhone || '').replace(/\D/g, '');
+    if (d.length === 12 && d.startsWith('20')) d = '0' + d.slice(2);
+    if (!/^01\d{9}$/.test(d)) return setFormError('اكتب رقم تليفون صحيح (11 رقم بيبدأ بـ 01).');
+    setFormError('');
+    setGuestInfo({ phone: d, name: chatName.trim() });
+  };
+
+  const sendMessage = async () => {
+    const body = text.trim();
+    if (!body || sendingRef.current) return;
+    const phone = customer?.phone || identity?.phone || guestInfo?.phone || '';
+    if (!phone) return;
+    sendingRef.current = true;
+    setSending(true);
+    setSendError('');
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (customer?.token) headers.Authorization = `Bearer ${customer.token}`;
+      const res = await fetch(`${API_BASE}/api/chat/send`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ phone, name: guestInfo?.name || '', text: body.slice(0, 500) })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setSendError(data.error || 'حصل خطأ، حاول تاني'); return; }
+      if (data.chatToken) {
+        const ident = { token: data.chatToken, phone, name: guestInfo?.name || '' };
+        saveChatIdentity(ident);
+        setIdentity(ident);
+        setGuestInfo(null);
+      }
+      if (data.message) {
+        seenRef.current.add(String(data.message._id));
+        setMessages(prev => [...prev, data.message]);
+      }
+      setText('');
+    } catch (err) {
+      setSendError('تعذّر الوصول للسيرفر، اتأكد من النت وحاول تاني.');
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  };
+
+  return (
+    <>
+      {!open && (
+        <button type="button" onClick={toggleOpen} className="fixed bottom-5 left-5 z-40 w-14 h-14 rounded-full bg-[#800020] border-2 border-[#FFD700] shadow-[0_4px_20px_rgba(128,0,32,0.6)] text-2xl text-white flex items-center justify-center hover:scale-105 transition" aria-label="كلم المطعم">
+          💬
+          {unread > 0 && <span className="absolute -top-1 -right-1 bg-red-600 text-white text-xs font-black min-w-[22px] h-[22px] px-1 rounded-full flex items-center justify-center animate-pulse">{unread}</span>}
+        </button>
+      )}
+      {open && (
+        <div className="fixed z-40 bottom-0 left-0 right-0 sm:bottom-5 sm:left-5 sm:right-auto w-full sm:w-[380px] h-[75vh] sm:h-[520px] bg-[#1C0D10] border border-[#800020] sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 bg-[#800020] text-white">
+            <div>
+              <p className="font-black">💬 كلم المطعم</p>
+              <p className="text-[11px] text-white/80">اسأل عن أي حاجة والكاشير هيرد عليك</p>
+            </div>
+            <button type="button" onClick={toggleOpen} className="text-xl font-black px-2">✕</button>
+          </div>
+
+          {showForm ? (
+            <div className="flex-1 flex flex-col justify-center p-5 gap-3">
+              <p className="text-zinc-300 text-sm text-center leading-6">عندك سؤال؟ اكتب اسمك ورقمك وابدأ المحادثة مع الكاشير 👇</p>
+              <input value={chatName} onChange={(e) => setChatName(e.target.value)} maxLength={40} placeholder="الاسم" className="bg-[#12080A] border border-[#3A1218] rounded-xl px-4 py-3 text-white text-sm" />
+              <input value={chatPhone} onChange={(e) => setChatPhone(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') startChat(); }} placeholder="رقم التليفون (11 رقم)" inputMode="tel" dir="ltr" className="bg-[#12080A] border border-[#3A1218] rounded-xl px-4 py-3 text-white text-sm text-right" />
+              {formError && <p className="text-red-400 text-xs font-bold text-center">{formError}</p>}
+              <button type="button" onClick={startChat} className="bg-[#800020] text-white font-black py-3 rounded-xl hover:bg-[#990026] transition">ابدأ المحادثة 💬</button>
+            </div>
+          ) : (
+            <>
+              <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 bg-[#12080A]">
+                {messages.length === 0 ? (
+                  <p className="text-zinc-500 text-center text-sm py-8">اكتب رسالتك والكاشير هيرد عليك هنا 💬</p>
+                ) : messages.map(m => (
+                  <div key={m._id} className={`flex ${m.from === 'customer' ? 'justify-start' : 'justify-end'}`}>
+                    <div className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm leading-6 whitespace-pre-wrap break-words ${m.from === 'customer' ? 'bg-[#800020] text-white rounded-tr-sm' : 'bg-zinc-800 text-zinc-100 rounded-tl-sm'}`}>
+                      {m.from === 'staff' && <p className="text-[11px] text-[#FFD700] font-bold mb-0.5">🍽️ {m.staffName || 'المطعم'}</p>}
+                      <p>{m.text}</p>
+                      <p className="text-[10px] opacity-60 mt-1 text-left">{chatTime(m.createdAt)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {sendError && <p className="text-red-400 text-xs font-bold text-center px-3 pt-2">{sendError}</p>}
+              <div className="flex gap-2 p-3 border-t border-[#3A1218]">
+                <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(); }} maxLength={500} placeholder="اكتب رسالتك..." className="flex-1 bg-[#12080A] border border-[#3A1218] rounded-xl px-4 py-3 text-white text-sm" />
+                <button type="button" onClick={sendMessage} disabled={sending || !text.trim()} className="bg-[#800020] text-white font-black px-4 rounded-xl disabled:opacity-50">إرسال 📩</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+};
+
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -5587,6 +5959,8 @@ function App() {
           </div>
         </div>
       )}
+
+      {['/', '/menu', '/cart', '/my-orders'].includes(location.pathname) && <CustomerChatWidget />}
 
       {!isStaffPage && <footer onClick={handleSecretLogoClick} className="bg-[#1C0D10] border-t border-[#3A1218] mt-20 text-zinc-400 py-6 text-center text-xs cursor-default select-none">
         جميع الحقوق محفوظة © 2026 نص كفتة

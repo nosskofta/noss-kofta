@@ -229,6 +229,17 @@ const customerSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 const Customer = mongoose.model("Customer", customerSchema);
+const chatMessageSchema = new mongoose.Schema({
+  phone: { type: String, required: true, index: true },
+  name: { type: String, default: "" },
+  from: { type: String, enum: ["customer", "staff"], required: true },
+  staffName: { type: String, default: "" },
+  text: { type: String, required: true },
+  read: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+});
+chatMessageSchema.index({ phone: 1, createdAt: 1 });
+const ChatMessage = mongoose.model("ChatMessage", chatMessageSchema);
 
 // عدّاد أرقام أوردرات الكاشير
 const counterSchema = new mongoose.Schema({
@@ -483,6 +494,34 @@ const requireCustomerAuth = (req, res, next) => {
 const MAX_CUSTOMER_LOGIN_FAILS = 8;
 const customerLoginKey = (req, phone) => `custlogin:${req.ip}:${phone}`;
 const customerLoginLocked = (req, phone) => (peekBucket(customerLoginKey(req, phone))?.count || 0) >= MAX_CUSTOMER_LOGIN_FAILS;
+
+// ---------- شات دعم العملاء (كول سنتر) ----------
+// توكن شات للضيوف: بيثبت إن المتصفح ده هو صاحب الرقم اللي بدأ المحادثة، من غير رقم سري
+const CHAT_TOKEN_TTL = 7 * 24 * 60 * 60 * 1000;
+const signChatToken = (phone) => signToken({ phone, role: "chat" }, CHAT_TOKEN_TTL);
+
+// قراءة رسايل الشات: توكن حساب عميل أو توكن شات (ضيف) — كل واحد يشوف رسايل رقمه بس
+const requireChatAuth = (req, res, next) => {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const payload = token ? verifyToken(token) : null;
+  if (!payload || (payload.role !== "customer" && payload.role !== "chat") || !payload.phone) {
+    return res.status(401).json({ error: "افتح الشات من الأول" });
+  }
+  req.chatPhone = normPhone(payload.phone);
+  if (!/^\d{8,15}$/.test(req.chatPhone)) return res.status(401).json({ error: "افتح الشات من الأول" });
+  next();
+};
+
+// حدّ إرسال الشات: 10 رسايل لكل رقم+IP في الدقيقة (عشان محدش يسبّم الكاشير)
+const chatSendLimiter = (req, res, next) => {
+  const phone = normPhone(req.body?.phone || "");
+  const bucket = hitBucket(`chat:${req.ip}:${phone}`, 60 * 1000);
+  if (bucket.count > 10) {
+    return res.status(429).json({ error: "بعتّ رسايل كتير أوي، استنى دقيقة وحاول تاني" });
+  }
+  next();
+};
 
 // ---------- تسجيل الدخول ----------
 app.post("/api/auth/login", async (req, res) => {
@@ -1382,6 +1421,101 @@ app.post("/api/orders/:id/rate", requireCustomerAuth, async (req, res) => {
     order.rating = { stars, comment: cleanText(req.body?.comment, 300), at: new Date() };
     await order.save();
     res.json({ ok: true, rating: { stars: order.rating.stars, comment: order.rating.comment } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================= شات دعم العملاء (كول سنتر) =================
+// رسالة من العميل — عامة (من غير رقم سري)، لكن مقيدة بعدد الرسايل. لو معاه توكن حساب عميل، رقمه بيتاخد من التوكن.
+app.post("/api/chat/send", chatSendLimiter, async (req, res) => {
+  try {
+    let phone = normPhone(req.body?.phone);
+    let isCustomerToken = false;
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+    const payload = token ? verifyToken(token) : null;
+    if (payload && payload.role === "customer" && payload.phone) {
+      phone = normPhone(payload.phone);
+      isCustomerToken = true;
+    }
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ error: "رقم التليفون مش صحيح" });
+    }
+    const text = cleanText(req.body?.text, 500);
+    if (!text) {
+      return res.status(400).json({ error: "اكتب رسالة الأول" });
+    }
+    let name = cleanText(req.body?.name, 40);
+    if (!name) {
+      const existing = await Customer.findOne({ phone }).lean();
+      name = existing?.name || "";
+    }
+    const msg = await ChatMessage.create({ phone, name, from: "customer", text });
+    const out = { ok: true, message: { _id: msg._id, from: msg.from, staffName: "", text: msg.text, createdAt: msg.createdAt, read: msg.read } };
+    if (!isCustomerToken) out.chatToken = signChatToken(phone);
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// رسايل العميل — رقمه بس (توكن حساب أو توكن شات)
+app.get("/api/chat/messages", requireChatAuth, async (req, res) => {
+  try {
+    const msgs = await ChatMessage.find({ phone: req.chatPhone }).sort({ createdAt: 1 }).limit(50).lean();
+    res.json(msgs.map((m) => ({ _id: m._id, from: m.from, staffName: m.staffName || "", text: m.text, createdAt: m.createdAt, read: m.read })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// قايمة محادثات العملاء للكاشير — من غير أي بيانات حساسة (لا عناوين ولا مواقع)
+app.get("/api/chat/conversations", requireAuth, async (req, res) => {
+  try {
+    const convs = await ChatMessage.aggregate([
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: "$phone",
+          name: { $max: "$name" },
+          lastText: { $first: "$text" },
+          lastFrom: { $first: "$from" },
+          lastAt: { $first: "$createdAt" },
+          unread: { $sum: { $cond: [{ $and: [{ $eq: ["$from", "customer"] }, { $eq: ["$read", false] }] }, 1, 0] } }
+        }
+      },
+      { $sort: { lastAt: -1 } },
+      { $limit: 50 }
+    ]);
+    res.json(convs.map((c) => ({ phone: c._id, name: c.name || "", lastText: c.lastText, lastFrom: c.lastFrom, lastAt: c.lastAt, unread: c.unread })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// محادثة رقم معين — وبيعلم رسايل العميل كمقروءة
+app.get("/api/chat/conversations/:phone/messages", requireAuth, async (req, res) => {
+  try {
+    const phone = normPhone(req.params.phone);
+    if (!isValidPhone(phone)) return res.status(400).json({ error: "رقم التليفون مش صحيح" });
+    const msgs = await ChatMessage.find({ phone }).sort({ createdAt: 1 }).limit(100).lean();
+    await ChatMessage.updateMany({ phone, from: "customer", read: false }, { $set: { read: true } });
+    res.json(msgs.map((m) => ({ _id: m._id, from: m.from, staffName: m.staffName || "", text: m.text, createdAt: m.createdAt, read: m.read })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// رد الكاشير على عميل
+app.post("/api/chat/conversations/:phone/reply", requireAuth, async (req, res) => {
+  try {
+    const phone = normPhone(req.params.phone);
+    if (!isValidPhone(phone)) return res.status(400).json({ error: "رقم التليفون مش صحيح" });
+    const text = cleanText(req.body?.text, 500);
+    if (!text) return res.status(400).json({ error: "اكتب الرد الأول" });
+    const msg = await ChatMessage.create({ phone, from: "staff", staffName: req.user.name || "", text });
+    res.json({ ok: true, message: { _id: msg._id, from: msg.from, staffName: msg.staffName, text: msg.text, createdAt: msg.createdAt, read: msg.read } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
