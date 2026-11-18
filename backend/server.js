@@ -386,6 +386,21 @@ setInterval(() => {
   for (const [key, bucket] of buckets) if (bucket.reset < now) buckets.delete(key);
 }, 60 * 1000).unref();
 
+const PIN_WINDOW_MS = 15 * 60 * 1000;
+const MAX_PIN_FAILS = 5;
+
+// فحص PIN الأدمن مع حدّ محاولات: 5 محاولات غلط لنفس المستخدم في 15 دقيقة = قفل + تنبيه للأدمن
+const checkAdminPin = (req, pin) => {
+  const key = `pin:${req.user?.id || req.user?.username || req.ip}`;
+  if ((peekBucket(key)?.count || 0) >= MAX_PIN_FAILS) return { locked: true };
+  if (adminPinIsValid(pin)) { buckets.delete(key); return { ok: true }; }
+  const bucket = hitBucket(key, PIN_WINDOW_MS);
+  if (bucket.count >= MAX_PIN_FAILS) {
+    void sendTelegramAlert(`🔐 محاولات PIN غلط كتير\nالمستخدم: ${req.user?.name || "-"} (${req.user?.username || "-"})\nاتقفل 15 دقيقة بعد ${MAX_PIN_FAILS} محاولات فاشلة`);
+  }
+  return { ok: false };
+};
+
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_FAILS_PER_USER = 8;
 const MAX_LOGIN_FAILS_PER_IP = 30;
@@ -955,8 +970,6 @@ const validateSplit = (raw, grand, orderType, fee) => {
   }
   return { split };
 };
-const MAX_CASHIER_DISCOUNT = 15;
-
 const sendTelegramAlert = async (message) => {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
   try {
@@ -970,6 +983,22 @@ const sendTelegramAlert = async (message) => {
   } catch (err) {
     console.error("Telegram alert error:", err.message);
   }
+};
+
+// نص تنبيه الخصم: الأوردر كامل (الأصناف والأسعار والإجمالي والدفع والكاشير والعميل)
+const discountAlertText = (o, cashierName) => {
+  const lines = (o.items || []).map((it) => `• ${it.name} ×${it.quantity} — ${Number(it.price) || 0} ج`);
+  return [
+    `🏷️ خصم على أوردر #${o.orderId}`,
+    ...lines,
+    `المجموع قبل الخصم: ${Number(o.itemsTotal) || 0} ج`,
+    `الخصم: ${Number(o.discountPercent) || 0}% (${Number(o.discountAmount) || 0} ج) — السبب: ${o.discountReason || "-"}`,
+    `الإجمالي: ${Number(o.grandTotal) || 0} ج`,
+    `الدفع: ${describePayment(o)}`,
+    `الكاشير: ${cashierName}`,
+    `العميل: ${o.customerName || "-"} (${o.customerPhone || "-"})`,
+    `الوقت: ${new Date().toLocaleString("ar-EG")}`
+  ].join("\n");
 };
 
 const groupsForItem = (item) => {
@@ -1213,6 +1242,8 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
         if (req.body.cashReceived !== true) return res.status(400).json({ error: "الأوردر مع السواق ومستني النقدية. اضغط (استلمت النقدية من السواق)" });
         update.completedBy = req.user.name; update.completedAt = new Date();
         update.awaitingCash = false; update.cashReceivedAt = new Date(); update.cashReceivedBy = req.user.name;
+        // السواق خلّى أجرته من الكاش اللي حصّله: الأجرة اتسوّت من غير حركة درج
+        if (order.orderType === "delivery" && (Number(order.deliveryFee) || 0) > 0) update.driverFeePaid = true;
       } else {
         let driverNameNow = "";
         if (order.orderType === "delivery") {
@@ -1241,8 +1272,11 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
       const reason = cleanText(req.body.cancelReason, 200);
       if (reason.length < 2) return res.status(400).json({ error: "اكتب سبب الإلغاء" });
       const needsPin = !isAdminUser && (order.source === "pos" || !!order.printedAt || !!order.paymentMethod);
-      if (needsPin && !adminPinIsValid(req.body.adminPin)) {
-        return res.status(403).json({ error: ADMIN_PIN.length < 4 ? "اضبط ADMIN_PIN في Railway أولًا" : "إلغاء أوردر مدفوع أو مطبوع يحتاج PIN الأدمن الصحيح" });
+      if (needsPin) {
+        const pinCheck = checkAdminPin(req, req.body.adminPin);
+        if (pinCheck.locked) return res.status(429).json({ error: "محاولات PIN غلط كتير، استنى 15 دقيقة وحاول تاني" });
+        // للكاشير: رسالة عامة من غير ما نكشف هل الـPIN مش متظبط ولا غلط
+        if (!pinCheck.ok) return res.status(403).json({ error: (req.user?.role === "admin" && ADMIN_PIN.length < 4) ? "اضبط ADMIN_PIN في Railway أولًا" : "إلغاء أوردر مدفوع أو مطبوع يحتاج PIN الأدمن الصحيح" });
       }
       update.cancelReason = reason; update.cancelledBy = req.user.name; update.cancelledAt = new Date();
       update.cancelledAfterPrint = !!order.printedAt;
@@ -1386,8 +1420,8 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
     }
     console.log(`✅ POS order saved: #${saved.orderId} by ${req.user.name}`);
     if (customerPhone !== "-") void upsertCustomer({ phone: customerPhone, name: customerName, address: orderType === "delivery" ? customerAddress : "", zoneName: orderType === "delivery" ? zoneName : "" });
-    if (discountPercent > MAX_CASHIER_DISCOUNT) {
-      void sendTelegramAlert(`🏷️ خصم مرتفع على أوردر #${saved.orderId}\nالنسبة: ${discountPercent}% (${discountAmount} ج)\nالكاشير: ${req.user.name}\nالسبب: ${discountReason}`);
+    if (discountPercent > 0) {
+      void sendTelegramAlert(discountAlertText(saved, req.user.name));
     }
     if (orderType === "talabat") {
       void sendTelegramAlert(`🛍️ أوردر طلبات جديد #${saved.orderId}\nرقم طلبات: ${talabatNo}\nالقيمة: ${grandTotal} ج\nالدفع: ${paymentMethod === "cash" ? "كاش في الدرج" : "فيزا مستحقة عند طلبات"}\nسجله: ${req.user.name}`);
@@ -1411,6 +1445,7 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
     if (!order) return res.status(404).json({ error: "الأوردر غير موجود" });
     if (order.source !== "pos") return res.status(400).json({ error: "التعديل لأوردرات الكاشير بس" });
     if (order.status === "cancelled") return res.status(400).json({ error: "الأوردر ملغي، مينفعش يتعدّل" });
+    if (order.status === "completed" && req.user?.role !== "admin") return res.status(403).json({ error: "الأوردر مكتمل، التعديل للأدمن بس" });
 
     const shift = order.shiftId ? await Shift.findById(order.shiftId).lean() : null;
     if (!shift || shift.status !== "open") return res.status(400).json({ error: "وردية الأوردر اتقفلت، مينفعش تعدّله" });
@@ -1512,7 +1547,12 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
     }
 
     const payLabel = { cash: "كاش", visa: "فيزا", instapay: "انستا باي", wallet: "محفظة" };
-    void sendTelegramAlert(`✏️ تعديل أوردر #${updated.orderId}\nبواسطة: ${req.user.name}\nالإجمالي: ${order.grandTotal} ← ${grandTotal} ج\nالدفع: ${entry.beforePayment} ← ${entry.afterPayment}\nالأصناف اتغيّرت: ${itemsChanged ? "نعم" : "لا"}\nبعد الطباعة: ${entry.afterPrint ? "نعم" : "لا"}`);
+    // لو الأوردر المعدّل عليه خصم: تنبيه واحد بالأوردر كامل بدل تنبيه التعديل العادي
+    if (discountPercent > 0) {
+      void sendTelegramAlert(discountAlertText(updated, req.user.name));
+    } else {
+      void sendTelegramAlert(`✏️ تعديل أوردر #${updated.orderId}\nبواسطة: ${req.user.name}\nالإجمالي: ${order.grandTotal} ← ${grandTotal} ج\nالدفع: ${entry.beforePayment} ← ${entry.afterPayment}\nالأصناف اتغيّرت: ${itemsChanged ? "نعم" : "لا"}\nبعد الطباعة: ${entry.afterPrint ? "نعم" : "لا"}`);
+    }
     res.json({ order: updated, itemsChanged, changed: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1558,7 +1598,7 @@ const buildReport = async (from, to, shift = null) => {
         { status: "completed", completedAt: { $gt: fromD, $lte: toD }, $or: [{ source: { $ne: "pos" } }, { source: "pos", orderType: "delivery" }] }
       ]
     }).lean(),
-    Order.find({ status: "cancelled", cancelledAt: { $gt: fromD, $lte: toD } }).select("grandTotal orderId cancelledAfterPrint").lean(),
+    Order.find({ status: "cancelled", cancelledAt: { $gt: fromD, $lte: toD } }).select("grandTotal orderId cancelledAfterPrint cancelledBy").lean(),
     Item.find().select("name category modifierGroups sizes addons").lean()
   ]);
 

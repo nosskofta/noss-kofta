@@ -1913,6 +1913,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
 // ================= مساعدات الأرشيف والشيفت =================
 const dayKeyOf = (v) => {
   const d = new Date(v);
+  d.setHours(d.getHours() - 6); // يوم الشغل من 6 الصبح لـ 6 الصبح زي السيرفر، مش اليوم الميلادي
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 const dayLabelOf = (v) => new Date(v).toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -1931,8 +1932,9 @@ const paySplit = (list) => {
       else { talabatVisa += amount; }
       return;
     }
-    const k = o.paymentMethod || 'cash';
-    payments[k] = (payments[k] || 0) + (k === 'cash' ? amount - dFee : amount); // كاش: اللي دخل الدرج (من غير أجرة السواق)
+    // زي السيرفر بالظبط: الدفع المقسّم بيتوزّع على طرقه، والكاش من غير أجرة السواق
+    const parts = (Array.isArray(o.paymentSplit) && o.paymentSplit.length) ? o.paymentSplit : [{ method: o.paymentMethod || 'cash', amount }];
+    parts.forEach(p => { const pa = Number(p.amount) || 0; payments[p.method] = (payments[p.method] || 0) + (p.method === 'cash' ? Math.max(0, pa - dFee) : pa); });
   });
   return { payments, talabat, talabatCash, talabatVisa, discounts };
 };
@@ -2265,6 +2267,9 @@ const DayDashboardCard = ({ authFetch, card, inp }) => {
     ['👛 محفظة', n(p.wallet)]
   ];
   const paySum = payBoxes.reduce((a, b) => a + b[1], 0);
+  // الفرق بين مجموع الدفع والمبيعات = أجرة توصيل اتدفعت إلكترونيًا للمطعم (متفسّرة، مش غلط): لازم يبقى بين صفر وإجمالي الأجرة
+  const payGap = paySum - n(t.total);
+  const payGapExplained = payGap >= -0.5 && payGap <= n(t.delivery) + 0.5;
   const avg = n(t.count) > 0 ? n(t.total) / n(t.count) : 0;
   const prevTotal = n(d?.prev?.total);
   const growth = prevTotal > 0 ? Math.round(((n(t.total) - prevTotal) / prevTotal) * 100) : null;
@@ -2307,7 +2312,7 @@ const DayDashboardCard = ({ authFetch, card, inp }) => {
                 </div>
               ))}
             </div>
-            {Math.abs(paySum - n(t.total)) > 0.5 && <p className="text-[11px] text-orange-300 mt-1">⚠️ مجموع طرق الدفع ({money(paySum)}) مختلف عن إجمالي اليوم، في طريقة دفع مش متسجلة.</p>}
+            {!payGapExplained && <p className="text-[11px] text-orange-300 mt-1">⚠️ مجموع طرق الدفع ({money(paySum)}) مختلف عن إجمالي اليوم بفرق مش مفسّر برسوم التوصيل، راجع الأوردرات.</p>}
           </div>
 
           <div className="flex flex-wrap gap-2 text-xs font-bold">
@@ -2593,6 +2598,7 @@ const OpenShiftForm = ({ authFetch, onDone, pendingHandover = null }) => {
   useEffect(() => { if (pendingHandover) setCash(String(pendingHandover.amount ?? 0)); }, [pendingHandover?.shiftId]);
 
   const submit = async () => {
+    if (busy) return;
     if (cash === '' || Number(cash) < 0) return alert('اكتب الكاش اللي في الدرج دلوقتي (لو مفيش اكتب 0)');
     setBusy(true);
     try {
@@ -2889,6 +2895,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
   const num = (v) => Number(v) || 0;
 
   const addMovement = async () => {
+    if (busy) return;
     const amount = Number(mv.amount);
     const isAdvance = mv.type === 'out' && mv.kind === 'advance';
     const recipient = (mv.recipient || '').trim();
@@ -2914,6 +2921,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
   };
 
   const doClose = async () => {
+    if (busy) return;
     setBusy(true);
     try {
       const r = await authFetch('/api/shifts/close', { method: 'POST', body: JSON.stringify({ notes: notes.trim() }) });
@@ -3241,6 +3249,13 @@ const cashPartOf = (o) => {
   if (Array.isArray(o?.paymentSplit) && o.paymentSplit.length) return o.paymentSplit.filter(p => p.method === 'cash').reduce((a, p) => a + (Number(p.amount) || 0), 0);
   return o?.paymentMethod === 'cash' ? (Number(o.grandTotal) || 0) : 0;
 };
+// تطبيع رقم التليفون: +20 أو 0020 اللي اتلصقوا بيتشالوا قبل ما نقصّ لـ 11 رقم
+const normalizePhoneInput = (v) => {
+  let d = String(v || '').replace(/\D/g, '');
+  if (d.startsWith('0020')) d = d.slice(4);
+  else if (d.startsWith('20') && d.length > 11) d = d.slice(2);
+  return d.slice(0, 11);
+};
 const payText = (o) => (Array.isArray(o?.paymentSplit) && o.paymentSplit.length)
   ? o.paymentSplit.map(p => `${PAY_LABELS[p.method] || p.method} ${p.amount}`).join(' + ')
   : (PAY_LABELS[o?.paymentMethod] || o?.paymentMethod || '');
@@ -3343,11 +3358,17 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
   const [toast, setToast] = useState('');
   const stashRef = useRef(null);
   const lookedRef = useRef('');
+  // رقم منع تكرار ثابت لنفس الأوردر: لو الإرسال فشل والكاشير حاولت تاني، السيرفر بيرجّع نفس الأوردر بدل ما يكرره
+  const clientRefRef = useRef({ sig: '', ref: '' });
+  const getSubmitClientRef = (sig) => {
+    if (clientRefRef.current.sig !== sig) clientRefRef.current = { sig, ref: `pos-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` };
+    return clientRefRef.current.ref;
+  };
   const [custLookup, setCustLookup] = useState(null);
 
   // أول ما يتكتب رقم من 11 رقم: لو العميل موجود عندنا بنملّي الاسم والعنوان والمنطقة لوحدهم
   useEffect(() => {
-    const digits = custPhone.replace(/\D/g, '');
+    const digits = normalizePhoneInput(custPhone);
     if (digits.length !== 11) { lookedRef.current = ''; setCustLookup(null); return; }
     if (editOrder || lookedRef.current === digits) return;
     lookedRef.current = digits;
@@ -3357,11 +3378,12 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
         const d = await r.json().catch(() => ({}));
         if (d && d.found) {
           setCustLookup(d);
-          if (d.name) setCustName(d.name);
+          // بنملّي الفراغات بس: لو الكاشير كتبت اسم/عنوان بإيدها منمسحهمش
+          if (d.name) setCustName(prev => prev.trim() ? prev : d.name);
           if (orderType === 'delivery') {
-            if (d.address) setAddress(d.address);
+            if (d.address) setAddress(prev => prev.trim() ? prev : d.address);
             const z = zones.find(x => x.name === d.zoneName);
-            if (z) setZoneId(z._id);
+            if (z) setZoneId(prev => prev || z._id);
           }
         } else {
           setCustLookup({ found: false });
@@ -3579,7 +3601,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
         if (onEditSaved) onEditSaved(done, data);
       }
     } catch (e) {
-      alert('النت قاطع، التعديل ما اتحفظش');
+      if (e.message === 'unauthorized') alert('انتهت الجلسة، سجّل دخول تاني'); else alert('تعذر الوصول للسيرفر، اتأكد من النت وحاول تاني.');
     }
     setBusy(false);
   };
@@ -3590,14 +3612,16 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     if (shiftOpen === false) return alert('افتح وردية الأول');
     if (cart.length === 0) return alert('السلة فاضية');
     if (orderType === 'talabat' && !talabatNo.trim()) return alert('اكتب رقم أوردر طلبات');
-    const phoneDigits = custPhone.replace(/\D/g, '');
+    const phoneDigits = normalizePhoneInput(custPhone);
     if (orderType === 'delivery' && !phoneDigits) return alert('اكتب رقم تليفون العميل الأول (إجباري في الدليفري)');
     if (phoneDigits && (phoneDigits.length < 8 || phoneDigits.length > 15)) return alert('رقم العميل غير صحيح. صححه أو امسحه (اختياري في الاستلام وطلبات)');
     if (orderType === 'delivery' && !address.trim()) return alert('اكتب عنوان التوصيل');
     if (pay === 'split') { const se = splitError(splitRows, total); if (se) return alert(se); }
     setBusy(true);
     try {
+      const submitSig = JSON.stringify([cart.map(l => [l._id, l.qty, l.unit, l.modifiersInfo, l.notes]), orderType, pay, splitRows, discount, custPhone, fee, total]);
       const payload = {
+        clientRef: getSubmitClientRef(submitSig),
         ...(pay === 'split' ? { paymentSplit: splitRows.map(r => ({ method: r.method, amount: Number(r.amount) })) } : {}),
         orderType, paymentMethod: pay, talabatNo: talabatNo.trim(), discountPercent: discount,
         discountReason: discountReason.trim(), orderNote: orderNote.trim(),
@@ -3613,10 +3637,10 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
       } else {
         onCreated(data);
         setToast(`✅ أوردر #${data.orderId} اتبعت للمطبخ`);
-        setCart([]); setDiscount(0); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setCustLookup(null);
+        setCart([]); setDiscount(0); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setCustLookup(null); clientRefRef.current = { sig: '', ref: '' };
       }
     } catch (e) {
-      alert('النت قاطع، الأوردر ما اتسجلش. استخدم الكاشير الأوفلاين لحد ما النت يرجع.');
+      if (e.message === 'unauthorized') alert('انتهت الجلسة، سجّل دخول تاني'); else alert('تعذر الوصول للسيرفر، اتأكد من النت وحاول تاني — لو الأوردر اتسجل قبل كده مش هيتكرر.');
     }
     setBusy(false);
   };
@@ -3773,14 +3797,14 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
 
           {orderType !== 'delivery' && !editOrder && (
             <div className="space-y-1">
-              <input value={custPhone} onChange={(e) => setCustPhone(e.target.value.replace(/[^\d+]/g, ''))} placeholder="📞 رقم العميل " className={inp} dir="ltr" />
+              <input value={custPhone} onChange={(e) => setCustPhone(normalizePhoneInput(e.target.value))} placeholder="📞 رقم العميل " className={inp} dir="ltr" />
               {custLookup?.found && <p className="text-[11px] text-green-400 font-bold">✅ عميل قديم{custLookup.name ? `: ${custLookup.name}` : ''}</p>}
             </div>
           )}
 
           {orderType === 'delivery' && (
             <div className="space-y-2">
-              <input autoFocus={!editOrder} value={custPhone} onChange={(e) => setCustPhone(e.target.value.replace(/[^\d+]/g, ''))} placeholder="📞 رقم التليفون الأول * (إجباري)" className={inp + (custPhone ? '' : ' !border-red-500/60')} dir="ltr" />
+              <input autoFocus={!editOrder} value={custPhone} onChange={(e) => setCustPhone(normalizePhoneInput(e.target.value))} placeholder="📞 رقم التليفون الأول * (إجباري)" className={inp + (custPhone ? '' : ' !border-red-500/60')} dir="ltr" />
               {custLookup?.found && <p className="text-[11px] text-green-400 font-bold">✅ عميل قديم{custLookup.ordersCount > 0 ? ` (${custLookup.ordersCount} أوردر)` : ''} — الاسم والعنوان اتملّوا، راجعهم</p>}
               {custLookup && custLookup.found === false && <p className="text-[11px] text-zinc-400 font-bold">عميل جديد — اكتب بياناته</p>}
               <input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="اسم العميل (اختياري)" className={inp} />
@@ -3924,6 +3948,11 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
   const [cancelPin, setCancelPin] = useState('');
   const [payModal, setPayModal] = useState(null);
   const [paySplitRows, setPaySplitRows] = useState(null);
+  const orderBusyRef = useRef(new Set());
+  const [busyOrderIds, setBusyOrderIds] = useState([]);
+  const driverBusyRef = useRef(false);
+  const cancelBusyRef = useRef(false);
+  const payBusyRef = useRef(false);
 
   const [staff, setStaff] = useState([]);
   const [newName, setNewName] = useState('');
@@ -3963,10 +3992,6 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
   };
 
   const requestPrint = (ord, type = 'customer') => {
-    if (type !== 'report' && token && (ord?._id || ord?.orderId)) {
-      const printId = ord._id || ord.orderId;
-      void authFetch(`/api/orders/${printId}/printed`, { method: 'POST' }).catch(() => {});
-    }
     printQueueRef.current.push({ order: ord, type });
     setPrintTick(t => t + 1);
   };
@@ -3988,11 +4013,18 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
         return;
       }
     }
-    const fresh = list.filter(o => !printed.has(o._id || o.orderId)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    // نتخطى الأوردرات المتعلّمة "اتطبعت" على السيرفر (جهاز تاني طبعها) مش القايمة المحلية بس
+    const fresh = list.filter(o => !o.printedAt && !printed.has(o._id || o.orderId)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     if (fresh.length === 0) return;
     fresh.forEach(o => {
-      printed.add(o._id || o.orderId);
-      if (autoPrintRef.current && o.status !== 'completed' && o.status !== 'cancelled') requestPrint(o, 'kitchen');
+      const terminal = o.status === 'completed' || o.status === 'cancelled';
+      if (autoPrintRef.current && !terminal) {
+        printed.add(o._id || o.orderId);
+        requestPrint(o, 'kitchen');
+      } else if (terminal) {
+        printed.add(o._id || o.orderId);
+      }
+      // الطباعة التلقائية مقفولة وأوردر نشط: منعلّموش، عشان يطبع لما تشتغل تاني (كان بيضيع ورق المطبخ)
     });
     savePrinted();
   };
@@ -4006,6 +4038,11 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
     if (!printJob) return;
     const t1 = setTimeout(() => {
       try { window.print(); } catch (e) {}
+      // "اتطبع" بتتسجل بعد تشغيل الطباعة فقط، مش قبلها (عشان إلغاء الطباعة ما يعلّمش الأوردر مطبوع)
+      const ord = printJob.order;
+      if (printJob.type !== 'report' && token && (ord?._id || ord?.orderId)) {
+        void authFetch(`/api/orders/${ord._id || ord.orderId}/printed`, { method: 'POST' }).catch(() => {});
+      }
       setTimeout(() => setPrintJob(null), 1200);
     }, 400);
     return () => clearTimeout(t1);
@@ -4195,20 +4232,29 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
   }, [token, cashierTab]);
 
   const updateOrderStatus = async (orderId, newStatus, extra = {}) => {
+    const busyKey = String(orderId);
+    if (orderBusyRef.current.has(busyKey)) return false;
+    orderBusyRef.current.add(busyKey);
+    setBusyOrderIds(prev => [...prev, busyKey]);
     try {
-      const res = await authFetch(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ status: newStatus, ...extra }) });
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        alert(d.error || 'حصل خطأ، حاول تاني');
+      try {
+        const res = await authFetch(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ status: newStatus, ...extra }) });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          alert(d.error || 'حصل خطأ، حاول تاني');
+          fetchOrders();
+          return false;
+        }
         fetchOrders();
+        refreshShift();
+        return true;
+      } catch (err) {
+        if (err.message !== 'unauthorized') alert('تعذر الاتصال بالسيرفر، حاول تاني');
         return false;
       }
-      fetchOrders();
-      refreshShift();
-      return true;
-    } catch (err) {
-      if (err.message !== 'unauthorized') alert('تعذر الاتصال بالسيرفر، حاول تاني');
-      return false;
+    } finally {
+      orderBusyRef.current.delete(busyKey);
+      setBusyOrderIds(prev => prev.filter(k => k !== busyKey));
     }
   };
 
@@ -4235,6 +4281,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
   };
   const readDrivers = () => { try { const a = JSON.parse(localStorage.getItem('nossKoftaDrivers')); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
   const confirmDriver = async () => {
+    if (driverBusyRef.current) return;
     const ord = driverModal;
     if (!ord) return;
     const extra = {};
@@ -4248,8 +4295,9 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
       if (!['cash', 'visa', 'instapay'].includes(completionPay)) return alert('اختار طريقة الدفع قبل تأكيد التسليم');
       extra.paymentMethod = completionPay;
     }
+    driverBusyRef.current = true;
     setDriverModal(null);
-    await doFinish(ord, extra);
+    try { await doFinish(ord, extra); } finally { driverBusyRef.current = false; }
   };
   const knownDrivers = Array.from(new Set([...readDrivers(), ...orders.map(o => o.driverName).filter(Boolean)])).slice(0, 8);
 
@@ -4258,36 +4306,42 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
     setCancelModal({ ...ord, requiresPin: !isAdmin && (ord.source === 'pos' || !!ord.printedAt || !!ord.paymentMethod) });
   };
   const submitCancel = async () => {
+    if (cancelBusyRef.current) return;
     const reason = cancelReason.trim();
     if (reason.length < 2) return alert('اكتب سبب الإلغاء');
     if (cancelModal?.requiresPin && !cancelPin.trim()) return alert('اكتب PIN الأدمن لإلغاء الأوردر المدفوع أو المطبوع');
+    cancelBusyRef.current = true;
     const ord = cancelModal;
     setCancelModal(null);
-    await updateOrderStatus(ord._id || ord.orderId, 'cancelled', { cancelReason: reason, adminPin: ord.requiresPin ? cancelPin.trim() : undefined });
+    try { await updateOrderStatus(ord._id || ord.orderId, 'cancelled', { cancelReason: reason, adminPin: ord.requiresPin ? cancelPin.trim() : undefined }); } finally { cancelBusyRef.current = false; }
     setCancelPin('');
   };
 
   const saveSplitPayment = async (ord) => {
+    if (payBusyRef.current) return;
     const se = splitError(paySplitRows || [], Number(ord.grandTotal) || 0);
     if (se) return alert(se);
     const rows = paySplitRows.map(r => ({ method: r.method, amount: Number(r.amount) }));
+    payBusyRef.current = true;
     setPayModal(null); setPaySplitRows(null);
     try {
       const res = await authFetch(`/api/pos/orders/${ord._id || ord.orderId}`, { method: 'PUT', body: JSON.stringify({ paymentMethod: 'split', paymentSplit: rows }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) return alert(d.error || 'تعذر حفظ التقسيم');
       fetchOrders(); refreshShift();
-    } catch (err) { if (err.message !== 'unauthorized') alert('تعذر الاتصال بالسيرفر'); }
+    } catch (err) { if (err.message !== 'unauthorized') alert('تعذر الاتصال بالسيرفر'); } finally { payBusyRef.current = false; }
   };
   const changePayment = async (ord, method) => {
+    if (payBusyRef.current) return;
     setPayModal(null); setPaySplitRows(null);
     if (!method || method === ord.paymentMethod) return;
+    payBusyRef.current = true;
     try {
       const res = await authFetch(`/api/pos/orders/${ord._id || ord.orderId}`, { method: 'PUT', body: JSON.stringify({ paymentMethod: method }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) return alert(d.error || 'تعذر تغيير طريقة الدفع');
       fetchOrders(); refreshShift();
-    } catch (err) { if (err.message !== 'unauthorized') alert('تعذر الاتصال بالسيرفر'); }
+    } catch (err) { if (err.message !== 'unauthorized') alert('تعذر الاتصال بالسيرفر'); } finally { payBusyRef.current = false; }
   };
 
   const handleOrderEdited = (ord, info) => {
@@ -4378,7 +4432,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
     doneOrders.forEach(o => { const k = dayKeyOf(o.createdAt); (m[k] = m[k] || []).push(o); });
     return Object.keys(m).sort().reverse().map(k => ({
       key: k,
-      label: dayLabelOf(m[k][0].createdAt),
+      label: dayLabelOf(`${k}T12:00:00`),
       orders: [...m[k]].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
       ...sumOrders(m[k])
     }));
@@ -4433,13 +4487,13 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
 
         <div className="flex gap-2">
           {ord.status === 'pending' && (
-            <button onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">✅ قبول الأوردر (إيقاف الصوت)</button>
+            <button disabled={busyOrderIds.includes(String(ord._id || ord.orderId))} onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')} className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">✅ قبول الأوردر (إيقاف الصوت)</button>
           )}
           {ord.status === 'accepted' && ord.awaitingCash && (
-            <button onClick={() => receiveCash(ord)} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">💵 استلمت النقدية من السواق ({Math.max(0, cashPartOf(ord) - (Number(ord.deliveryFee) || 0))} ج)</button>
+            <button disabled={busyOrderIds.includes(String(ord._id || ord.orderId))} onClick={() => receiveCash(ord)} className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">💵 استلمت النقدية من السواق ({Math.max(0, cashPartOf(ord) - (Number(ord.deliveryFee) || 0))} ج)</button>
           )}
           {ord.status === 'accepted' && !ord.awaitingCash && (
-            <button onClick={() => finishOrder(ord)} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-bold transition">{ord.orderType === 'delivery' ? '🛵 جاهز للتوصيل' : '🏁 تم التسليم'}</button>
+            <button disabled={busyOrderIds.includes(String(ord._id || ord.orderId))} onClick={() => finishOrder(ord)} className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-2.5 rounded-xl text-sm font-bold transition">{ord.orderType === 'delivery' ? '🛵 جاهز للتوصيل' : '🏁 تم التسليم'}</button>
           )}
           {ord.status === 'cancelled' && <span className="flex-1 text-center text-zinc-400 text-xs font-bold py-2">الأوردر ملغي</span>}
           {ord.status === 'completed' && <span className="flex-1 text-center text-green-400 text-xs font-bold py-2">تم تسليم الأوردر</span>}
