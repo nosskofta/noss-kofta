@@ -57,25 +57,28 @@ const unlockChatAudio = () => {
     if (chatAudioCtx.state === 'suspended') chatAudioCtx.resume();
   } catch {}
 };
-const playChatBeep = () => {
+// صوت رسايل الشات — مختلف تماماً عن جرس الأوردرات: نغمتان سريعتان صاعدتان
+// (دو6 ثم صول6) بموجة triangle وصوت أهدى ومدة أقصر، عشان اللي يسمعه يعرف
+// إن دي رسالة مش أوردر. نفس الصوت عند العميل وعند الكاشير.
+const playChatSound = (ctx) => {
   try {
-    const ctx = chatAudioCtx;
-    if (!ctx || ctx.state !== 'running') { unlockChatAudio(); return; }
-    const beep = (start, freq) => {
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    const chime = (start, freq) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'sine';
+      osc.type = 'triangle';
       osc.frequency.value = freq;
       osc.connect(gain);
       gain.connect(ctx.destination);
       const t0 = ctx.currentTime + start;
       gain.gain.setValueAtTime(0.0001, t0);
-      gain.gain.exponentialRampToValueAtTime(0.5, t0 + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.35);
+      gain.gain.exponentialRampToValueAtTime(0.4, t0 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
       osc.start(t0);
-      osc.stop(t0 + 0.4);
+      osc.stop(t0 + 0.15);
     };
-    beep(0, 880); beep(0.35, 1174);
+    chime(0, 1046.5); chime(0.14, 1568);
   } catch {}
 };
 const chatTime = (v) => (v ? new Date(v).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '');
@@ -420,10 +423,10 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
         <div className="absolute inset-0 bg-gradient-to-t from-[#12080A] via-[#12080A]/50 to-transparent"></div>
         
         <div className="relative z-10 text-center px-4 max-w-4xl mx-auto flex flex-col items-center">
-          <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FFD700] via-[#E6C687] to-[#C5A059] drop-shadow-[0_5px_5px_rgba(0,0,0,0.9)] mb-4">
+          <h1 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#FFD700] via-[#E6C687] to-[#C5A059] drop-shadow-[0_5px_5px_rgba(0,0,0,0.9)] mb-4 nkfx-rise">
             {title}
           </h1>
-          <Link to="/menu" className="inline-block bg-[#800020] hover:bg-[#990026] text-white border-2 border-[#FFD700] px-8 py-3 text-xl font-black rounded-2xl hover:scale-105 transition shadow-[0_0_30px_rgba(255,215,0,0.4)] mb-6">
+          <Link to="/menu" className="inline-block bg-[#800020] hover:bg-[#990026] text-white border-2 border-[#FFD700] px-8 py-3 text-xl font-black rounded-2xl hover:scale-105 transition shadow-[0_0_30px_rgba(255,215,0,0.4)] mb-6 active:scale-95 nkfx-rise">
             {t.orderNow}
           </Link>
 
@@ -451,12 +454,12 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
           <div className="relative overflow-hidden px-4">
             {offerItems.length > 3 && (
               <>
-                <button onClick={prevSlide} className="absolute left-0 top-1/2 -translate-y-1/2 z-20 bg-[#800020] text-white w-10 h-10 rounded-full font-black text-xl flex items-center justify-center shadow-lg hover:bg-[#990026] transition">❮</button>
-                <button onClick={nextSlide} className="absolute right-0 top-1/2 -translate-y-1/2 z-20 bg-[#800020] text-white w-10 h-10 rounded-full font-black text-xl flex items-center justify-center shadow-lg hover:bg-[#990026] transition">❯</button>
+                <button onClick={prevSlide} className="absolute left-0 top-1/2 -translate-y-1/2 z-20 bg-[#800020] text-white w-10 h-10 rounded-full font-black text-xl flex items-center justify-center shadow-lg hover:bg-[#990026] transition active:scale-90">❮</button>
+                <button onClick={nextSlide} className="absolute right-0 top-1/2 -translate-y-1/2 z-20 bg-[#800020] text-white w-10 h-10 rounded-full font-black text-xl flex items-center justify-center shadow-lg hover:bg-[#990026] transition active:scale-90">❯</button>
               </>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 transition-all duration-300">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 transition-all duration-300 nkfx-stagger">
               {offerItems.slice(currentIndex, currentIndex + 3).map((item) => {
                 const finalPrice = getDiscountedPrice(item.price, item.discount);
                 const cartItem = cart.find(i => i.name === item.name);
@@ -466,7 +469,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                 return (
                   <div 
                     key={item._id} 
-                    className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative pt-8 ${soldOut ? 'opacity-60' : ''}`}
+                    className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative pt-8 nkfx-rise ${soldOut ? 'opacity-60' : ''}`}
                   >
                     {soldOut && (
                       <div className="absolute top-3 left-3 z-30 bg-red-600 text-white text-sm font-black px-3 py-1 rounded-full shadow-lg">⛔ غير متاح حالياً</div>
@@ -497,7 +500,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                       {soldOut ? (
                         <button disabled className="bg-zinc-700 text-zinc-300 px-4 py-2 rounded-xl font-bold text-sm cursor-not-allowed">خلص حالياً ⛔</button>
                       ) : quantity === 0 ? (
-                        <button onClick={() => handleOpenItemDetails(item)} className="bg-[#800020] text-white px-4 py-2 rounded-xl font-bold text-sm shadow hover:bg-[#990026] transition">
+                        <button onClick={() => handleOpenItemDetails(item)} className="bg-[#800020] text-white px-4 py-2 rounded-xl font-bold text-sm shadow hover:bg-[#990026] transition active:scale-[0.97]">
                           أضف للسلة 🛒
                         </button>
                       ) : (
@@ -505,9 +508,9 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                           <button onClick={() => {
                             const idx = cart.findIndex(i => i.name === item.name);
                             if (idx !== -1) { const nc = [...cart]; nc.splice(idx, 1); setCart(nc); }
-                          }} className="text-[#FFD700] font-black px-2 hover:text-white">-</button>
+                          }} className="text-[#FFD700] font-black px-2 hover:text-white transition active:scale-90">-</button>
                           <span className="font-black text-white">{quantity}</span>
-                          <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="text-[#FFD700] font-black px-2 hover:text-white">+</button>
+                          <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="text-[#FFD700] font-black px-2 hover:text-white transition active:scale-90">+</button>
                         </div>
                       )}
                     </div>
@@ -540,7 +543,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
       <div className="flex gap-3 overflow-x-auto pb-4 mb-12 scrollbar-none sticky top-20 bg-[#12080A]/95 py-3 z-30 backdrop-blur-md">
         <button
           onClick={() => setSelectedCategory(lang === 'ar' ? 'الكل' : 'All')}
-          className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap transition border ${
+          className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap transition duration-300 active:scale-95 border ${
             selectedCategory === 'الكل' || selectedCategory === 'All'
               ? 'bg-[#800020] text-white border-[#FFD700] shadow-[0_0_15px_rgba(128,0,32,0.5)]' 
               : 'bg-[#1C0D10] text-zinc-300 border-[#3A1218] hover:border-[#800020]'
@@ -552,7 +555,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
           <button
             key={cat._id}
             onClick={() => setSelectedCategory(cat.name)}
-            className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap transition border ${
+            className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap transition duration-300 active:scale-95 border ${
               selectedCategory === cat.name 
                 ? 'bg-[#800020] text-white border-[#FFD700] shadow-[0_0_15px_rgba(128,0,32,0.5)]' 
                 : 'bg-[#1C0D10] text-zinc-300 border-[#3A1218] hover:border-[#800020]'
@@ -586,7 +589,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                   {cat.name}
                 </h3>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8 nkfx-stagger">
                   {catItems.map(item => {
                     const finalPrice = getDiscountedPrice(item.price, item.discount);
                     const cartItem = cart.find(i => i.name === item.name);
@@ -596,7 +599,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                     return (
                       <div 
                         key={item._id} 
-                        className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative pt-8 ${soldOut ? 'opacity-60' : ''}`}
+                        className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative pt-8 nkfx-rise ${soldOut ? 'opacity-60' : ''}`}
                       >
                         {soldOut && (
                           <div className="absolute top-3 left-3 z-30 bg-red-600 text-white text-sm font-black px-3 py-1 rounded-full shadow-lg">⛔ غير متاح حالياً</div>
@@ -627,12 +630,12 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                           {soldOut ? (
                             <button disabled className="w-full bg-zinc-700 text-zinc-300 font-bold py-2.5 rounded-xl cursor-not-allowed">خلص حالياً ⛔</button>
                           ) : item.type === 'box' ? (
-                            <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow">
+                            <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow active:scale-[0.97]">
                               {t.customizeBox}
                             </button>
                           ) : (
                             quantity === 0 ? (
-                              <button onClick={() => handleOpenItemDetails(item)} className="w-full border-2 border-[#800020] text-[#FFD700] font-bold py-2.5 rounded-xl hover:bg-[#800020] hover:text-white transition shadow">
+                              <button onClick={() => handleOpenItemDetails(item)} className="w-full border-2 border-[#800020] text-[#FFD700] font-bold py-2.5 rounded-xl hover:bg-[#800020] hover:text-white transition shadow active:scale-[0.97]">
                                 {t.details} 🛒
                               </button>
                             ) : (
@@ -642,9 +645,9 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                                   <button onClick={() => {
                                     const idx = cart.findIndex(i => i.name === item.name);
                                     if (idx !== -1) { const nc = [...cart]; nc.splice(idx, 1); setCart(nc); }
-                                  }} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white">-</button>
+                                  }} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white transition active:scale-90">-</button>
                                   <span className="font-black text-white">{quantity}</span>
-                                  <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white">+</button>
+                                  <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white transition active:scale-90">+</button>
                                 </div>
                               </div>
                             )
@@ -1837,7 +1840,7 @@ const MyOrdersPage = ({ cart, setCart }) => {
       <section className="px-4 sm:px-8 py-12 max-w-lg mx-auto min-h-[60vh] bg-[#12080A] text-white">
         <h2 className="text-3xl font-black text-[#FFD700] mb-2 text-center">📋 طلباتي</h2>
         <p className="text-zinc-400 text-sm text-center mb-8 leading-relaxed">ادخل برقم تليفونك والرقم السري، وهتلاقي عنوانك وطلباتك القديمة.<br />لسه معندكش رقم سري؟ اكتبه وانت بتطلب أول أوردر وهيتحفظ لحسابك.</p>
-        <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] space-y-4 shadow-xl">
+        <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] space-y-4 shadow-xl nkfx-rise">
           <div>
             <label className="block text-xs text-zinc-300 mb-1">رقم التليفون (11 رقم)</label>
             <input type="text" maxLength="11" placeholder="010xxxxxxxx" value={loginPhone} onChange={(e) => setLoginPhone(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-wider" />
@@ -1847,7 +1850,7 @@ const MyOrdersPage = ({ cart, setCart }) => {
             <input type="password" inputMode="numeric" maxLength="6" placeholder="••••" value={loginPin} onChange={(e) => setLoginPin(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-widest" />
           </div>
           {loginError && <p className="text-red-400 text-sm font-bold text-center">{loginError}</p>}
-          <button onClick={handleLogin} disabled={loginBusy} className="w-full bg-[#800020] hover:bg-[#990026] disabled:opacity-50 text-white font-black py-3.5 rounded-xl transition shadow-lg">دخول</button>
+          <button onClick={handleLogin} disabled={loginBusy} className="w-full bg-[#800020] hover:bg-[#990026] disabled:opacity-50 text-white font-black py-3.5 rounded-xl transition shadow-lg active:scale-[0.97]">دخول</button>
           <p className="text-center text-zinc-500 text-xs">نسيت الرقم السري؟ كلّم المطعم وهنمسحهولك وتعمل واحد جديد مع أوردرك الجاي.</p>
           <Link to="/menu" className="block text-center text-[#FFD700] underline text-sm">أو اطلب من غير حساب ← المنيو</Link>
         </div>
@@ -1859,14 +1862,14 @@ const MyOrdersPage = ({ cart, setCart }) => {
     <section className="px-4 sm:px-8 py-12 max-w-4xl mx-auto min-h-screen bg-[#12080A] text-white">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-3xl font-black text-[#FFD700]">📋 طلباتي</h2>
-        <button onClick={handleLogout} className="text-zinc-300 bg-[#1C0D10] border border-[#3A1218] px-4 py-2 rounded-xl text-sm font-bold">تسجيل الخروج</button>
+        <button onClick={handleLogout} className="text-zinc-300 bg-[#1C0D10] border border-[#3A1218] px-4 py-2 rounded-xl text-sm font-bold transition active:scale-95">تسجيل الخروج</button>
       </div>
 
       {loading && <p className="text-center text-zinc-400">جارٍ التحميل...</p>}
       {loadError && <p className="text-center text-red-400 font-bold mb-4">{loadError}</p>}
 
       {profile && (
-        <div className="bg-[#1C0D10] rounded-2xl p-5 border border-[#3A1218] mb-6 shadow-xl">
+        <div className="bg-[#1C0D10] rounded-2xl p-5 border border-[#3A1218] mb-6 shadow-xl nkfx-rise">
           <h3 className="text-lg font-black text-[#FFD700] mb-3">👤 بياناتك المحفوظة</h3>
           <p className="text-sm text-zinc-300">الاسم: <strong className="text-white">{profile.name || '-'}</strong></p>
           <p className="text-sm text-zinc-300">التليفون: <strong className="text-white" dir="ltr">{profile.phone}</strong></p>
@@ -1876,14 +1879,14 @@ const MyOrdersPage = ({ cart, setCart }) => {
         </div>
       )}
 
-      {reorderNote && <div className="bg-[#FFD700]/10 border border-[#FFD700]/40 text-[#FFD700] rounded-xl p-3 text-sm font-bold mb-4">{reorderNote}</div>}
-      {ratingMsg && <div className="bg-green-500/10 border border-green-500/40 text-green-400 rounded-xl p-3 text-sm font-bold mb-4">{ratingMsg}</div>}
+      {reorderNote && <div className="bg-[#FFD700]/10 border border-[#FFD700]/40 text-[#FFD700] rounded-xl p-3 text-sm font-bold mb-4 nkfx-fade">{reorderNote}</div>}
+      {ratingMsg && <div className="bg-green-500/10 border border-green-500/40 text-green-400 rounded-xl p-3 text-sm font-bold mb-4 nkfx-fade">{ratingMsg}</div>}
 
       <h3 className="text-xl font-bold text-[#FFD700] mb-4">طلباتك اللي فاتت</h3>
       {!loading && orders.length === 0 && <p className="text-zinc-400 text-center py-8">لسه مفيش طلبات على الرقم ده.</p>}
-      <div className="space-y-4">
+      <div className="space-y-4 nkfx-stagger">
         {orders.map((o) => (
-          <div key={o.orderId} className="bg-[#1C0D10] rounded-2xl p-5 border border-[#3A1218] shadow-xl">
+          <div key={o.orderId} className="bg-[#1C0D10] rounded-2xl p-5 border border-[#3A1218] shadow-xl nkfx-rise">
             <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
               <span className="font-black text-[#FFD700]">#{o.orderId}</span>
               <span className="text-xs bg-[#12080A] border border-[#3A1218] px-2.5 py-1 rounded-full font-bold">{ORDER_STATUS_AR[o.status] || o.status}</span>
@@ -1902,20 +1905,20 @@ const MyOrdersPage = ({ cart, setCart }) => {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => handleReorder(o)} className="flex-1 min-w-[140px] bg-[#800020] hover:bg-[#990026] text-white font-black py-2.5 rounded-xl text-sm transition">🔁 اطلب تاني</button>
+              <button onClick={() => handleReorder(o)} className="flex-1 min-w-[140px] bg-[#800020] hover:bg-[#990026] text-white font-black py-2.5 rounded-xl text-sm transition active:scale-[0.97]">🔁 اطلب تاني</button>
             </div>
             {o.status === 'completed' && (
               <div className="mt-4 pt-4 border-t border-[#3A1218]">
                 <p className="text-sm font-bold text-[#FFD700] mb-2">قيّم الأوردر:</p>
                 <div className="flex gap-1.5 mb-3">
                   {[1, 2, 3, 4, 5].map((s) => (
-                    <button key={s} onClick={() => setRatings((prev) => ({ ...prev, [o.orderId]: { ...(prev[o.orderId] || {}), stars: s } }))} className="text-3xl leading-none">
+                    <button key={s} onClick={() => setRatings((prev) => ({ ...prev, [o.orderId]: { ...(prev[o.orderId] || {}), stars: s } }))} className="text-3xl leading-none transition hover:scale-110 active:scale-125">
                       {((ratings[o.orderId]?.stars) || 0) >= s ? '⭐' : '☆'}
                     </button>
                   ))}
                 </div>
                 <textarea rows="2" maxLength="300" placeholder="تعليق اختياري..." value={ratings[o.orderId]?.comment || ''} onChange={(e) => setRatings((prev) => ({ ...prev, [o.orderId]: { ...(prev[o.orderId] || {}), comment: e.target.value } }))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm mb-2" />
-                <button onClick={() => saveRating(o.orderId)} disabled={ratingBusy === o.orderId} className="bg-[#FFD700] text-black font-black px-6 py-2.5 rounded-xl text-sm disabled:opacity-50">
+                <button onClick={() => saveRating(o.orderId)} disabled={ratingBusy === o.orderId} className="bg-[#FFD700] text-black font-black px-6 py-2.5 rounded-xl text-sm disabled:opacity-50 transition active:scale-[0.97]">
                   {o.rating ? 'تعديل التقييم' : 'إرسال التقييم'}
                 </button>
                 {o.rating && <span className="text-xs text-zinc-400 mr-3">تقييمك الحالي: {'★'.repeat(o.rating.stars)}{'☆'.repeat(5 - o.rating.stars)}</span>}
@@ -1925,14 +1928,14 @@ const MyOrdersPage = ({ cart, setCart }) => {
         ))}
       </div>
 
-      <div className="bg-[#1C0D10] rounded-2xl p-5 border border-[#3A1218] mt-8 shadow-xl">
+      <div className="bg-[#1C0D10] rounded-2xl p-5 border border-[#3A1218] mt-8 shadow-xl nkfx-rise">
         <h3 className="text-lg font-black text-[#FFD700] mb-3">🔐 تغيير الرقم السري</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input type="password" inputMode="numeric" maxLength="6" placeholder="الرقم السري القديم" value={oldPin} onChange={(e) => setOldPin(e.target.value.replace(/\D/g, ''))} className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-widest" />
           <input type="password" inputMode="numeric" maxLength="6" placeholder="الرقم السري الجديد (4-6 أرقام)" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-widest" />
         </div>
         {pinMsg && <p className="text-sm font-bold mt-3 text-center text-zinc-300">{pinMsg}</p>}
-        <button onClick={handleChangePin} disabled={pinBusy} className="mt-3 bg-[#1C0D10] border border-[#FFD700] text-[#FFD700] font-black px-6 py-2.5 rounded-xl text-sm disabled:opacity-50">تغيير الرقم السري</button>
+        <button onClick={handleChangePin} disabled={pinBusy} className="mt-3 bg-[#1C0D10] border border-[#FFD700] text-[#FFD700] font-black px-6 py-2.5 rounded-xl text-sm disabled:opacity-50 transition active:scale-[0.97]">تغيير الرقم السري</button>
       </div>
     </section>
   );
@@ -2140,7 +2143,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
   if (placedOrderId) {
     return (
       <section className="px-8 py-12 max-w-4xl mx-auto min-h-[60vh] bg-[#12080A] text-white flex flex-col items-center justify-center">
-        <div className="bg-[#1C0D10] border border-[#25D366] rounded-2xl p-10 text-center shadow-[0_0_20px_rgba(37,211,102,0.2)] w-full">
+        <div className="bg-[#1C0D10] border border-[#25D366] rounded-2xl p-10 text-center shadow-[0_0_20px_rgba(37,211,102,0.2)] nkfx-panel w-full">
           <div className="text-7xl mb-4">✅</div>
           <h2 className="text-3xl font-black text-[#25D366] mb-4">تم إرسال طلبك بنجاح!</h2>
           <p className="text-xl mb-6 text-zinc-300">رقم الأوردر بتاعك هو:</p>
@@ -2151,7 +2154,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
           {accountSaved && <p className="text-sm text-green-400 font-bold mb-8">🔐 بياناتك اتحفظت في حسابك — المرة الجاية ادخل من «طلباتي» وهتلاقي عنوانك وطلباتك جاهزة.</p>}
           <button 
             onClick={() => setPlacedOrderId(null)} 
-            className="text-white bg-[#800020] hover:bg-[#990026] px-8 py-3 rounded-xl font-bold transition shadow-lg"
+            className="text-white bg-[#800020] hover:bg-[#990026] px-8 py-3 rounded-xl font-bold transition shadow-lg active:scale-[0.97]"
           >
             رجوع للسلة
           </button>
@@ -2165,18 +2168,18 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
       <h2 className="text-3xl font-bold text-[#FFD700] mb-8 border-b border-[#3A1218] pb-4">{t.cart}</h2>
       
       {cart.length === 0 ? (
-        <div className="border border-[#3A1218] bg-[#1C0D10] rounded-2xl p-10 text-center shadow-xl">
+        <div className="border border-[#3A1218] bg-[#1C0D10] rounded-2xl p-10 text-center shadow-xl nkfx-rise">
           <div className="text-zinc-600 text-6xl mb-4">🛒</div>
           <h2 className="text-2xl font-bold text-zinc-400 mb-4">{t.emptyCart}</h2>
           <Link to="/menu" className="text-[#FFD700] underline hover:text-white">{t.backToMenu}</Link>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] shadow-xl">
+          <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] shadow-xl nkfx-rise">
             <h3 className="text-xl font-bold text-[#FFD700] mb-4">محتويات السلة</h3>
             <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
               {groupedCart.map((item, index) => (
-                <div key={index} className="flex justify-between items-center border-b border-[#3A1218] pb-3">
+                <div key={index} className="flex justify-between items-center border-b border-[#3A1218] pb-3 nkfx-fade">
                   <div>
                     <h4 className="text-base font-bold text-white">{item.name}</h4>
                     <p className="text-[#FFD700] font-bold text-sm">{item.price * item.quantity} ج</p>
@@ -2184,12 +2187,12 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
                   
                   <div className="flex items-center gap-3">
                     <div className="flex items-center bg-[#12080A] border border-[#3A1218] rounded-xl px-2 py-1 gap-3">
-                      <button onClick={() => handleDecrease(item.name)} className="text-[#FFD700] font-black text-lg hover:text-white">-</button>
+                      <button onClick={() => handleDecrease(item.name)} className="text-[#FFD700] font-black text-lg hover:text-white transition active:scale-90">-</button>
                       <span className="font-black text-white">{item.quantity}</span>
-                      <button onClick={() => handleIncrease(item.name)} className="text-[#FFD700] font-black text-lg hover:text-white">+</button>
+                      <button onClick={() => handleIncrease(item.name)} className="text-[#FFD700] font-black text-lg hover:text-white transition active:scale-90">+</button>
                     </div>
                     
-                    <button onClick={() => handleRemoveCompletely(item.name)} className="text-red-400 bg-red-500/10 px-2.5 py-1.5 rounded-lg text-xs font-bold hover:bg-red-500/20">❌</button>
+                    <button onClick={() => handleRemoveCompletely(item.name)} className="text-red-400 bg-red-500/10 px-2.5 py-1.5 rounded-lg text-xs font-bold hover:bg-red-500/20 transition active:scale-90">❌</button>
                   </div>
                 </div>
               ))}
@@ -2208,7 +2211,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
           </div>
         </div>
 
-        <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] flex flex-col justify-between shadow-xl">
+        <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] flex flex-col justify-between shadow-xl nkfx-rise">
           <div className="space-y-4">
             <h3 className="text-xl font-bold text-[#FFD700] mb-2">بيانات التوصيل والاستلام</h3>
             
@@ -2216,14 +2219,14 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
               <button 
                 type="button"
                 onClick={() => setOrderType('delivery')}
-                className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'delivery' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
+                className={`py-3 rounded-xl font-bold text-sm transition active:scale-[0.97] ${orderType === 'delivery' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
               >
                 🛵 توصيل دليفري
               </button>
               <button 
                 type="button"
                 onClick={() => setOrderType('pickup')}
-                className={`py-3 rounded-xl font-bold text-sm transition ${orderType === 'pickup' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
+                className={`py-3 rounded-xl font-bold text-sm transition active:scale-[0.97] ${orderType === 'pickup' ? 'bg-[#800020] text-white border border-[#FFD700]' : 'bg-[#12080A] text-zinc-400 border border-[#3A1218]'}`}
               >
                 🏪 استلام من الفرع
               </button>
@@ -2277,7 +2280,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
         {storeClosed && (
           <div className="mt-6 bg-[#800020]/20 border border-[#800020] text-[#FFD700] rounded-xl p-4 text-sm font-bold text-center leading-relaxed">🌙 {storeStatus.message}</div>
         )}
-        <button onClick={sendOrderToWhatsApp} disabled={storeClosed} className={`w-full font-black text-lg py-4 rounded-xl transition mt-4 flex items-center justify-center gap-2 shadow-lg ${storeClosed ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-[#25D366] text-black hover:bg-[#20bd5a] cursor-pointer'}`}>
+        <button onClick={sendOrderToWhatsApp} disabled={storeClosed} className={`w-full font-black text-lg py-4 rounded-xl transition mt-4 flex items-center justify-center gap-2 shadow-lg active:scale-[0.97] ${storeClosed ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-[#25D366] text-black hover:bg-[#20bd5a] cursor-pointer'}`}>
           {storeClosed ? '🌙 الطلب مقفول دلوقتي' : t.whatsappOrder}
         </button>
       </div>
@@ -4739,7 +4742,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
       const data = await res.json();
       if (!Array.isArray(data)) return;
       const total = data.reduce((s, c) => s + (c.unread || 0), 0);
-      if (chatSeededRef.current && total > chatUnreadRef.current) playBeep();
+      if (chatSeededRef.current && total > chatUnreadRef.current) playChatSound(audioCtxRef.current);
       chatUnreadRef.current = total;
       chatSeededRef.current = true;
       setChatUnread(total);
@@ -5510,7 +5513,8 @@ const CustomerChatWidget = () => {
       if (!Array.isArray(data)) return;
       const freshStaff = data.filter(m => m.from === 'staff' && !seenRef.current.has(String(m._id)));
       if (seededRef.current && freshStaff.length > 0) {
-        playChatBeep();
+        if (chatAudioCtx && chatAudioCtx.state === 'running') playChatSound(chatAudioCtx);
+        else unlockChatAudio();
         if (!openRef.current) setUnread(u => u + freshStaff.length);
       }
       data.forEach(m => seenRef.current.add(String(m._id)));
@@ -5594,13 +5598,13 @@ const CustomerChatWidget = () => {
   return (
     <>
       {!open && (
-        <button type="button" onClick={toggleOpen} className="fixed bottom-5 left-5 z-40 w-14 h-14 rounded-full bg-[#800020] border-2 border-[#FFD700] shadow-[0_4px_20px_rgba(128,0,32,0.6)] text-2xl text-white flex items-center justify-center hover:scale-105 transition" aria-label="كلم المطعم">
+        <button type="button" onClick={toggleOpen} className="fixed bottom-5 left-5 z-40 w-14 h-14 rounded-full bg-[#800020] border-2 border-[#FFD700] shadow-[0_4px_20px_rgba(128,0,32,0.6)] text-2xl text-white flex items-center justify-center hover:scale-105 transition nkfx-panel" aria-label="كلم المطعم">
           💬
-          {unread > 0 && <span className="absolute -top-1 -right-1 bg-red-600 text-white text-xs font-black min-w-[22px] h-[22px] px-1 rounded-full flex items-center justify-center animate-pulse">{unread}</span>}
+          {unread > 0 && <span key={unread} className="absolute -top-1 -right-1 bg-red-600 text-white text-xs font-black min-w-[22px] h-[22px] px-1 rounded-full flex items-center justify-center nkfx-pop">{unread}</span>}
         </button>
       )}
       {open && (
-        <div className="fixed z-40 bottom-0 left-0 right-0 sm:bottom-5 sm:left-5 sm:right-auto w-full sm:w-[380px] h-[75vh] sm:h-[520px] bg-[#1C0D10] border border-[#800020] sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed z-40 bottom-0 left-0 right-0 sm:bottom-5 sm:left-5 sm:right-auto w-full sm:w-[380px] h-[75vh] sm:h-[520px] bg-[#1C0D10] border border-[#800020] sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col overflow-hidden nkfx-panel">
           <div className="flex items-center justify-between px-4 py-3 bg-[#800020] text-white">
             <div>
               <p className="font-black">💬 كلم المطعم</p>
@@ -5615,7 +5619,7 @@ const CustomerChatWidget = () => {
               <input value={chatName} onChange={(e) => setChatName(e.target.value)} maxLength={40} placeholder="الاسم" className="bg-[#12080A] border border-[#3A1218] rounded-xl px-4 py-3 text-white text-sm" />
               <input value={chatPhone} onChange={(e) => setChatPhone(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') startChat(); }} placeholder="رقم التليفون (11 رقم)" inputMode="tel" dir="ltr" className="bg-[#12080A] border border-[#3A1218] rounded-xl px-4 py-3 text-white text-sm text-right" />
               {formError && <p className="text-red-400 text-xs font-bold text-center">{formError}</p>}
-              <button type="button" onClick={startChat} className="bg-[#800020] text-white font-black py-3 rounded-xl hover:bg-[#990026] transition">ابدأ المحادثة 💬</button>
+              <button type="button" onClick={startChat} className="bg-[#800020] text-white font-black py-3 rounded-xl hover:bg-[#990026] transition active:scale-[0.97]">ابدأ المحادثة 💬</button>
             </div>
           ) : (
             <>
@@ -5624,7 +5628,7 @@ const CustomerChatWidget = () => {
                   <p className="text-zinc-500 text-center text-sm py-8">اكتب رسالتك والكاشير هيرد عليك هنا 💬</p>
                 ) : messages.map(m => (
                   <div key={m._id} className={`flex ${m.from === 'customer' ? 'justify-start' : 'justify-end'}`}>
-                    <div className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm leading-6 whitespace-pre-wrap break-words ${m.from === 'customer' ? 'bg-[#800020] text-white rounded-tr-sm' : 'bg-zinc-800 text-zinc-100 rounded-tl-sm'}`}>
+                    <div className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm leading-6 whitespace-pre-wrap break-words nkfx-fade ${m.from === 'customer' ? 'bg-[#800020] text-white rounded-tr-sm' : 'bg-zinc-800 text-zinc-100 rounded-tl-sm'}`}>
                       {m.from === 'staff' && <p className="text-[11px] text-[#FFD700] font-bold mb-0.5">🍽️ {m.staffName || 'المطعم'}</p>}
                       <p>{m.text}</p>
                       <p className="text-[10px] opacity-60 mt-1 text-left">{chatTime(m.createdAt)}</p>
@@ -5635,7 +5639,7 @@ const CustomerChatWidget = () => {
               {sendError && <p className="text-red-400 text-xs font-bold text-center px-3 pt-2">{sendError}</p>}
               <div className="flex gap-2 p-3 border-t border-[#3A1218]">
                 <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendMessage(); }} maxLength={500} placeholder="اكتب رسالتك..." className="flex-1 bg-[#12080A] border border-[#3A1218] rounded-xl px-4 py-3 text-white text-sm" />
-                <button type="button" onClick={sendMessage} disabled={sending || !text.trim()} className="bg-[#800020] text-white font-black px-4 rounded-xl disabled:opacity-50">إرسال 📩</button>
+                <button type="button" onClick={sendMessage} disabled={sending || !text.trim()} className="bg-[#800020] text-white font-black px-4 rounded-xl disabled:opacity-50 transition active:scale-95">إرسال 📩</button>
               </div>
             </>
           )}
@@ -5805,6 +5809,24 @@ function App() {
 
   return (
     <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="min-h-screen bg-[#12080A] text-white font-sans flex flex-col justify-between relative">
+      <style>{`
+        @keyframes nkfx-rise { from { opacity: 0; transform: translateY(10px); } }
+        @keyframes nkfx-panel { from { opacity: 0; transform: translateY(14px) scale(0.98); } }
+        @keyframes nkfx-fade { from { opacity: 0; } }
+        @keyframes nkfx-pop { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+        .nkfx-rise { animation: nkfx-rise 0.35s ease-out backwards; }
+        .nkfx-panel { animation: nkfx-panel 0.3s ease-out backwards; }
+        .nkfx-fade { animation: nkfx-fade 0.25s ease-out backwards; }
+        .nkfx-pop { animation: nkfx-pop 0.3s ease-out; }
+        .nkfx-stagger > :nth-child(2) { animation-delay: 0.05s; }
+        .nkfx-stagger > :nth-child(3) { animation-delay: 0.1s; }
+        .nkfx-stagger > :nth-child(4) { animation-delay: 0.15s; }
+        .nkfx-stagger > :nth-child(5) { animation-delay: 0.2s; }
+        .nkfx-stagger > :nth-child(n+6) { animation-delay: 0.25s; }
+        @media (prefers-reduced-motion: reduce) {
+          .nkfx-rise, .nkfx-panel, .nkfx-fade, .nkfx-pop { animation: none !important; }
+        }
+      `}</style>
       {!isStaffPage && <nav className="bg-[#1C0D10] border-b border-[#800020]/60 sticky top-0 z-50 shadow-2xl">
         <div className="flex items-center justify-between px-8 py-3">
           <Link to="/" className="flex items-center cursor-pointer select-none">
@@ -5828,18 +5850,18 @@ function App() {
             
             <button 
               onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')} 
-              className="bg-[#12080A] text-zinc-300 border border-[#3A1218] px-3 py-2 rounded-xl text-sm font-bold hover:text-white hover:border-[#800020] transition"
+              className="bg-[#12080A] text-zinc-300 border border-[#3A1218] px-3 py-2 rounded-xl text-sm font-bold hover:text-white hover:border-[#800020] transition active:scale-95"
             >
               {lang === 'ar' ? 'EN' : 'عربي'}
             </button>
 
-            <Link to="/my-orders" className="bg-[#12080A] text-zinc-300 border border-[#3A1218] px-4 py-2.5 rounded-xl text-sm font-bold hover:text-white hover:border-[#800020] transition whitespace-nowrap">
+            <Link to="/my-orders" className="bg-[#12080A] text-zinc-300 border border-[#3A1218] px-4 py-2.5 rounded-xl text-sm font-bold hover:text-white hover:border-[#800020] transition whitespace-nowrap active:scale-[0.97]">
               📋 طلباتي
             </Link>
 
-            <Link to="/cart" className="flex items-center gap-2 bg-[#800020] text-white px-5 py-2.5 rounded-xl font-bold hover:bg-[#990026] transition shadow-lg">
+            <Link to="/cart" className="flex items-center gap-2 bg-[#800020] text-white px-5 py-2.5 rounded-xl font-bold hover:bg-[#990026] transition shadow-lg active:scale-[0.97]">
               <span>🛒 {t.cart}</span>
-              <span className="bg-[#12080A] text-[#FFD700] px-2 py-0.5 rounded-full text-xs font-black">{cart.length}</span>
+              <span key={cart.length} className="bg-[#12080A] text-[#FFD700] px-2 py-0.5 rounded-full text-xs font-black nkfx-pop">{cart.length}</span>
             </Link>
           </div>
         </div>
@@ -5859,8 +5881,8 @@ function App() {
       </div>
 
       {selectedItemDetail && (
-        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl">
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4 nkfx-fade">
+          <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl nkfx-panel">
             <button onClick={() => setSelectedItemDetail(null)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button>
             <h3 className="text-3xl font-black text-white mb-4">{selectedItemDetail.name}</h3>
               
@@ -5871,7 +5893,7 @@ function App() {
                   {selectedItemDetail.sizes.map((sz, idx) => {
                     const finalSzPrice = getDiscountedPrice(sz.price, selectedItemDetail.discount);
                     return (
-                      <div key={idx} onClick={() => setSelectedSize(sz)} className={`p-3 rounded-xl border cursor-pointer flex flex-col items-center justify-center transition ${selectedSize === sz ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
+                      <div key={idx} onClick={() => setSelectedSize(sz)} className={`p-3 rounded-xl border cursor-pointer flex flex-col items-center justify-center transition active:scale-[0.98] ${selectedSize === sz ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
                         <span className="font-bold">{sz.name}</span>
                         {selectedItemDetail.discount > 0 ? (
                           <div className="flex items-center gap-2 mt-1">
@@ -5893,7 +5915,7 @@ function App() {
                 <h4 className="text-sm font-bold text-[#FFD700]">✨ الإضافات الاختيارية:</h4>
                 <div className="flex flex-col gap-3">
                     
-                  <label className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${!selectedAddon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
+                  <label className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition active:scale-[0.98] ${!selectedAddon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
                     <div className="flex items-center gap-3">
                       <input type="radio" name="addon" checked={!selectedAddon} onChange={() => setSelectedAddon(null)} className="hidden" />
                       <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${!selectedAddon ? 'border-[#FFD700]' : 'border-[#3A1218]'}`}>
@@ -5905,7 +5927,7 @@ function App() {
                   </label>
 
                   {selectedItemDetail.addons.map((addon, idx) => (
-                    <label key={idx} className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition ${selectedAddon === addon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
+                    <label key={idx} className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition active:scale-[0.98] ${selectedAddon === addon ? 'bg-[#800020]/30 border-[#FFD700] text-[#FFD700]' : 'bg-[#12080A] border-[#3A1218] text-zinc-300'}`}>
                       <div className="flex items-center gap-3">
                         <input type="radio" name="addon" checked={selectedAddon === addon} onChange={() => setSelectedAddon(addon)} className="hidden" />
                         <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedAddon === addon ? 'border-[#FFD700]' : 'border-[#3A1218]'}`}>
@@ -5920,7 +5942,7 @@ function App() {
                 </div>
               </div>
             )}
-            <button onClick={handleAddCustomizedItemToCart} className="w-full bg-[#800020] text-white font-black py-4 rounded-xl hover:bg-[#990026] transition text-lg shadow-lg">
+            <button onClick={handleAddCustomizedItemToCart} className="w-full bg-[#800020] text-white font-black py-4 rounded-xl hover:bg-[#990026] transition text-lg shadow-lg active:scale-[0.97] hover:-translate-y-0.5">
               أضف للسلة • {currentItemTotalPrice} ج
             </button>
           </div>
@@ -5928,8 +5950,8 @@ function App() {
       )}
 
       {isBoxModalOpen && activeBox && (
-        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl">
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4 nkfx-fade">
+          <div className="bg-[#1C0D10] border border-[#800020] rounded-2xl w-full max-w-lg p-6 relative shadow-2xl nkfx-panel">
             <button onClick={() => setIsBoxModalOpen(false)} className="absolute top-4 left-4 text-red-400 text-xl font-bold">✕</button>
               
             <h3 className="text-3xl font-black text-[#FFD700] mb-1">{activeBox.name}</h3>
@@ -5945,15 +5967,15 @@ function App() {
                 <div key={idx} className="flex justify-between items-center bg-[#12080A] p-3.5 rounded-xl border border-[#3A1218]">
                   <span className="font-bold text-base text-white">{bItem.name}</span>
                   <div className="flex items-center gap-4">
-                    <button onClick={() => handleUpdateSelection(bItem.name, 'remove')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">-</button>
+                    <button onClick={() => handleUpdateSelection(bItem.name, 'remove')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold transition active:scale-90">-</button>
                     <span className="text-xl w-4 text-center font-black text-white">{boxSelections[bItem.name] || 0}</span>
-                    <button onClick={() => handleUpdateSelection(bItem.name, 'add')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold">+</button>
+                    <button onClick={() => handleUpdateSelection(bItem.name, 'add')} className="w-8 h-8 bg-[#1C0D10] rounded-lg text-[#FFD700] font-bold transition active:scale-90">+</button>
                   </div>
                 </div>
               ))}
             </div>
 
-            <button onClick={handleAddBoxToCart} disabled={totalSelected !== activeBox.maxItems} className={`w-full py-4 rounded-xl font-black text-lg transition ${totalSelected === activeBox.maxItems ? 'bg-[#800020] text-white hover:bg-[#990026] cursor-pointer shadow-lg' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
+            <button onClick={handleAddBoxToCart} disabled={totalSelected !== activeBox.maxItems} className={`w-full py-4 rounded-xl font-black text-lg transition active:scale-[0.97] ${totalSelected === activeBox.maxItems ? 'bg-[#800020] text-white hover:bg-[#990026] cursor-pointer shadow-lg' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
               أضف للسلة • {getDiscountedPrice(activeBox.price, activeBox.discount)} ج
             </button>
           </div>
