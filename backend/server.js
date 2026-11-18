@@ -200,7 +200,9 @@ const orderSchema = new mongoose.Schema({
   cashReceivedBy: { type: String },
   cancelReason: { type: String },
   cancelledBy: { type: String },
-  cancelledAt: { type: Date }
+  cancelledAt: { type: Date },
+  // تقييم العميل للأوردر (نجوم + تعليق) — بيتسجل من حساب العميل بس وبعد اكتمال الأوردر
+  rating: { type: new mongoose.Schema({ stars: Number, comment: String, at: Date }, { _id: false }), default: undefined }
 });
 orderSchema.index({ clientRef: 1 }, { sparse: true });
 // فهارس سرّعت البحث في الأوردرات (من غيرها كل طلب بيقلّب كل الأوردرات ويبطّأ كل ما الداتا تكبر)
@@ -217,6 +219,11 @@ const customerSchema = new mongoose.Schema({
   name: { type: String, default: "" },
   address: { type: String, default: "" },
   zoneName: { type: String, default: "" },
+  // الرقم السري لحساب العميل (مشفر بـ scrypt زي باسوردات الكاشير — عمره ما يتخزن نص صريح)
+  pinHash: { type: String, default: "" },
+  pinSetAt: { type: Date },
+  pinResetAt: { type: Date },
+  pinResetBy: { type: String, default: "" },
   ordersCount: { type: Number, default: 0 },
   lastOrderAt: { type: Date },
   createdAt: { type: Date, default: Date.now }
@@ -444,6 +451,38 @@ const requireAdmin = (req, res, next) => {
   if (req.user?.role !== "admin") return res.status(403).json({ error: "للأدمن فقط" });
   next();
 };
+
+// ---------- حسابات العملاء (رقم تليفون + رقم سري) ----------
+// العميل بيثبت إن الرقم رقمه بالرقم السري، فمحدش غريب يقدر يكتب رقم حد ويشوف عنوانه أو طلباته.
+const CUSTOMER_TOKEN_TTL = 90 * 24 * 60 * 60 * 1000;
+
+// الرقم السري: 4-6 أرقام، وممنوع الأرقام السهلة المتوقعة
+const isValidCustomerPin = (pin) => {
+  const p = String(pin ?? "");
+  if (!/^\d{4,6}$/.test(p)) return false;
+  if (/^(\d)\1+$/.test(p)) return false;
+  if (["1234", "4321", "12345", "54321", "123456", "654321"].includes(p)) return false;
+  return true;
+};
+
+const signCustomerToken = (phone) => signToken({ phone, role: "customer" }, CUSTOMER_TOKEN_TTL);
+
+const requireCustomerAuth = (req, res, next) => {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const payload = token ? verifyToken(token) : null;
+  if (!payload || payload.role !== "customer" || !payload.phone) {
+    return res.status(401).json({ error: "سجّل دخول بحسابك الأول" });
+  }
+  req.customerPhone = normPhone(payload.phone);
+  if (!/^\d{8,15}$/.test(req.customerPhone)) return res.status(401).json({ error: "سجّل دخول بحسابك الأول" });
+  next();
+};
+
+// حدّ محاولات دخول العملاء: 8 محاولات غلط لنفس الرقم+IP في 15 دقيقة (نفس نمط قفل دخول الكاشير)
+const MAX_CUSTOMER_LOGIN_FAILS = 8;
+const customerLoginKey = (req, phone) => `custlogin:${req.ip}:${phone}`;
+const customerLoginLocked = (req, phone) => (peekBucket(customerLoginKey(req, phone))?.count || 0) >= MAX_CUSTOMER_LOGIN_FAILS;
 
 // ---------- تسجيل الدخول ----------
 app.post("/api/auth/login", async (req, res) => {
@@ -1170,11 +1209,50 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     const { order, error } = await buildOrderFromBody(body, zone);
     if (error) return res.status(400).json({ error });
 
+    // رقم سري اختياري: لو العميل عنده رقم سري مسجل لازم يطابق، ولو أول مرة وبيبعت رقم سري بيتسجل لحسابه
+    const pinRaw = String(body.pin ?? "").trim();
+    const phoneNorm = normPhone(order.customerPhone);
+    let customerToken = null;
+    let pinIsNew = false;
+    if (pinRaw) {
+      if (customerLoginLocked(req, phoneNorm)) {
+        return res.status(429).json({ error: "محاولات غلط كتير، استنى 15 دقيقة وحاول تاني" });
+      }
+      const existingCustomer = await Customer.findOne({ phone: phoneNorm }).select("pinHash").lean();
+      if (existingCustomer?.pinHash) {
+        const pinOk = await verifyPassword(pinRaw, existingCustomer.pinHash);
+        if (!pinOk) {
+          hitBucket(customerLoginKey(req, phoneNorm), LOGIN_WINDOW_MS);
+          return res.status(401).json({ error: "الرقم السري غلط. اتأكد منه، أو امسحه واطلب كضيف من غير رقم سري" });
+        }
+        customerToken = signCustomerToken(phoneNorm);
+      } else {
+        if (!isValidCustomerPin(pinRaw)) {
+          return res.status(400).json({ error: "الرقم السري لازم يكون من 4 لـ 6 أرقام، ومش أرقام سهلة زي 1234" });
+        }
+        pinIsNew = true;
+      }
+    }
+
     const saved = await new Order(order).save();
+    if (pinIsNew) {
+      // حفظ الرقم السري مشفراً (محاولتين عشان سباق الإنشاء مع upsertCustomer)
+      const pinHash = await hashPassword(pinRaw);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await Customer.updateOne({ phone: phoneNorm }, { $set: { pinHash, pinSetAt: new Date() } }, { upsert: attempt === 0 });
+          break;
+        } catch (err) {
+          if (err?.code !== 11000 || attempt === 1) console.error("save customer PIN error:", err.message);
+        }
+      }
+      customerToken = signCustomerToken(phoneNorm);
+    }
     void upsertCustomer({ phone: saved.customerPhone, name: saved.customerName, address: saved.orderType === "delivery" ? saved.customerAddress : "", zoneName: saved.orderType === "delivery" ? saved.zoneName : "" });
     console.log(`✅ New website order saved: #${saved.orderId}`);
     res.status(201).json({
       ok: true,
+      ...(customerToken ? { customerToken } : {}),
       orderId: saved.orderId,
       order: {
         orderId: saved.orderId, customerName: saved.customerName, customerPhone: saved.customerPhone,
@@ -1184,6 +1262,127 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     });
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ error: "الأوردر ده اتبعت قبل كده" });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================
+// حسابات العملاء: دخول / بياناتي / تغيير الرقم السري / تقييم
+// =========================
+
+// دخول العميل برقمه ورقمه السري — رسالة واحدة عامة للرقم الغلط والرقم السري الغلط (عشان محدش يعرف الرقم متسجل ولا لأ)
+app.post("/api/customers/login", async (req, res) => {
+  try {
+    if (!authReady) return res.status(503).json({ error: "الخدمة مش متاحة دلوقتي، حاول بعد شوية" });
+    const phone = normPhone(req.body?.phone);
+    const pin = String(req.body?.pin || "");
+    const wrong = () => res.status(401).json({ error: "الرقم أو الرقم السري غلط" });
+    if (!/^\d{8,15}$/.test(phone) || !pin) return wrong();
+    if (customerLoginLocked(req, phone)) {
+      return res.status(429).json({ error: "محاولات غلط كتير، استنى 15 دقيقة وحاول تاني" });
+    }
+    const customer = await Customer.findOne({ phone }).lean();
+    const ok = await verifyPassword(pin, customer?.pinHash || DUMMY_HASH);
+    if (!customer?.pinHash || !ok) {
+      hitBucket(customerLoginKey(req, phone), LOGIN_WINDOW_MS);
+      return wrong();
+    }
+    buckets.delete(customerLoginKey(req, phone));
+    res.json({
+      token: signCustomerToken(phone),
+      profile: { name: customer.name || "", phone, address: customer.address || "", zoneName: customer.zoneName || "" }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// بيانات العميل وطلباته — رقم تليفونه بس، مفيش وصول لأي رقم تاني
+app.get("/api/customers/me", requireCustomerAuth, async (req, res) => {
+  try {
+    const phone = req.customerPhone;
+    const customer = await Customer.findOne({ phone }).lean();
+    const phoneVariants = [phone, `+2${phone}`, `20${phone.slice(1)}`];
+    const orders = await Order.find({ customerPhone: { $in: phoneVariants } })
+      .sort({ createdAt: -1 }).limit(20)
+      .select("orderId items itemsTotal deliveryFee grandTotal status orderType zoneName createdAt completedAt rating")
+      .lean();
+    res.json({
+      profile: { name: customer?.name || "", phone, address: customer?.address || "", zoneName: customer?.zoneName || "" },
+      orders: orders.map((o) => ({
+        orderId: o.orderId, items: o.items || [], itemsTotal: o.itemsTotal, deliveryFee: o.deliveryFee,
+        grandTotal: o.grandTotal, status: o.status, orderType: o.orderType, zoneName: o.zoneName,
+        createdAt: o.createdAt, completedAt: o.completedAt,
+        rating: o.rating?.stars ? { stars: o.rating.stars, comment: o.rating.comment || "" } : null
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// تغيير الرقم السري — لازم يكون داخل بحسابه ويعرف القديم
+app.post("/api/customers/change-pin", requireCustomerAuth, async (req, res) => {
+  try {
+    const oldPin = String(req.body?.oldPin || "");
+    const newPin = String(req.body?.newPin || "");
+    if (!isValidCustomerPin(newPin)) {
+      return res.status(400).json({ error: "الرقم السري الجديد لازم يكون من 4 لـ 6 أرقام، ومش أرقام سهلة زي 1234" });
+    }
+    const customer = await Customer.findOne({ phone: req.customerPhone });
+    if (!customer?.pinHash || !(await verifyPassword(oldPin, customer.pinHash))) {
+      return res.status(401).json({ error: "الرقم السري القديم غلط" });
+    }
+    customer.pinHash = await hashPassword(newPin);
+    customer.pinSetAt = new Date();
+    await customer.save();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// مسح الرقم السري لعميل نسيه وكلّم المطعم — للكاشير/الأدمن من داخل النظام (العميل يعمل رقم جديد مع أوردره الجاي)
+app.post("/api/customers/:phone/reset-pin", requireAuth, async (req, res) => {
+  try {
+    const phone = normPhone(req.params.phone);
+    if (!/^\d{8,15}$/.test(phone)) {
+      return res.status(400).json({ error: "رقم التليفون مش صحيح" });
+    }
+    const customer = await Customer.findOne({ phone });
+    if (!customer) {
+      return res.status(404).json({ error: "مفيش عميل مسجل بالرقم ده" });
+    }
+    await Customer.updateOne({ phone }, { $set: { pinResetAt: new Date(), pinResetBy: req.user.name }, $unset: { pinHash: "", pinSetAt: "" } });
+    void sendTelegramAlert(`🔓 مسح الرقم السري لعميل\nالرقم: ${phone}\nالاسم: ${customer.name || "-"}\nبواسطة: ${req.user.name}\nالوقت: ${new Date().toLocaleString("ar-EG", { timeZone: "Africa/Cairo" })}`);
+    res.json({ ok: true, message: "تم مسح الرقم السري، العميل يقدر يعمل رقم جديد مع أوردره الجاي" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// تقييم الأوردر — لازم يكون أوردر العميل نفسه ومكتمل. التقييم يتعدل (العميل يقدر يغيّر تقييمه)
+app.post("/api/orders/:id/rate", requireCustomerAuth, async (req, res) => {
+  try {
+    const query = mongoose.Types.ObjectId.isValid(req.params.id)
+      ? { $or: [{ _id: req.params.id }, { orderId: req.params.id }] }
+      : { orderId: req.params.id };
+    const order = await Order.findOne(query);
+    if (!order) return res.status(404).json({ error: "الأوردر غير موجود" });
+    if (normPhone(order.customerPhone) !== req.customerPhone) {
+      return res.status(403).json({ error: "الأوردر ده مش بتاعك" });
+    }
+    if (order.status !== "completed") {
+      return res.status(409).json({ error: "التقييم متاح بعد ما الأوردر يكمل بس" });
+    }
+    const stars = Number(req.body?.stars);
+    if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+      return res.status(400).json({ error: "اختار من نجمة لـ 5 نجوم" });
+    }
+    order.rating = { stars, comment: cleanText(req.body?.comment, 300), at: new Date() };
+    await order.save();
+    res.json({ ok: true, rating: { stars: order.rating.stars, comment: order.rating.comment } });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

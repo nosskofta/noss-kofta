@@ -21,6 +21,19 @@ const clearSession = () => {
   try { localStorage.removeItem(SESSION_KEY); } catch {}
 };
 
+// ================= جلسة العميل (حساب «طلباتي») — مفتاح منفصل تماماً عن جلسة الكاشير =================
+const CUSTOMER_KEY = 'nossKoftaCustomer';
+const readCustomer = () => {
+  try { return JSON.parse(localStorage.getItem(CUSTOMER_KEY)) || null; }
+  catch { return null; }
+};
+const saveCustomer = (data) => {
+  try { localStorage.setItem(CUSTOMER_KEY, JSON.stringify(data)); } catch {}
+};
+const clearCustomer = () => {
+  try { localStorage.removeItem(CUSTOMER_KEY); } catch {}
+};
+
 // طلب للسيرفر ومعاه التوكن. لو السيرفر رد "غير مصرح" بنقفل الجلسة ونرجّع لشاشة الدخول.
 const authRequest = async (token, path, options = {}, onUnauthorized) => {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -1614,6 +1627,271 @@ const AdminDashboard = (props) => {
 };
 
 
+
+// ================= صفحة «طلباتي» — حساب العميل (رقم + رقم سري) =================
+const ORDER_STATUS_AR = { pending: '⏳ قيد الانتظار', accepted: '👨‍🍳 قيد التحضير', completed: '✅ تم', cancelled: '✖ ملغي' };
+
+const MyOrdersPage = ({ cart, setCart }) => {
+  const navigate = useNavigate();
+  const [customer, setCustomer] = useState(readCustomer);
+  const [profile, setProfile] = useState(null);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [loginPhone, setLoginPhone] = useState('');
+  const [loginPin, setLoginPin] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [ratings, setRatings] = useState({});
+  const [ratingBusy, setRatingBusy] = useState('');
+  const [ratingMsg, setRatingMsg] = useState('');
+  const [oldPin, setOldPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [pinMsg, setPinMsg] = useState('');
+  const [pinBusy, setPinBusy] = useState(false);
+  const [reorderNote, setReorderNote] = useState('');
+
+  const loadMe = async (token) => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const res = await fetch(`${API_BASE}/api/customers/me`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.status === 401) {
+        clearCustomer();
+        setCustomer(null);
+        return;
+      }
+      const data = await res.json();
+      setProfile(data.profile || null);
+      setOrders(Array.isArray(data.orders) ? data.orders : []);
+      const initial = {};
+      (data.orders || []).forEach((o) => {
+        if (o.rating) initial[o.orderId] = { stars: o.rating.stars, comment: o.rating.comment || '' };
+      });
+      setRatings(initial);
+    } catch (err) {
+      setLoadError('تعذر تحميل بياناتك، حاول تاني.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (customer?.token) loadMe(customer.token);
+  }, []);
+
+  const handleLogin = async () => {
+    if (loginPhone.length !== 11 || !loginPin) return setLoginError('اكتب رقم التليفون (11 رقم) والرقم السري.');
+    setLoginBusy(true);
+    setLoginError('');
+    try {
+      const res = await fetch(`${API_BASE}/api/customers/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: loginPhone, pin: loginPin })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return setLoginError(data.error || 'حصل خطأ، حاول تاني');
+      const saved = { token: data.token, phone: loginPhone };
+      saveCustomer(saved);
+      setCustomer(saved);
+      setLoginPin('');
+      loadMe(data.token);
+    } catch (err) {
+      setLoginError('تعذر الاتصال بالسيرفر، حاول تاني.');
+    } finally {
+      setLoginBusy(false);
+    }
+  };
+
+  const handleLogout = () => {
+    clearCustomer();
+    setCustomer(null);
+    setProfile(null);
+    setOrders([]);
+  };
+
+  const handleReorder = async (order) => {
+    setReorderNote('');
+    let fresh = [];
+    try {
+      const res = await fetch(`${API_BASE}/api/items`);
+      fresh = await res.json();
+    } catch (err) {
+      return alert('تعذر تحميل المنيو، حاول تاني.');
+    }
+    if (!Array.isArray(fresh)) return alert('تعذر تحميل المنيو، حاول تاني.');
+    const byId = new Map(fresh.map((i) => [String(i._id), i]));
+    const added = [];
+    const skipped = [];
+    (order.items || []).forEach((it) => {
+      const cat = byId.get(String(it.itemId));
+      if (!cat || cat.available === false) { skipped.push(it.name); return; }
+      const qty = Math.max(1, Math.min(99, Number(it.quantity) || 1));
+      for (let q = 0; q < qty; q += 1) {
+        added.push({ ...cat, price: Number(it.price) > 0 ? Number(it.price) : getDiscountedPrice(cat.price, cat.discount), _mods: Array.isArray(it.modifiers) ? it.modifiers : [] });
+      }
+    });
+    if (added.length > 0) {
+      setCart([...cart, ...added]);
+      navigate('/cart');
+    }
+    if (skipped.length > 0) {
+      setReorderNote('الأصناف دي مش متاحة دلوقتي ومتضافتش: ' + [...new Set(skipped)].join('، '));
+    }
+    if (added.length === 0 && skipped.length === 0) setReorderNote('مفيش أصناف في الأوردر ده.');
+  };
+
+  const saveRating = async (orderId) => {
+    const draft = ratings[orderId] || {};
+    if (!draft.stars) return setRatingMsg('اختار عدد النجوم الأول.');
+    setRatingBusy(orderId);
+    setRatingMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/api/orders/${orderId}/rate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${customer.token}` },
+        body: JSON.stringify({ stars: draft.stars, comment: draft.comment || '' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return setRatingMsg(data.error || 'حصل خطأ، حاول تاني');
+      setOrders((prev) => prev.map((o) => (o.orderId === orderId ? { ...o, rating: data.rating } : o)));
+      setRatingMsg('شكراً! تقييمك اتسجل ✅');
+    } catch (err) {
+      setRatingMsg('تعذر الاتصال بالسيرفر، حاول تاني.');
+    } finally {
+      setRatingBusy('');
+    }
+  };
+
+  const handleChangePin = async () => {
+    if (!oldPin || !newPin) return setPinMsg('اكتب الرقم السري القديم والجديد.');
+    setPinBusy(true);
+    setPinMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/api/customers/change-pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${customer.token}` },
+        body: JSON.stringify({ oldPin, newPin })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return setPinMsg(data.error || 'حصل خطأ، حاول تاني');
+      setOldPin('');
+      setNewPin('');
+      setPinMsg('تم تغيير الرقم السري ✅');
+    } catch (err) {
+      setPinMsg('تعذر الاتصال بالسيرفر، حاول تاني.');
+    } finally {
+      setPinBusy(false);
+    }
+  };
+
+  if (!customer?.token) {
+    return (
+      <section className="px-4 sm:px-8 py-12 max-w-lg mx-auto min-h-[60vh] bg-[#12080A] text-white">
+        <h2 className="text-3xl font-black text-[#FFD700] mb-2 text-center">📋 طلباتي</h2>
+        <p className="text-zinc-400 text-sm text-center mb-8 leading-relaxed">ادخل برقم تليفونك والرقم السري، وهتلاقي عنوانك وطلباتك القديمة.<br />لسه معندكش رقم سري؟ اكتبه وانت بتطلب أول أوردر وهيتحفظ لحسابك.</p>
+        <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] space-y-4 shadow-xl">
+          <div>
+            <label className="block text-xs text-zinc-300 mb-1">رقم التليفون (11 رقم)</label>
+            <input type="text" maxLength="11" placeholder="010xxxxxxxx" value={loginPhone} onChange={(e) => setLoginPhone(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-wider" />
+          </div>
+          <div>
+            <label className="block text-xs text-zinc-300 mb-1">الرقم السري</label>
+            <input type="password" inputMode="numeric" maxLength="6" placeholder="••••" value={loginPin} onChange={(e) => setLoginPin(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-widest" />
+          </div>
+          {loginError && <p className="text-red-400 text-sm font-bold text-center">{loginError}</p>}
+          <button onClick={handleLogin} disabled={loginBusy} className="w-full bg-[#800020] hover:bg-[#990026] disabled:opacity-50 text-white font-black py-3.5 rounded-xl transition shadow-lg">دخول</button>
+          <p className="text-center text-zinc-500 text-xs">نسيت الرقم السري؟ كلّم المطعم وهنمسحهولك وتعمل واحد جديد مع أوردرك الجاي.</p>
+          <Link to="/menu" className="block text-center text-[#FFD700] underline text-sm">أو اطلب من غير حساب ← المنيو</Link>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="px-4 sm:px-8 py-12 max-w-4xl mx-auto min-h-screen bg-[#12080A] text-white">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-3xl font-black text-[#FFD700]">📋 طلباتي</h2>
+        <button onClick={handleLogout} className="text-zinc-300 bg-[#1C0D10] border border-[#3A1218] px-4 py-2 rounded-xl text-sm font-bold">تسجيل الخروج</button>
+      </div>
+
+      {loading && <p className="text-center text-zinc-400">جارٍ التحميل...</p>}
+      {loadError && <p className="text-center text-red-400 font-bold mb-4">{loadError}</p>}
+
+      {profile && (
+        <div className="bg-[#1C0D10] rounded-2xl p-5 border border-[#3A1218] mb-6 shadow-xl">
+          <h3 className="text-lg font-black text-[#FFD700] mb-3">👤 بياناتك المحفوظة</h3>
+          <p className="text-sm text-zinc-300">الاسم: <strong className="text-white">{profile.name || '-'}</strong></p>
+          <p className="text-sm text-zinc-300">التليفون: <strong className="text-white" dir="ltr">{profile.phone}</strong></p>
+          <p className="text-sm text-zinc-300">العنوان: <strong className="text-white">{profile.address || '-'}</strong></p>
+          <p className="text-sm text-zinc-300">المنطقة: <strong className="text-white">{profile.zoneName || '-'}</strong></p>
+          <p className="text-xs text-zinc-500 mt-2">بياناتك دي هتتملي لوحدها وانت بتطلب الأوردر الجاي.</p>
+        </div>
+      )}
+
+      {reorderNote && <div className="bg-[#FFD700]/10 border border-[#FFD700]/40 text-[#FFD700] rounded-xl p-3 text-sm font-bold mb-4">{reorderNote}</div>}
+      {ratingMsg && <div className="bg-green-500/10 border border-green-500/40 text-green-400 rounded-xl p-3 text-sm font-bold mb-4">{ratingMsg}</div>}
+
+      <h3 className="text-xl font-bold text-[#FFD700] mb-4">طلباتك اللي فاتت</h3>
+      {!loading && orders.length === 0 && <p className="text-zinc-400 text-center py-8">لسه مفيش طلبات على الرقم ده.</p>}
+      <div className="space-y-4">
+        {orders.map((o) => (
+          <div key={o.orderId} className="bg-[#1C0D10] rounded-2xl p-5 border border-[#3A1218] shadow-xl">
+            <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
+              <span className="font-black text-[#FFD700]">#{o.orderId}</span>
+              <span className="text-xs bg-[#12080A] border border-[#3A1218] px-2.5 py-1 rounded-full font-bold">{ORDER_STATUS_AR[o.status] || o.status}</span>
+              <span className="text-xs text-zinc-500">{o.createdAt ? new Date(o.createdAt).toLocaleString('ar-EG') : ''}</span>
+            </div>
+            <div className="space-y-1 text-sm text-zinc-300 mb-3">
+              {(o.items || []).map((it, idx) => (
+                <div key={idx} className="flex justify-between gap-2">
+                  <span>{it.quantity}× {it.name}</span>
+                  <span className="text-[#FFD700] font-bold">{(Number(it.price) || 0) * (Number(it.quantity) || 1)} ج</span>
+                </div>
+              ))}
+              <div className="flex justify-between pt-2 border-t border-[#3A1218] font-bold">
+                <span>الإجمالي:</span>
+                <span className="text-[#FFD700]">{o.grandTotal} ج</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => handleReorder(o)} className="flex-1 min-w-[140px] bg-[#800020] hover:bg-[#990026] text-white font-black py-2.5 rounded-xl text-sm transition">🔁 اطلب تاني</button>
+            </div>
+            {o.status === 'completed' && (
+              <div className="mt-4 pt-4 border-t border-[#3A1218]">
+                <p className="text-sm font-bold text-[#FFD700] mb-2">قيّم الأوردر:</p>
+                <div className="flex gap-1.5 mb-3">
+                  {[1, 2, 3, 4, 5].map((s) => (
+                    <button key={s} onClick={() => setRatings((prev) => ({ ...prev, [o.orderId]: { ...(prev[o.orderId] || {}), stars: s } }))} className="text-3xl leading-none">
+                      {((ratings[o.orderId]?.stars) || 0) >= s ? '⭐' : '☆'}
+                    </button>
+                  ))}
+                </div>
+                <textarea rows="2" maxLength="300" placeholder="تعليق اختياري..." value={ratings[o.orderId]?.comment || ''} onChange={(e) => setRatings((prev) => ({ ...prev, [o.orderId]: { ...(prev[o.orderId] || {}), comment: e.target.value } }))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm mb-2" />
+                <button onClick={() => saveRating(o.orderId)} disabled={ratingBusy === o.orderId} className="bg-[#FFD700] text-black font-black px-6 py-2.5 rounded-xl text-sm disabled:opacity-50">
+                  {o.rating ? 'تعديل التقييم' : 'إرسال التقييم'}
+                </button>
+                {o.rating && <span className="text-xs text-zinc-400 mr-3">تقييمك الحالي: {'★'.repeat(o.rating.stars)}{'☆'.repeat(5 - o.rating.stars)}</span>}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-[#1C0D10] rounded-2xl p-5 border border-[#3A1218] mt-8 shadow-xl">
+        <h3 className="text-lg font-black text-[#FFD700] mb-3">🔐 تغيير الرقم السري</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <input type="password" inputMode="numeric" maxLength="6" placeholder="الرقم السري القديم" value={oldPin} onChange={(e) => setOldPin(e.target.value.replace(/\D/g, ''))} className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-widest" />
+          <input type="password" inputMode="numeric" maxLength="6" placeholder="الرقم السري الجديد (4-6 أرقام)" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-widest" />
+        </div>
+        {pinMsg && <p className="text-sm font-bold mt-3 text-center text-zinc-300">{pinMsg}</p>}
+        <button onClick={handleChangePin} disabled={pinBusy} className="mt-3 bg-[#1C0D10] border border-[#FFD700] text-[#FFD700] font-black px-6 py-2.5 rounded-xl text-sm disabled:opacity-50">تغيير الرقم السري</button>
+      </div>
+    </section>
+  );
+};
+
 // ================= 4. صفحة السلة وإدخال بيانات التوصيل =================
 const CartPage = ({ cart, setCart, lang, storeStatus }) => {
   const storeClosed = !!storeStatus && storeStatus.isOpen === false;
@@ -1630,6 +1908,12 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
 
   const [placedOrderId, setPlacedOrderId] = useState(null);
 
+  // حساب العميل (اختياري): لو داخل بحسابه بنملا بياناته المحفوظة، ولو كتب رقم سري جديد بيتحفظ لحسابه
+  const [customerPin, setCustomerPin] = useState('');
+  const [accountSaved, setAccountSaved] = useState(false);
+  const [loggedInCustomer, setLoggedInCustomer] = useState(() => readCustomer());
+  const [savedZoneName, setSavedZoneName] = useState('');
+
   useEffect(() => {
     fetch(`${API_BASE}/api/zones`)
       .then(res => res.json())
@@ -1639,6 +1923,33 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
       })
       .catch(err => {});
   }, []);
+
+  // لو العميل داخل بحسابه: نملا بياناته المحفوظة لوحده (من غير ما نمسح حاجة كتبها بنفسه)
+  useEffect(() => {
+    const saved = readCustomer();
+    if (!saved?.token) return;
+    fetch(`${API_BASE}/api/customers/me`, { headers: { Authorization: `Bearer ${saved.token}` } })
+      .then((res) => {
+        if (res.status === 401) { clearCustomer(); setLoggedInCustomer(null); return null; }
+        return res.json();
+      })
+      .then((data) => {
+        if (!data?.profile) return;
+        const p = data.profile;
+        setCustomerName((prev) => (prev.trim() ? prev : (p.name || '')));
+        setCustomerPhone((prev) => (prev.trim() ? prev : (p.phone || '')));
+        setCustomerAddress((prev) => (prev.trim() ? prev : (p.address || '')));
+        if (p.zoneName) setSavedZoneName(p.zoneName);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (savedZoneName && deliveryZones.length > 0) {
+      const match = deliveryZones.find((z) => z.name === savedZoneName);
+      if (match) setSelectedZone(match);
+    }
+  }, [deliveryZones, savedZoneName]);
 
   const groupedCart = cart.reduce((acc, item) => {
     const existing = acc.find(i => i.name === item.name);
@@ -1677,6 +1988,9 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
     if (!customerPhone.trim() || customerPhone.length !== 11 || isNaN(customerPhone)) {
       return alert("من فضلك اكتب رقم تليفون صحيح مكون من 11 رقم.");
     }
+    if (customerPin && (customerPin.length < 4 || customerPin.length > 6)) {
+      return alert("الرقم السري لازم يكون من 4 لـ 6 أرقام، أو سيبه فاضي.");
+    }
     if (orderType === 'delivery' && !customerAddress.trim()) {
       return alert("من فضلك اكتب عنوان الاستلام بالتفصيل.");
     }
@@ -1704,6 +2018,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
       orderId,
       customerName,
       customerPhone,
+      pin: customerPin || undefined,
       orderType,
       customerAddress: orderType === 'delivery' ? customerAddress : 'استلام من الفرع',
       zoneName: orderType === 'delivery' && selectedZone ? selectedZone.name : 'استلام من الفرع',
@@ -1728,6 +2043,13 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
           return alert(errData.error || 'حصل خطأ، حاول تاني');
         }
         console.warn("Server error when saving order, WhatsApp will still open.");
+      } else {
+        const savedData = await response.json().catch(() => null);
+        if (savedData?.customerToken) {
+          saveCustomer({ token: savedData.customerToken, phone: customerPhone });
+          setLoggedInCustomer({ token: savedData.customerToken, phone: customerPhone });
+          setAccountSaved(true);
+        }
       }
     } catch (err) {
       console.error("Network error while saving order to database:", err);
@@ -1780,6 +2102,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
             {placedOrderId}
           </div>
           <p className="text-sm text-zinc-400 mb-8">تم تحويلك للواتساب لإرسال الطلب للمطعم.</p>
+          {accountSaved && <p className="text-sm text-green-400 font-bold mb-8">🔐 بياناتك اتحفظت في حسابك — المرة الجاية ادخل من «طلباتي» وهتلاقي عنوانك وطلباتك جاهزة.</p>}
           <button 
             onClick={() => setPlacedOrderId(null)} 
             className="text-white bg-[#800020] hover:bg-[#990026] px-8 py-3 rounded-xl font-bold transition shadow-lg"
@@ -1868,6 +2191,14 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
             <label className="block text-xs text-zinc-300 mb-1">رقم التليفون (11 رقم) *</label>
             <input type="text" maxLength="11" placeholder="010xxxxxxxx" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-wider" />
           </div>
+
+          {!loggedInCustomer?.token && (
+            <div>
+              <label className="block text-xs text-zinc-300 mb-1">رقم سري (4 أرقام) — اختياري</label>
+              <input type="password" inputMode="numeric" maxLength="6" placeholder="••••" value={customerPin} onChange={(e) => setCustomerPin(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-widest" />
+              <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">اختياري — احفظ بياناتك وطلباتك، وادخل بيه المرة الجاية من «طلباتي». من غيره الطلب بيتبعت كضيف عادي.</p>
+            </div>
+          )}
 
           {orderType === 'delivery' && (
             <>
@@ -3365,6 +3696,24 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     return clientRefRef.current.ref;
   };
   const [custLookup, setCustLookup] = useState(null);
+  const [resettingPin, setResettingPin] = useState(false);
+  // مسح الرقم السري لعميل نسيه وكلّم المطعم — العميل يعمل رقم جديد مع أوردره الجاي
+  const resetCustomerPin = async () => {
+    const digits = normalizePhoneInput(custPhone);
+    if (digits.length !== 11 || resettingPin) return;
+    if (!window.confirm(`هتمسح الرقم السري للعميل${custLookup?.name ? ` (${custLookup.name})` : ''} رقم ${digits}؟\nالعميل هيعمل رقم سري جديد مع أوردره الجاي.`)) return;
+    setResettingPin(true);
+    try {
+      const r = await authFetch(`/api/customers/${digits}/reset-pin`, { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(d.error || 'حصل خطأ'); return; }
+      alert('✅ تم مسح الرقم السري — العميل يقدر يعمل رقم جديد مع أوردره الجاي');
+    } catch (e) {
+      alert('تعذر الاتصال بالسيرفر');
+    } finally {
+      setResettingPin(false);
+    }
+  };
 
   // أول ما يتكتب رقم من 11 رقم: لو العميل موجود عندنا بنملّي الاسم والعنوان والمنطقة لوحدهم
   useEffect(() => {
@@ -3799,6 +4148,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
             <div className="space-y-1">
               <input value={custPhone} onChange={(e) => setCustPhone(normalizePhoneInput(e.target.value))} placeholder="📞 رقم العميل " className={inp} dir="ltr" />
               {custLookup?.found && <p className="text-[11px] text-green-400 font-bold">✅ عميل قديم{custLookup.name ? `: ${custLookup.name}` : ''}</p>}
+              {custLookup?.found && <button type="button" onClick={resetCustomerPin} disabled={resettingPin} className="text-[11px] text-zinc-500 underline disabled:opacity-50">🔓 مسح الرقم السري</button>}
             </div>
           )}
 
@@ -3806,6 +4156,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
             <div className="space-y-2">
               <input autoFocus={!editOrder} value={custPhone} onChange={(e) => setCustPhone(normalizePhoneInput(e.target.value))} placeholder="📞 رقم التليفون الأول * (إجباري)" className={inp + (custPhone ? '' : ' !border-red-500/60')} dir="ltr" />
               {custLookup?.found && <p className="text-[11px] text-green-400 font-bold">✅ عميل قديم{custLookup.ordersCount > 0 ? ` (${custLookup.ordersCount} أوردر)` : ''} — الاسم والعنوان اتملّوا، راجعهم</p>}
+              {custLookup?.found && <button type="button" onClick={resetCustomerPin} disabled={resettingPin} className="text-[11px] text-zinc-500 underline disabled:opacity-50">🔓 مسح الرقم السري</button>}
               {custLookup && custLookup.found === false && <p className="text-[11px] text-zinc-400 font-bold">عميل جديد — اكتب بياناته</p>}
               <input value={custName} onChange={(e) => setCustName(e.target.value)} placeholder="اسم العميل (اختياري)" className={inp} />
               <div className="flex gap-2">
@@ -4463,6 +4814,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
           {ord.acceptedBy && <p>✅ <span className="text-zinc-400 text-xs">قبله: {ord.acceptedBy}</span></p>}
           {ord.completedBy && <p>🏁 <span className="text-zinc-400 text-xs">أنهاه: {ord.completedBy}</span></p>}
           {ord.editedAt && <p className="text-orange-300 text-xs">✏️ معدّل بواسطة {ord.editedBy}</p>}
+          {ord.rating?.stars > 0 && <p>⭐ <span className="text-[#FFD700] text-xs">{'★'.repeat(ord.rating.stars)}{'☆'.repeat(5 - ord.rating.stars)}{ord.rating.comment ? ` — ${ord.rating.comment}` : ''}</span></p>}
         </div>
 
         <div className="bg-[#12080A] p-3 rounded-xl border border-[#3A1218] mb-4 space-y-2 max-h-48 overflow-y-auto">
@@ -5109,6 +5461,10 @@ function App() {
               {lang === 'ar' ? 'EN' : 'عربي'}
             </button>
 
+            <Link to="/my-orders" className="bg-[#12080A] text-zinc-300 border border-[#3A1218] px-4 py-2.5 rounded-xl text-sm font-bold hover:text-white hover:border-[#800020] transition whitespace-nowrap">
+              📋 طلباتي
+            </Link>
+
             <Link to="/cart" className="flex items-center gap-2 bg-[#800020] text-white px-5 py-2.5 rounded-xl font-bold hover:bg-[#990026] transition shadow-lg">
               <span>🛒 {t.cart}</span>
               <span className="bg-[#12080A] text-[#FFD700] px-2 py-0.5 rounded-full text-xs font-black">{cart.length}</span>
@@ -5126,6 +5482,7 @@ function App() {
           <Route path="/cashier" element={<CashierDashboard />} />
           <Route path="/pos" element={<CashierDashboard initialTab="pos" />} />
           <Route path="/cart" element={<CartPage cart={cart} setCart={setCart} lang={lang} storeStatus={storeStatus} />} />
+          <Route path="/my-orders" element={<MyOrdersPage cart={cart} setCart={setCart} />} />
         </Routes>
       </div>
 
