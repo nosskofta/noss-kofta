@@ -3077,6 +3077,17 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
     return line;
   };
   const plainDayLines = (r) => (r?.days || []).map(plainDayLine);
+  const plainDayClose = (d) => {
+    const shifts = d.shifts || [];
+    const closed = shifts.filter((s) => s.status === 'closed' && s.expectedCash !== null && s.expectedCash !== undefined);
+    if (closed.length > 0) return { kind: 'closed', amount: Number(closed[closed.length - 1].expectedCash) || 0 };
+    if (shifts.length > 0) return { kind: 'open', amount: null };
+    return { kind: 'none', amount: null };
+  };
+  const plainNetCash = (r) => {
+    const tt = r?.totals || {}; const pp = tt.payments || {};
+    return plainNum(pp.cash) - plainNum(tt.expensesTotal) + plainNum(tt.depositsTotal);
+  };
 
   const printReport = () => {
     if (!rep) return;
@@ -3101,19 +3112,51 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
       return parts.join('');
     }).join('');
 
+    const plainNet = plainNetCash(rep);
+    const plainTotalsRows = [
+      ['إجمالي المبيعات', `${money(t.total)} (${plainNum(t.count)} أوردر)`],
+      ['كاش', money(pays.cash || 0)],
+      ['فيزا', money(pays.visa || 0)],
+      ['انستا باي', money(pays.instapay || 0)],
+      ['محفظة', money(pays.wallet || 0)],
+      ['طلبات (من ضمن المبيعات)', `${money(t.talabat)} — كاش طلبات ${money(t.talabatCash)} · فيزا طلبات ${money(t.talabatVisa)}`],
+      ['إجمالي السلف', `${money(t.advancesTotal)} (${plainNum(t.advancesCount)} سلفة)`],
+      ['مصروفات أخرى', money(t.otherExpensesTotal)],
+      ['خارج من الدرج', money(t.expensesTotal)],
+      ['إيداعات', money(t.depositsTotal)],
+      ['خصومات', money(t.discounts)],
+      ['ملغي', `${plainNum(t.cancelled)} أوردر بقيمة ${money(t.cancelledTotal)}`],
+      ['صافي كاش الفترة', money(plainNet)],
+    ].map(([a, b]) => `<tr><td>${periodEsc(a)}</td><td><strong>${periodEsc(b)}</strong></td></tr>`).join('');
+    const plainDaysRows = (rep.days || []).map((d) => {
+      const dp = d.payments || {};
+      const c = plainDayClose(d);
+      const closeTxt = c.kind === 'closed' ? money(c.amount) : (c.kind === 'open' ? 'لسه مفتوحة' : '-');
+      const noActivity = !(d.count > 0) && (d.shifts || []).length === 0 && (d.expenses || []).length === 0 && (d.deposits || []).length === 0;
+      return `<tr><td><strong>${periodEsc(d.date)}</strong> — ${periodEsc(periodWeekday(d.date))}${noActivity ? ' (مفيش نشاط)' : ''}</td><td>${plainNum(d.count)}</td><td>${money(d.total)}</td><td>${money(dp.cash || 0)}</td><td>${money(dp.visa || 0)}</td><td>${money(dp.instapay || 0)}</td><td>${money(d.advancesTotal)}</td><td>${money(d.otherExpensesTotal)}</td><td><strong>${periodEsc(closeTxt)}</strong></td></tr>`;
+    }).join('');
     const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تقرير فترة ${rep.from} - ${rep.to}</title><style>
       body{font-family:Tahoma,Arial,sans-serif;color:#111;margin:24px} h1{font-size:22px;margin:0} h2{font-size:17px;margin:22px 0 6px} h3{font-size:14px;margin:14px 0 4px}
       .sub{color:#555;font-size:13px} table{width:100%;border-collapse:collapse;margin:6px 0 10px} th,td{border:1px solid #999;padding:6px 8px;font-size:13px;text-align:right} th{background:#eee}
       .line{font-size:13px;line-height:1.9} .muted{color:#777;font-size:13px} .day{page-break-inside:avoid} hr{border:none;border-top:2px solid #333;margin:14px 0}
+      .hero{border:2px solid #059669;border-radius:12px;padding:18px;text-align:center;margin:10px 0} .hero-label{color:#047857;font-size:13px;font-weight:bold;margin:0} .hero-num{font-size:34px;font-weight:900;margin:6px 0} .hero-sub{color:#444;font-size:13px;margin:0} .hero-note{color:#777;font-size:12px;margin:4px 0 0}
       @media print{ body{margin:12px} }
     </style></head><body>
       <h1>${periodEsc(RESTAURANT_NAME)} — تقرير فترة تفصيلي</h1>
       <p class="sub">من ${rep.from} إلى ${rep.to} (${rep.daysCount} يوم) · اتعمل بتاريخ ${periodDateTime(rep.generatedAt)} · اليوم بيتحسب من 6 الصبح لـ 6 الصبح</p>
       <hr>
+      <div class="hero">
+        <p class="hero-label">صافي كاش الفترة</p>
+        <p class="hero-num">${money(plainNet)}</p>
+        <p class="hero-sub">كاش ${money(pays.cash || 0)} − اللي طلع من الدرج ${money(t.expensesTotal)} + إيداعات ${money(t.depositsTotal)} · من ${rep.from} إلى ${rep.to} · ${plainNum(t.count)} أوردر</p>
+        <p class="hero-note">ده صافي كاش الفترة بس، غير الفلوس اللي كانت في الدرج قبل الفترة.</p>
+      </div>
       <h2>ملخص الفترة ببساطة</h2>
+      ${tbl(['البيان', 'المبلغ'], plainTotalsRows)}
+      <h2>الخلاصة</h2>
       ${plainTotalsLines(rep).map((l) => `<p class="line">${periodEsc(l)}</p>`).join('')}
       <h2>كل يوم في سطر</h2>
-      ${plainDayLines(rep).map((l) => `<p class="line">${periodEsc(l)}</p>`).join('')}
+      ${tbl(['اليوم', 'أوردرات', 'مبيعات', 'كاش', 'فيزا', 'انستا', 'سلف', 'مصروفات أخرى', 'المتوقع في الدرج'], plainDaysRows)}
       <hr>
       <h2>📌 إجمالي الفترة</h2>
       <p class="line">أوردرات: <strong>${t.count || 0}</strong> · مبيعات: <strong>${money(t.total)}</strong> · كاش ${money(pays.cash || 0)} · فيزا ${money(pays.visa || 0)} · انستا ${money(pays.instapay || 0)} · محفظة ${money(pays.wallet || 0)} · طلبات ${money(t.talabat)} · خصومات ${money(t.discounts)} · ملغي ${t.cancelled || 0} (${money(t.cancelledTotal)}) · إيداعات ${money(t.depositsTotal)}</p>
@@ -3158,10 +3201,12 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
   };
 
   const t = rep?.totals || {};
-  const kpi2 = (label, value, hot) => (
+  const plainNet = plainNetCash(rep);
+  const kpi2 = (label, value, hot, sub) => (
     <div className={`rounded-xl px-4 py-3 border ${hot ? 'bg-amber-500/10 border-amber-500/50' : 'bg-black/20 border-white/10'}`}>
       <p className="text-xs text-zinc-400 font-bold">{label}</p>
       <p className={`text-xl font-black mt-1 ${hot ? 'text-amber-300' : 'text-white'}`}>{value}</p>
+      {sub && <p className="text-[11px] text-zinc-400 mt-1 leading-4">{sub}</p>}
     </div>
   );
 
@@ -3196,33 +3241,77 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
           </div>
           <p className="text-[11px] text-zinc-500">ملف الـ Excel بصيغة CSV وبيفتح في Excel و Google Sheets بالعربي عادي. من الطباعة تقدر تختار "حفظ كـ PDF".</p>
 
-          <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-4 space-y-2">
-            <h5 className="font-black text-emerald-300 text-base">ملخص الفترة ببساطة</h5>
-            {plainTotalsLines(rep).map((line, i) => (
-              <p key={i} className="text-sm text-white leading-6">{line}</p>
-            ))}
+          <div className="rounded-2xl border border-emerald-500/40 bg-gradient-to-b from-emerald-500/15 to-emerald-500/5 p-5 md:p-6 text-center space-y-1.5">
+            <p className="text-xs font-bold text-emerald-300">صافي كاش الفترة</p>
+            <p className="text-4xl md:text-5xl font-black text-white leading-tight">{money(plainNet)}</p>
+            <p className="text-xs text-zinc-300 leading-5">كاش {money(t.payments?.cash || 0)} − اللي طلع من الدرج {money(t.expensesTotal)} + إيداعات {money(t.depositsTotal)} · من {rep.from} إلى {rep.to} · {t.count || 0} أوردر</p>
+            <p className="text-[11px] text-zinc-500">ده صافي كاش الفترة بس، غير الفلوس اللي كانت في الدرج قبل الفترة.</p>
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2">
-            <h5 className="font-black text-white">كل يوم في سطر</h5>
-            {plainDayLines(rep).map((line, i) => (
-              <p key={i} className="text-sm text-zinc-200 leading-6">{line}</p>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {kpi2('عدد الأوردرات', t.count || 0)}
-            {kpi2('إجمالي المبيعات', money(t.total))}
-            {kpi2('💰 إجمالي السلف', `${money(t.advancesTotal)} (${t.advancesCount || 0})`, true)}
-            {kpi2('💸 مصروفات أخرى', money(t.otherExpensesTotal))}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {kpi2('إجمالي المبيعات', money(t.total), false, `${t.count || 0} أوردر`)}
             {kpi2('💵 كاش', money(t.payments?.cash || 0))}
             {kpi2('💳 فيزا', money(t.payments?.visa || 0))}
             {kpi2('📱 انستا باي', money(t.payments?.instapay || 0))}
-            {kpi2('🛍️ طلبات', money(t.talabat))}
+            {kpi2('👛 محفظة', money(t.payments?.wallet || 0))}
+            {kpi2('🛍️ طلبات', money(t.talabat), false, `كاش طلبات ${money(t.talabatCash)} · فيزا طلبات ${money(t.talabatVisa)} — من ضمن المبيعات`)}
+            {kpi2('💰 إجمالي السلف', money(t.advancesTotal), true, `${t.advancesCount || 0} سلفة`)}
+            {kpi2('💸 مصروفات أخرى', money(t.otherExpensesTotal))}
+            {kpi2('خارج من الدرج', money(t.expensesTotal))}
+            {kpi2('➕ إيداعات', money(t.depositsTotal))}
             {kpi2('🏷️ خصومات', money(t.discounts))}
             {kpi2('❌ ملغي', `${t.cancelled || 0} · ${money(t.cancelledTotal)}`)}
-            {kpi2('➕ إيداعات', money(t.depositsTotal))}
-            {kpi2('خارج من الدرج', money(t.expensesTotal))}
+          </div>
+
+          <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 p-4 md:p-5 space-y-2.5">
+            <h5 className="font-black text-emerald-300 text-base">الخلاصة</h5>
+            {plainTotalsLines(rep).map((line, i) => (
+              <p key={i} className="text-sm text-white leading-7">{line}</p>
+            ))}
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <h5 className="font-black text-white">كل يوم في سطر</h5>
+              <span className="text-xs text-zinc-400">{(rep.days || []).length} يوم</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[760px]">
+                <thead>
+                  <tr className="text-zinc-400 text-xs border-b border-white/10">
+                    <th className="text-right font-bold px-4 py-2.5">اليوم</th>
+                    <th className="text-center font-bold px-2 py-2.5">أوردرات</th>
+                    <th className="text-center font-bold px-2 py-2.5">مبيعات</th>
+                    <th className="text-center font-bold px-2 py-2.5">كاش</th>
+                    <th className="text-center font-bold px-2 py-2.5">فيزا</th>
+                    <th className="text-center font-bold px-2 py-2.5">انستا</th>
+                    <th className="text-center font-bold px-2 py-2.5">سلف</th>
+                    <th className="text-center font-bold px-2 py-2.5">مصروفات أخرى</th>
+                    <th className="text-center font-bold px-4 py-2.5">المتوقع في الدرج</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(rep.days || []).map((d, i) => {
+                    const dp = d.payments || {};
+                    const close = plainDayClose(d);
+                    const noActivity = !(d.count > 0) && (d.shifts || []).length === 0 && (d.expenses || []).length === 0 && (d.deposits || []).length === 0;
+                    return (
+                      <tr key={d.date} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                        <td className="px-4 py-2.5 whitespace-nowrap"><span className="font-black text-white">{d.date}</span> <span className="text-zinc-400 text-xs">({periodWeekday(d.date)})</span>{noActivity && <span className="text-zinc-500 text-xs"> · مفيش نشاط</span>}</td>
+                        <td className="text-center px-2 py-2.5 text-zinc-200">{d.count || 0}</td>
+                        <td className="text-center px-2 py-2.5 font-bold text-white">{money(d.total)}</td>
+                        <td className="text-center px-2 py-2.5 text-zinc-200">{money(dp.cash || 0)}</td>
+                        <td className="text-center px-2 py-2.5 text-zinc-200">{money(dp.visa || 0)}</td>
+                        <td className="text-center px-2 py-2.5 text-zinc-200">{money(dp.instapay || 0)}</td>
+                        <td className="text-center px-2 py-2.5 text-amber-300 font-bold">{money(d.advancesTotal)}</td>
+                        <td className="text-center px-2 py-2.5 text-zinc-200">{money(d.otherExpensesTotal)}</td>
+                        <td className="text-center px-4 py-2.5 font-bold text-emerald-300">{close.kind === 'closed' ? money(close.amount) : close.kind === 'open' ? <span className="text-amber-300">لسه مفتوحة</span> : <span className="text-zinc-500">—</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {(rep.advancesByPerson || []).length > 0 && (
