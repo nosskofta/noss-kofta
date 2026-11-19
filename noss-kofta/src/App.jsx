@@ -3047,6 +3047,37 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
     setFrom(f); setTo(t); load(f, t);
   };
 
+  // ملخص الفترة ببساطة — جمل عادية من الأرقام اللي راجعة من /api/reports/period،
+  // بتتستخدم في الشاشة وفي الطباعة. طلبات جزء من المبيعات مش زيادة عليها،
+  // وصافي كاش الفترة = كاش الفترة ناقص الخارج من الدرج زائد الإيداعات،
+  // وده غير الفلوس اللي كانت في الدرج قبل الفترة.
+  const plainNum = (v) => Number(v) || 0;
+  const plainTotalsLines = (r) => {
+    if (!r) return [];
+    const tt = r.totals || {}; const pp = tt.payments || {};
+    const cash = plainNum(pp.cash); const exp = plainNum(tt.expensesTotal); const dep = plainNum(tt.depositsTotal);
+    const net = cash - exp + dep;
+    return [
+      `في الفترة من ${r.from} إلى ${r.to}، بعت بـ ${money(tt.total)} في ${plainNum(tt.count)} أوردر.`,
+      `منهم كاش ${money(pp.cash)}، فيزا ${money(pp.visa)}، انستا باي ${money(pp.instapay)}، محفظة ${money(pp.wallet)}.`,
+      `ومنهم طلبات بـ ${money(tt.talabat)} (كاش طلبات ${money(tt.talabatCash)} وفيزا طلبات ${money(tt.talabatVisa)})، ودي من ضمن المبيعات اللي فوق مش زيادة عليها.`,
+      `طلع من الدرج ${money(tt.expensesTotal)}: سلف ${money(tt.advancesTotal)} (${plainNum(tt.advancesCount)} سلفة)، ومصروفات تانية ${money(tt.otherExpensesTotal)}.`,
+      `دخل الدرج إيداعات ${money(tt.depositsTotal)}.`,
+      `صافي كاش الفترة = كاش ${money(pp.cash)} ناقص اللي طلع من الدرج ${money(tt.expensesTotal)} زائد الإيداعات ${money(tt.depositsTotal)} = ${money(net)}. ده صافي كاش الفترة بس، غير الفلوس اللي كانت في الدرج قبل الفترة.`,
+      `خصومات ${money(tt.discounts)}، وأوردرات ملغية ${plainNum(tt.cancelled)} بقيمة ${money(tt.cancelledTotal)}.`
+    ];
+  };
+  const plainDayLine = (d) => {
+    const dp = d.payments || {};
+    let line = `يوم ${d.date} (${periodWeekday(d.date)}): بعت بـ ${money(d.total)} في ${plainNum(d.count)} أوردر، كاش ${money(dp.cash)}، فيزا ${money(dp.visa)}، انستا ${money(dp.instapay)}، سلف ${money(d.advancesTotal)}، مصروفات تانية ${money(d.otherExpensesTotal)}.`;
+    const shifts = d.shifts || [];
+    const closed = shifts.filter((s) => s.status === 'closed' && s.expectedCash !== null && s.expectedCash !== undefined);
+    if (closed.length > 0) line += ` والوردية قفلت والمتوقع في الدرج ${money(closed[closed.length - 1].expectedCash)}.`;
+    else if (shifts.length > 0) line += ` والوردية لسه مفتوحة.`;
+    return line;
+  };
+  const plainDayLines = (r) => (r?.days || []).map(plainDayLine);
+
   const printReport = () => {
     if (!rep) return;
     const t = rep.totals || {};
@@ -3078,6 +3109,11 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
     </style></head><body>
       <h1>${periodEsc(RESTAURANT_NAME)} — تقرير فترة تفصيلي</h1>
       <p class="sub">من ${rep.from} إلى ${rep.to} (${rep.daysCount} يوم) · اتعمل بتاريخ ${periodDateTime(rep.generatedAt)} · اليوم بيتحسب من 6 الصبح لـ 6 الصبح</p>
+      <hr>
+      <h2>ملخص الفترة ببساطة</h2>
+      ${plainTotalsLines(rep).map((l) => `<p class="line">${periodEsc(l)}</p>`).join('')}
+      <h2>كل يوم في سطر</h2>
+      ${plainDayLines(rep).map((l) => `<p class="line">${periodEsc(l)}</p>`).join('')}
       <hr>
       <h2>📌 إجمالي الفترة</h2>
       <p class="line">أوردرات: <strong>${t.count || 0}</strong> · مبيعات: <strong>${money(t.total)}</strong> · كاش ${money(pays.cash || 0)} · فيزا ${money(pays.visa || 0)} · انستا ${money(pays.instapay || 0)} · محفظة ${money(pays.wallet || 0)} · طلبات ${money(t.talabat)} · خصومات ${money(t.discounts)} · ملغي ${t.cancelled || 0} (${money(t.cancelledTotal)}) · إيداعات ${money(t.depositsTotal)}</p>
@@ -3133,7 +3169,7 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
     <div className={card + ' space-y-4'}>
       <div>
         <h4 className="font-black text-lg text-white">📋 تقرير فترة تفصيلي + السلف</h4>
-        <p className="text-xs text-zinc-400 mt-1 leading-5">اختار أي فترة (أسبوع إجازة، شهر كامل، لحد 92 يوم) وشوف كل يوم لوحده: المبيعات والورديات والمصروفات، والسلف بالاسم والمبلغ والوقت ومين سجّلها. اليوم بيتحسب من 6 الصبح لـ 6 الصبح.</p>
+        <p className="text-xs text-zinc-400 mt-1 leading-5">اختار أي فترة (أسبوع، شهر كامل، لحد 92 يوم) وشوف كل يوم لوحده: المبيعات والورديات والمصروفات، والسلف بالاسم والمبلغ والوقت ومين سجّلها. اليوم بيتحسب من 6 الصبح لـ 6 الصبح.</p>
       </div>
 
       <div className="flex flex-wrap gap-3 items-end">
@@ -3143,7 +3179,7 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
       </div>
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={() => preset('today')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">اليوم</button>
-        <button type="button" onClick={() => preset('week')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">آخر 7 أيام (أسبوع الإجازة)</button>
+        <button type="button" onClick={() => preset('week')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">آخر 7 أيام</button>
         <button type="button" onClick={() => preset('month')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">آخر 30 يوم</button>
         <button type="button" onClick={() => preset('thisMonth')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">الشهر الحالي</button>
         <button type="button" onClick={() => preset('lastMonth')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">الشهر اللي فات</button>
@@ -3159,6 +3195,20 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
             <button type="button" onClick={downloadAdvances} className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-xl font-black text-sm">💰 تحميل السلف فقط (Excel)</button>
           </div>
           <p className="text-[11px] text-zinc-500">ملف الـ Excel بصيغة CSV وبيفتح في Excel و Google Sheets بالعربي عادي. من الطباعة تقدر تختار "حفظ كـ PDF".</p>
+
+          <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-4 space-y-2">
+            <h5 className="font-black text-emerald-300 text-base">ملخص الفترة ببساطة</h5>
+            {plainTotalsLines(rep).map((line, i) => (
+              <p key={i} className="text-sm text-white leading-6">{line}</p>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2">
+            <h5 className="font-black text-white">كل يوم في سطر</h5>
+            {plainDayLines(rep).map((line, i) => (
+              <p key={i} className="text-sm text-zinc-200 leading-6">{line}</p>
+            ))}
+          </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {kpi2('عدد الأوردرات', t.count || 0)}
