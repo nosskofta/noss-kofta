@@ -3559,7 +3559,7 @@ const AccountantLogin = ({ onLogin }) => {
   return (
     <div dir="rtl" className="min-h-screen bg-[#12080A] flex items-center justify-center p-4">
       <form onSubmit={submit} className="bg-[#1C0D10] border border-[#800020] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
-        <h2 className="text-2xl font-black text-[#FFD700] mb-2">📊 صفحة المحاسب — {RESTAURANT_NAME}</h2>
+        <h2 className="text-2xl font-black text-[#FFD700] mb-2">📊 نص كفتة — {RESTAURANT_NAME}</h2>
         <p className="text-sm text-zinc-400 mb-6 leading-6"></p>
         <input type="password" placeholder="الرقم السري" value={pin} onChange={(e) => setPin(e.target.value)} autoComplete="current-password" inputMode="numeric" className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg tracking-widest" />
         {error && <p className="text-red-400 text-sm font-bold mb-4">{error}</p>}
@@ -3720,7 +3720,7 @@ const AccountantReports = ({ token, onLogout }) => {
       <div className="max-w-7xl mx-auto space-y-5">
         <div className="flex flex-wrap gap-3 justify-between items-center border-b border-[#3A1218] pb-4">
           <div>
-            <h2 className="text-3xl font-black text-[#FFD700]">📊 صفحة المحاسب</h2>
+            <h2 className="text-3xl font-black text-[#FFD700]">📊نص كفتة</h2>
             <p className="text-sm text-zinc-400 mt-1">{RESTAURANT_NAME} · التقارير دي قراءة بس — مفيش تعديل ولا بيانات عملاء.</p>
           </div>
           <button type="button" onClick={onLogout} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold">🚪 خروج</button>
