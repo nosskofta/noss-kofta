@@ -98,6 +98,7 @@ const itemSchema = new mongoose.Schema({
   isOffer: { type: Boolean, default: false },
   available: { type: Boolean, default: true },
   order: { type: Number, default: 0 },
+  code: { type: Number }, // رمز الصنف للمحاسب (1..N لكل مطعم، ثابت ومش بيتغير)
 
   // النظام القديم (متروك عشان الأصناف القديمة تفضل شغالة)
   addons: [{ name: String, price: Number }],
@@ -115,6 +116,33 @@ const itemSchema = new mongoose.Schema({
   ]
 });
 const Item = mongoose.model("Item", itemSchema);
+
+// رموز الأصناف للمحاسب: كل صنف ليه رمز ثابت (1..N) حسب ترتيب إضافته.
+// الصنف الجديد بياخد الرقم اللي بعد آخر رمز، والمسح مش بيعيد الترقيم عشان الرمز يفضل ثابت في التقارير القديمة.
+const ensureItemCodes = async () => {
+  const coded = await Item.find({ code: { $ne: null } }).select("code").lean();
+  const used = new Set(coded.map((i) => Number(i.code)).filter((n) => Number.isFinite(n) && n > 0));
+  let next = used.size ? Math.max(...used) : 0;
+  const missing = await Item.find({ $or: [{ code: null }, { code: { $exists: false } }] }).sort({ createdAt: 1, _id: 1 }).select("_id").lean();
+  let assigned = 0;
+  for (const doc of missing) {
+    next += 1;
+    await Item.updateOne({ _id: doc._id }, { $set: { code: next } });
+    assigned += 1;
+  }
+  // إصلاح أي رموز مكررة (لو حصلت من تعديل يدوي قديم): المكرر بس بياخد رمز جديد
+  const all = await Item.find({ code: { $ne: null } }).sort({ createdAt: 1, _id: 1 }).select("_id code").lean();
+  const seen = new Set();
+  for (const doc of all) {
+    if (seen.has(Number(doc.code))) {
+      next += 1;
+      await Item.updateOne({ _id: doc._id }, { $set: { code: next } });
+      assigned += 1;
+    } else seen.add(Number(doc.code));
+  }
+  if (assigned > 0) console.log(`\u{1F522} رموز أصناف المحاسب: اتعيّن ${assigned} رمز جديد`);
+  return assigned;
+};
 
 // =========================
 // Delivery Zones
@@ -290,6 +318,8 @@ const Shift = mongoose.model("Shift", shiftSchema);
 const AUTH_SECRET = process.env.AUTH_SECRET || "";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const ADMIN_PIN = process.env.ADMIN_PIN || "";
+const ACCOUNTANT_USERNAME = (process.env.ACCOUNTANT_USERNAME || "accountant").toLowerCase().trim() || "accountant";
+const ACCOUNTANT_PIN = process.env.ACCOUNTANT_PIN || "";
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
 const ADMIN_USERNAME = "admin";
@@ -307,6 +337,11 @@ const CASHIER_TOKEN_TTL = 14 * 24 * 60 * 60 * 1000;
 
 const adminStamp = authReady
   ? crypto.createHmac("sha256", AUTH_SECRET).update(`admin:${ADMIN_PASSWORD}`).digest("hex").slice(0, 16)
+  : "";
+
+// ختم توكن المحاسب: بيتغير لما يتغير ACCOUNTANT_PIN، فأي توكن قديم بيبطل لوحده
+const accountantStamp = ACCOUNTANT_PIN.length >= 4
+  ? crypto.createHmac("sha256", AUTH_SECRET).update(`accountant:${ACCOUNTANT_PIN}`).digest("hex").slice(0, 16)
   : "";
 
 const staffSchema = new mongoose.Schema({
@@ -463,6 +498,26 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
+// المحاسب (أو الأدمن) — للتقارير بس. توكن المحاسب مينفعش في requireAuth/requireAdmin،
+// فمش بيوصل لأي حاجة غير راوتات المحاسب اللي تحت.
+const requireAccountantOrAdmin = (req, res, next) => {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const payload = token ? verifyToken(token) : null;
+  if (!payload) return res.status(401).json({ error: "غير مصرح" });
+  if (payload.role === "accountant") {
+    if (!accountantStamp || payload.s !== accountantStamp) return res.status(401).json({ error: "غير مصرح" });
+    req.user = { _id: "accountant", name: "المحاسب", username: ACCOUNTANT_USERNAME, role: "accountant" };
+    return next();
+  }
+  if (payload.role === "admin") {
+    if (payload.s !== adminStamp) return res.status(401).json({ error: "غير مصرح" });
+    req.user = { _id: "admin", name: "المدير", username: ADMIN_USERNAME, role: "admin" };
+    return next();
+  }
+  return res.status(401).json({ error: "غير مصرح" });
+};
+
 // ---------- حسابات العملاء (رقم تليفون + رقم سري) ----------
 // العميل بيثبت إن الرقم رقمه بالرقم السري، فمحدش غريب يقدر يكتب رقم حد ويشوف عنوانه أو طلباته.
 const CUSTOMER_TOKEN_TTL = 90 * 24 * 60 * 60 * 1000;
@@ -572,6 +627,39 @@ app.post("/api/auth/login", async (req, res) => {
 
     buckets.delete(userKey);
     res.json(session);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- دخول المحاسب (يوزر + رقم سري من Railway، قراءة تقارير بس) ----------
+app.post("/api/auth/accountant-login", async (req, res) => {
+  try {
+    if (!ACCOUNTANT_PIN || ACCOUNTANT_PIN.length < 4) return res.status(503).json({ error: "حساب المحاسب لسه متظبطش في Railway — ضيف ACCOUNTANT_PIN" });
+    const username = String(req.body?.username || "").toLowerCase().trim();
+    const pin = String(req.body?.pin || "");
+    if (!username || !pin || pin.length > 200) return res.status(400).json({ error: "اكتب اليوزر والرقم السري" });
+    const userKey = `acctlogin:${req.ip}:${username}`;
+    const ipKey = `acctloginip:${req.ip}`;
+    if (
+      (peekBucket(userKey)?.count || 0) >= MAX_LOGIN_FAILS_PER_USER ||
+      (peekBucket(ipKey)?.count || 0) >= MAX_LOGIN_FAILS_PER_IP
+    ) {
+      return res.status(429).json({ error: "محاولات غلط كتير، استنى 15 دقيقة وحاول تاني" });
+    }
+    if (username !== ACCOUNTANT_USERNAME || !safeEqual(pin, ACCOUNTANT_PIN)) {
+      hitBucket(userKey, LOGIN_WINDOW_MS);
+      hitBucket(ipKey, LOGIN_WINDOW_MS);
+      if ((peekBucket(userKey)?.count || 0) >= MAX_LOGIN_FAILS_PER_USER) {
+        void sendTelegramAlert(`\u{1F510} محاولات دخول محاسب غلط كتير\nالمستخدم: ${username}\nاتقفل 15 دقيقة بعد ${MAX_LOGIN_FAILS_PER_USER} محاولات فاشلة`);
+      }
+      return res.status(401).json({ error: "اليوزر أو الرقم السري غلط" });
+    }
+    buckets.delete(userKey);
+    res.json({
+      token: signToken({ id: "accountant", role: "accountant", s: accountantStamp }, 12 * 60 * 60 * 1000),
+      user: { id: "accountant", name: "المحاسب", username: ACCOUNTANT_USERNAME, role: "accountant" }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -830,7 +918,9 @@ app.get("/api/items/:id/image", async (req, res) => {
 app.post("/api/items", requireAuth, requireAdmin, async (req, res) => {
   try {
     const count = await Item.countDocuments({ category: req.body.category });
-    const newItem = new Item({ ...req.body, order: count });
+    const lastCoded = await Item.findOne({ code: { $ne: null } }).sort({ code: -1 }).select("code").lean();
+    const nextCode = (Number(lastCoded?.code) || 0) + 1;
+    const newItem = new Item({ ...req.body, order: count, code: nextCode });
     res.json(await newItem.save());
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -860,6 +950,7 @@ app.put("/api/items/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const updateData = { ...req.body };
     delete updateData._id;
+    delete updateData.code; // رمز الصنف ثابت ومش بيتغير من التعديل
     delete updateData.available;
     if (isOwnImageUrl(updateData.image)) delete updateData.image;
     if (req.body.price !== undefined) updateData.price = Number(req.body.price);
@@ -2068,6 +2159,112 @@ const buildReport = async (from, to, shift = null) => {
   return report;
 };
 
+// ---------- تقارير المحاسب (قراءة بس — مفيش بيانات عملاء هنا، تجميعات بس) ----------
+// نفس طلب الأوردرات ونفس قواعد الفلوس بتاعة buildReport بالظبط (أجرة التوصيل برّه المبيعات،
+// الدفع المقسّم بيتوزّع على طرقه، طلبات إجماليها الكامل وكاش طلبات في الكاش)، عشان الأرقام تطابق تقرير المبيعات.
+const buildAccountantSummary = async (from, to, typeFilter = "all") => {
+  const fromD = new Date(from), toD = new Date(to);
+  const allOrders = await Order.find({
+    $or: [
+      { source: "pos", orderType: { $in: ["pickup", "talabat"] }, status: { $ne: "cancelled" }, createdAt: { $gt: fromD, $lte: toD } },
+      { status: "completed", completedAt: { $gt: fromD, $lte: toD }, $or: [{ source: { $ne: "pos" } }, { source: "pos", orderType: "delivery" }] }
+    ]
+  }).lean();
+  const catalog = await Item.find().select("name category code").lean();
+  const orders = typeFilter === "all" ? allOrders : allOrders.filter((o) => o.orderType === typeFilter);
+
+  const channelOf = (key) => ({ key, label: key === "delivery" ? "توصيل" : key === "talabat" ? "طلبات" : "استلام", count: 0, total: 0, delivery: 0, discounts: 0, payments: {} });
+  const channelsMap = new Map([["pickup", channelOf("pickup")], ["delivery", channelOf("delivery")], ["talabat", channelOf("talabat")]]);
+  const totals = { count: 0, total: 0, delivery: 0, discounts: 0, payments: {}, talabat: 0, talabatCash: 0, talabatVisa: 0 };
+
+  // تجميع الأصناف على الصنف الأساسي: الاسم زي ما هو، أو بعد شيل أقواس الأحجام/الأنواع من آخره،
+  // أو أطول اسم صنف في الكتالوج بيبدأ بيه اسم الأوردر. البوكس نفسه هو الصنف المباع (مش محتوياته)،
+  // والأنواع/الأحجام مش بتتفصل في سطور لوحدها هنا.
+  const byName = new Map(catalog.map((i) => [i.name, i]));
+  const stripTrailingParens = (n) => {
+    let s = String(n || "").trim();
+    for (;;) {
+      const cut = s.replace(/\s*\([^)]*\)\s*$/, "").trim();
+      if (cut === s) return s;
+      s = cut;
+    }
+  };
+  const resolveBase = (rawName) => {
+    const name = String(rawName || "صنف بدون اسم");
+    if (byName.has(name)) return byName.get(name);
+    const stripped = stripTrailingParens(name);
+    if (byName.has(stripped)) return byName.get(stripped);
+    let best = null;
+    for (const item of catalog) {
+      if (item.name && name.startsWith(item.name) && (!best || item.name.length > best.name.length)) best = item;
+    }
+    return best;
+  };
+  const itemRows = new Map();
+  const addItemRow = (base, qty, revenue) => {
+    const key = base ? `cat:${base.name}` : `raw:${String(base?.name || "صنف بدون اسم")}`;
+    const row = itemRows.get(key) || { code: base?.code ?? null, name: base?.name || String(base?.name || "صنف بدون اسم"), category: base?.category || "أخرى", qty: 0, total: 0 };
+    row.qty += qty;
+    row.total += revenue;
+    itemRows.set(key, row);
+  };
+
+  for (const o of orders) {
+    const g = Number(o.grandTotal) || 0;
+    const fee = o.orderType === "delivery" ? Math.min(g, Number(o.deliveryFee) || 0) : 0;
+    const sale = g - fee;
+    const disc = Number(o.discountAmount) || 0;
+    totals.count += 1;
+    totals.total += sale;
+    totals.delivery += fee;
+    totals.discounts += disc;
+    const ch = channelsMap.get(o.orderType) || channelsMap.get("pickup");
+    ch.count += 1;
+    ch.total += sale;
+    ch.delivery += fee;
+    ch.discounts += disc;
+    if (o.orderType === "talabat") {
+      totals.talabat += g;
+      if (o.paymentMethod === "cash") {
+        totals.talabatCash += g;
+        totals.payments.cash = (totals.payments.cash || 0) + g;
+        ch.payments.cash = (ch.payments.cash || 0) + g;
+      } else {
+        totals.talabatVisa += g;
+        // فيزا طلبات بتتحط في عمود الفيزا بتاع قناة طلبات عشان أعمدة الدفع في كل قناة تجمّع إجمالي القناة
+        ch.payments.visa = (ch.payments.visa || 0) + g;
+      }
+    } else {
+      const parts = splitOf(o) || [{ method: o.paymentMethod || "cash", amount: g }];
+      for (const p of parts) {
+        const amt = p.method === "cash" ? Math.max(0, p.amount - fee) : p.amount;
+        totals.payments[p.method] = (totals.payments[p.method] || 0) + amt;
+        ch.payments[p.method] = (ch.payments[p.method] || 0) + amt;
+      }
+    }
+    for (const it of o.items || []) {
+      const qty = Number(it.quantity) || 0;
+      const revenue = (Number(it.price) || 0) * qty;
+      addItemRow(resolveBase(it.name), qty, revenue);
+    }
+  }
+
+  const items = [...itemRows.values()].sort((a, b) => {
+    if (a.code == null && b.code == null) return b.total - a.total || String(a.name).localeCompare(String(b.name));
+    if (a.code == null) return 1;
+    if (b.code == null) return -1;
+    return a.code - b.code;
+  });
+  const channels = [...channelsMap.values()];
+  return {
+    from, to, type: typeFilter,
+    totals,
+    channels,
+    items,
+    itemsTotals: { qty: items.reduce((a, r) => a + r.qty, 0), total: items.reduce((a, r) => a + r.total, 0) }
+  };
+};
+
 // التقارير القديمة اتحفظت بصافي مبيعات = المبيعات − المصروفات. هنا بنصححها وقت القراءة بس (الداتابيز زي ما هي)
 const normalizeShiftReport = (shiftDoc) => {
   const doc = shiftDoc?.toObject ? shiftDoc.toObject() : shiftDoc;
@@ -2403,7 +2600,7 @@ const periodNormalizeMovement = (m, shift) => ({
   isAdvance: periodMovementIsAdvance(m)
 });
 
-app.get("/api/reports/period", requireAuth, requireAdmin, async (req, res) => {
+const handlePeriodReport = async (req, res) => {
   try {
     const fromKey = String(req.query.from || "");
     const toKey = String(req.query.to || "");
@@ -2500,6 +2697,68 @@ app.get("/api/reports/period", requireAuth, requireAdmin, async (req, res) => {
       expenses: allMovements.filter((m) => m.type === "out"),
       shifts: shiftSummaries, days
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+app.get("/api/reports/period", requireAuth, requireAdmin, handlePeriodReport);
+app.get("/api/accountant/reports/period", requireAccountantOrAdmin, handlePeriodReport);
+
+// ---------- راوتات المحاسب (تجميعات بس — مفيش أسماء ولا تليفونات ولا عناوين عملاء) ----------
+const validateAccountantPeriod = (req, res) => {
+  const fromKey = String(req.query.from || "");
+  const toKey = String(req.query.to || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromKey) || !/^\d{4}-\d{2}-\d{2}$/.test(toKey)) {
+    res.status(400).json({ error: "اختار تاريخ البداية والنهاية" });
+    return null;
+  }
+  const fromD0 = new Date(`${fromKey}T00:00:00Z`);
+  const toD0 = new Date(`${toKey}T00:00:00Z`);
+  if (isNaN(fromD0) || isNaN(toD0) || toD0 < fromD0) {
+    res.status(400).json({ error: "الفترة غير صحيحة" });
+    return null;
+  }
+  const spanDays = Math.round((toD0 - fromD0) / 86400000) + 1;
+  if (spanDays > 92) {
+    res.status(400).json({ error: "الفترة أقصاها 92 يوم، قسّمها على فترتين" });
+    return null;
+  }
+  const { from: periodFrom } = dayWindow(fromKey);
+  const { to: periodTo } = dayWindow(toKey);
+  return { fromKey, toKey, periodFrom, periodTo };
+};
+
+app.get("/api/accountant/reports/summary", requireAccountantOrAdmin, async (req, res) => {
+  try {
+    const p = validateAccountantPeriod(req, res);
+    if (!p) return;
+    const s = await buildAccountantSummary(p.periodFrom, p.periodTo, "all");
+    res.json({ ...s, from: p.fromKey, to: p.toKey });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/accountant/reports/items", requireAccountantOrAdmin, async (req, res) => {
+  try {
+    const p = validateAccountantPeriod(req, res);
+    if (!p) return;
+    await ensureItemCodes(); // أي صنف جديد من غير رمز ياخد رقمه قبل ما يطلع في التقرير
+    const type = ["pickup", "delivery", "talabat"].includes(String(req.query.type || "")) ? String(req.query.type) : "all";
+    const s = await buildAccountantSummary(p.periodFrom, p.periodTo, type);
+    res.json({ from: p.fromKey, to: p.toKey, type, items: s.items, itemsTotals: s.itemsTotals, totals: { count: s.totals.count, total: s.totals.total, discounts: s.totals.discounts } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// دليل الأصناف والأكواد للمحاسب: كل الأصناف حتى اللي متباعش — مرجع بس، من غير فترة
+app.get("/api/accountant/reports/catalog", requireAccountantOrAdmin, async (req, res) => {
+  try {
+    await ensureItemCodes(); // أي صنف جديد من غير رمز ياخد رقمه قبل ما يطلع في الدليل
+    const items = await Item.find().select("code name category price available").sort({ code: 1, _id: 1 }).lean();
+    items.sort((a, b) => (a.code == null ? 1 : b.code == null ? -1 : Number(a.code) - Number(b.code)));
+    res.json({ items: items.map((i) => ({ code: i.code ?? null, name: i.name, category: i.category, price: Number(i.price) || 0, available: i.available !== false })) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2613,6 +2872,8 @@ const connectToDatabase = async () => {
       await removeLegacyAdminAccounts();
       await autoCloseForgottenShifts();
       await mergeDuplicateOpenShifts();
+      // رموز الأصناف للمحاسب: أي صنف من غير رمز ياخد الرقم اللي بعده
+      void ensureItemCodes().catch((e) => console.error("ensureItemCodes failed:", e.message));
       return;
     } catch (err) {
       console.error("❌ فشل الاتصال بقاعدة البيانات، هحاول تاني بعد 5 ثواني:", err.message);

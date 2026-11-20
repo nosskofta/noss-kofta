@@ -1605,6 +1605,7 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
                       <div>
                         <h4 className="font-bold text-white">
                           {item.name} 
+                          {item.code ? <span className="bg-zinc-700 text-zinc-200 text-xs px-2 py-0.5 rounded-md font-black mr-2">رمز {item.code}</span> : null}
                           {item.available === false && <span className="bg-red-600 text-white text-xs px-2 py-0.5 rounded-md font-black mr-2">⛔ خلص</span>}
                           {item.discount > 0 && <span className="bg-[#FFD700] text-black text-xs px-2 py-0.5 rounded-md font-black mr-2">خصم {item.discount}%</span>}
                         </h4>
@@ -3018,9 +3019,14 @@ const periodDownload = (filename, content, type) => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
-const PeriodReportPanel = ({ authFetch, card, inp }) => {
-  const [from, setFrom] = useState(() => periodAddDays(periodBizToday(), -6));
-  const [to, setTo] = useState(() => periodBizToday());
+const PeriodReportPanel = ({ authFetch, card, inp, base, period, onPeriodChange, hidePickers }) => {
+  const [fromInner, setFromInner] = useState(() => periodAddDays(periodBizToday(), -6));
+  const [toInner, setToInner] = useState(() => periodBizToday());
+  // لو اتبعتت فترة من برّه (صفحة المحاسب) بتكون هي المتحكمة؛ غير كده الحالة الداخلية زي ما هي
+  const from = period ? period.from : fromInner;
+  const to = period ? period.to : toInner;
+  const setFrom = (v) => { if (onPeriodChange) onPeriodChange({ from: v, to }); else setFromInner(v); };
+  const setTo = (v) => { if (onPeriodChange) onPeriodChange({ from, to: v }); else setToInner(v); };
   const [rep, setRep] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -3030,12 +3036,15 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
     if (!ff || !tt || tt < ff) return alert('اختار فترة صحيحة (تاريخ النهاية بعد البداية)');
     setBusy(true); setMsg(''); setRep(null);
     try {
-      const r = await authFetch(`/api/reports/period?from=${encodeURIComponent(ff)}&to=${encodeURIComponent(tt)}`);
+      const r = await authFetch(`${base || '/api/reports/period'}?from=${encodeURIComponent(ff)}&to=${encodeURIComponent(tt)}`);
       const d = await r.json().catch(() => ({}));
       if (!r.ok) setMsg(d.error || 'حصل خطأ'); else setRep(d);
     } catch (e) { setMsg('تعذر الاتصال بالسيرفر'); }
     setBusy(false);
   };
+
+  // في صفحة المحاسب الفترة بتيجي من برّه: أول ما تتغير، التقرير يتحمّل لوحده
+  useEffect(() => { if (hidePickers && period?.from && period?.to) load(period.from, period.to); }, [hidePickers, period?.from, period?.to]);
 
   const preset = (kind) => {
     const today = periodBizToday();
@@ -3217,6 +3226,7 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
         <p className="text-xs text-zinc-400 mt-1 leading-5">اختار أي فترة (أسبوع، شهر كامل، لحد 92 يوم) وشوف كل يوم لوحده: المبيعات والورديات والمصروفات، والسلف بالاسم والمبلغ والوقت ومين سجّلها. اليوم بيتحسب من 6 الصبح لـ 6 الصبح.</p>
       </div>
 
+      {!hidePickers && (<>
       <div className="flex flex-wrap gap-3 items-end">
         <div><label className="block text-xs text-zinc-400 mb-1">من يوم</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={inp} /></div>
         <div><label className="block text-xs text-zinc-400 mb-1">إلى يوم</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={inp} /></div>
@@ -3229,6 +3239,7 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
         <button type="button" onClick={() => preset('thisMonth')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">الشهر الحالي</button>
         <button type="button" onClick={() => preset('lastMonth')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">الشهر اللي فات</button>
       </div>
+      </>)}
 
       {msg && <p className="text-red-400 text-sm font-bold">{msg}</p>}
 
@@ -3384,6 +3395,556 @@ const PeriodReportPanel = ({ authFetch, card, inp }) => {
       )}
     </div>
   );
+};
+
+
+// ================= تنزيل Excel حقيقي (.xlsx) من غير أي مكتبة =================
+// ملف xlsx هو ZIP فيه ملفات XML. هنا بنبنيه يدويًا (تخزين من غير ضغط) عشان
+// المحاسب ينزّل شيت جاهز يفتح في Excel على طول، بالأرقام أرقام مش نص.
+const xlsxXmlEsc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const xlsxColLetter = (i) => { let s = ''; let n = i + 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+const xlsxCrcTable = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) { let c = n; for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
+  return t;
+})();
+const xlsxCrc32 = (bytes) => {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i += 1) c = xlsxCrcTable[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+};
+const xlsxZipStore = (files) => {
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  const dosDate = ((2024 - 1980) << 9) | (1 << 5) | 1;
+  for (const f of files) {
+    const data = enc.encode(f.data);
+    const name = enc.encode(f.name);
+    const crc = xlsxCrc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true);
+    lh.setUint16(4, 20, true);
+    lh.setUint16(6, 0x0800, true);
+    lh.setUint16(8, 0, true);
+    lh.setUint16(10, 0, true);
+    lh.setUint16(12, dosDate, true);
+    lh.setUint32(14, crc, true);
+    lh.setUint32(18, data.length, true);
+    lh.setUint32(22, data.length, true);
+    lh.setUint16(26, name.length, true);
+    lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), name, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true);
+    ch.setUint16(4, 20, true);
+    ch.setUint16(6, 20, true);
+    ch.setUint16(8, 0x0800, true);
+    ch.setUint16(10, 0, true);
+    ch.setUint16(12, 0, true);
+    ch.setUint16(14, dosDate, true);
+    ch.setUint32(16, crc, true);
+    ch.setUint32(20, data.length, true);
+    ch.setUint32(24, data.length, true);
+    ch.setUint16(28, name.length, true);
+    ch.setUint16(30, 0, true);
+    ch.setUint16(32, 0, true);
+    ch.setUint16(34, 0, true);
+    ch.setUint16(36, 0, true);
+    ch.setUint32(38, 0, true);
+    ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + data.length;
+  }
+  const cdSize = central.reduce((a, p) => a + p.length, 0);
+  const eocd = new DataView(new ArrayBuffer(22));
+  eocd.setUint32(0, 0x06054b50, true);
+  eocd.setUint16(4, 0, true);
+  eocd.setUint16(6, 0, true);
+  eocd.setUint16(8, files.length, true);
+  eocd.setUint16(10, files.length, true);
+  eocd.setUint32(12, cdSize, true);
+  eocd.setUint32(16, offset, true);
+  eocd.setUint16(20, 0, true);
+  const all = [...parts, ...central, new Uint8Array(eocd.buffer)];
+  const total = all.reduce((a, p) => a + p.length, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const p of all) { out.set(p, at); at += p.length; }
+  return out;
+};
+
+// rows: صفوف، كل خلية نص أو رقم. titleRows: سطور عنوان في الأول.
+// totalsRow: صف إجمالي عريض. summaryLines: [[نص، رقم], ...] بعد سطر فاضي.
+// الأنماط: 0 عادي، 1 عنوان الجدول (أصفر وعريض)، 2 عريض، 3 عنوان كبير.
+const buildXlsxFile = ({ titleRows = [], headers, rows, widths = [], totalsRow = null, summaryLines = [] }) => {
+  const strings = [];
+  const strIdx = new Map();
+  const sIdx = (v) => { const s = String(v ?? ''); if (!strIdx.has(s)) { strIdx.set(s, strings.length); strings.push(s); } return strIdx.get(s); };
+  const sheetRows = [];
+  titleRows.forEach((t, i) => sheetRows.push([{ v: t, s: i === 0 ? 3 : 2 }]));
+  if (titleRows.length) sheetRows.push([]);
+  sheetRows.push(headers.map((h) => ({ v: h, s: 1 })));
+  rows.forEach((r) => sheetRows.push(r.map((c) => ({ v: c, s: 0 }))));
+  if (totalsRow) sheetRows.push(totalsRow.map((c) => ({ v: c, s: 2 })));
+  if (summaryLines.length) {
+    sheetRows.push([]);
+    summaryLines.forEach(([label, val]) => sheetRows.push([{ v: label, s: 2 }, { v: val, s: 2 }]));
+  }
+  const body = sheetRows.map((row, ri) => {
+    const cells = row.map((cell, ci) => {
+      const ref = `${xlsxColLetter(ci)}${ri + 1}`;
+      if (cell == null) return `<c r="${ref}"/>`;
+      if (typeof cell.v === 'number') return `<c r="${ref}"${cell.s ? ` s="${cell.s}"` : ''}><v>${Math.round(cell.v * 100) / 100}</v></c>`;
+      return `<c r="${ref}"${cell.s ? ` s="${cell.s}"` : ''} t="s"><v>${sIdx(cell.v)}</v></c>`;
+    }).join('');
+    return `<row r="${ri + 1}">${cells}</row>`;
+  }).join('');
+  const cols = widths.length ? `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` : '';
+  const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView rightToLeft="1" tabSelected="1" workbookViewId="0"/></sheetViews>${cols}<sheetData>${body}</sheetData></worksheet>`;
+  const sharedXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strings.length}" uniqueCount="${strings.length}">${strings.map((s) => `<si><t xml:space="preserve">${xlsxXmlEsc(s)}</t></si>`).join('')}</sst>`;
+  const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor rgb="FFFFFF00"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="التقرير" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
+  const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  const wbRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+  return xlsxZipStore([
+    { name: '[Content_Types].xml', data: contentTypes },
+    { name: '_rels/.rels', data: rels },
+    { name: 'xl/workbook.xml', data: workbookXml },
+    { name: 'xl/_rels/workbook.xml.rels', data: wbRels },
+    { name: 'xl/worksheets/sheet1.xml', data: sheetXml },
+    { name: 'xl/sharedStrings.xml', data: sharedXml },
+    { name: 'xl/styles.xml', data: stylesXml }
+  ]);
+};
+const xlsxDownload = (filename, bytes) => {
+  const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+const acctRound = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+// ================= صفحة المحاسب =================
+// صفحة منفصلة تمامًا: مفيش أي لينك ليها من الكاشير ولا الإدارة ولا صفحات العملاء،
+// والدخول ليها بجلسة لوحدها (accountantSession) غير جلسة الكاشير.
+const ACCOUNTANT_KEY = 'accountantSession';
+const readAccountant = () => { try { return JSON.parse(localStorage.getItem(ACCOUNTANT_KEY)) || null; } catch { return null; } };
+const saveAccountant = (data) => { try { localStorage.setItem(ACCOUNTANT_KEY, JSON.stringify(data)); } catch {} };
+const clearAccountant = () => { try { localStorage.removeItem(ACCOUNTANT_KEY); } catch {} };
+
+const AccountantLogin = ({ onLogin }) => {
+  const [username, setUsername] = useState('');
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const adminSession = readSession();
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(''); setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/accountant-login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, pin })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'بيانات الدخول غلط');
+      setPin('');
+      onLogin(data);
+    } catch (err) {
+      setError(err.message === 'Failed to fetch' ? 'مشكلة في الاتصال بالسيرفر' : err.message);
+    } finally { setLoading(false); }
+  };
+  return (
+    <div dir="rtl" className="min-h-screen bg-[#12080A] flex items-center justify-center p-4">
+      <form onSubmit={submit} className="bg-[#1C0D10] border border-[#800020] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
+        <h2 className="text-2xl font-black text-[#FFD700] mb-2">📊 صفحة المحاسب — {RESTAURANT_NAME}</h2>
+        <p className="text-sm text-zinc-400 mb-6 leading-6">دخول المحاسب بس. التقارير هنا مش بتظهر للكاشير ولا للعملاء.</p>
+        <input type="text" placeholder="اسم المستخدم" value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" autoComplete="username" className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg" />
+        <input type="password" placeholder="الرقم السري" value={pin} onChange={(e) => setPin(e.target.value)} autoComplete="current-password" inputMode="numeric" className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg tracking-widest" />
+        {error && <p className="text-red-400 text-sm font-bold mb-4">{error}</p>}
+        <button type="submit" disabled={loading} className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow disabled:opacity-60">{loading ? 'جاري الدخول...' : 'دخول'}</button>
+        {adminSession?.token && adminSession.user?.role === 'admin' && (
+          <button type="button" onClick={() => onLogin(adminSession)} className="w-full mt-3 bg-zinc-700 hover:bg-zinc-600 text-white font-bold py-3 rounded-xl transition">الدخول بحساب الأدمن</button>
+        )}
+      </form>
+    </div>
+  );
+};
+
+const ACCOUNTANT_TYPES = [
+  { key: 'all', label: 'الكل' },
+  { key: 'pickup', label: 'استلام' },
+  { key: 'delivery', label: 'توصيل' },
+  { key: 'talabat', label: 'طلبات' }
+];
+const acctTypeLabel = (k) => (ACCOUNTANT_TYPES.find((t) => t.key === k) || {}).label || 'الكل';
+
+const AccountantReports = ({ token, isAdmin, onLogout }) => {
+  const card = 'bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5';
+  const inp = 'w-full bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm';
+  const [tab, setTab] = useState('sales');
+  const [period, setPeriod] = useState(() => ({ from: periodAddDays(periodBizToday(), -6), to: periodBizToday() }));
+  const [type, setType] = useState('all');
+  const [itemsData, setItemsData] = useState(null);
+  const [itemsBusy, setItemsBusy] = useState(false);
+  const [itemsMsg, setItemsMsg] = useState('');
+  const [itemsKey, setItemsKey] = useState('');
+  const [sumData, setSumData] = useState(null);
+  const [sumBusy, setSumBusy] = useState(false);
+  const [sumMsg, setSumMsg] = useState('');
+  const [sumKey, setSumKey] = useState('');
+  const [catData, setCatData] = useState(null);
+  const [catBusy, setCatBusy] = useState(false);
+  const [catMsg, setCatMsg] = useState('');
+
+  const accountantFetch = async (path, opts = {}) => {
+    const res = await fetch(`${API_BASE}${path}`, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` } });
+    if (res.status === 401) { onLogout(); throw new Error('unauthorized'); }
+    return res;
+  };
+
+  const loadItems = async (f, t, ty) => {
+    const key = `${f}|${t}|${ty}`;
+    setItemsBusy(true); setItemsMsg('');
+    try {
+      const r = await accountantFetch(`/api/accountant/reports/items?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&type=${encodeURIComponent(ty)}`);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setItemsMsg(d.error || 'حصل خطأ'); setItemsData(null); }
+      else { setItemsData(d); setItemsKey(key); }
+    } catch (e) { if (e.message !== 'unauthorized') setItemsMsg('تعذر الاتصال بالسيرفر'); }
+    setItemsBusy(false);
+  };
+
+  const loadSummary = async (f, t) => {
+    const key = `${f}|${t}`;
+    setSumBusy(true); setSumMsg('');
+    try {
+      const r = await accountantFetch(`/api/accountant/reports/summary?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setSumMsg(d.error || 'حصل خطأ'); setSumData(null); }
+      else { setSumData(d); setSumKey(key); }
+    } catch (e) { if (e.message !== 'unauthorized') setSumMsg('تعذر الاتصال بالسيرفر'); }
+    setSumBusy(false);
+  };
+
+  useEffect(() => {
+    if (tab === 'items' && itemsKey !== `${period.from}|${period.to}|${type}`) loadItems(period.from, period.to, type);
+    if (tab === 'channels' && sumKey !== `${period.from}|${period.to}`) loadSummary(period.from, period.to);
+    if (tab === 'catalog' && !catData && !catBusy) loadCatalog();
+  }, [tab, period, type]);
+
+  const preset = (kind) => {
+    const today = periodBizToday();
+    let f = today, t = today;
+    if (kind === 'yesterday') { f = periodAddDays(today, -1); t = f; }
+    if (kind === 'week') f = periodAddDays(today, -6);
+    if (kind === 'month') f = periodAddDays(today, -29);
+    if (kind === 'thisMonth') f = `${today.slice(0, 7)}-01`;
+    setPeriod({ from: f, to: t });
+  };
+
+  const downloadItemsXlsx = () => {
+    if (!itemsData) return;
+    const rows = (itemsData.items || []).map((it) => [it.code ?? '-', it.name, it.qty, acctRound(it.total)]);
+    const bytes = buildXlsxFile({
+      titleRows: [
+        `${RESTAURANT_NAME} — تقرير مبيعات الأصناف`,
+        `الفترة: من ${period.from} إلى ${period.to} (اليوم بيتحسب من 6 الصبح لـ 6 الصبح)`,
+        `القناة: ${acctTypeLabel(type)}`,
+        `اتعمل بتاريخ ${new Date().toLocaleString('ar-EG')}`
+      ],
+      headers: ['الرمز', 'اسم الصنف', 'عدد الأصناف', 'مجموع سعر المبيعات (ج)'],
+      rows,
+      widths: [10, 45, 14, 22],
+      totalsRow: ['', 'الإجمالي', itemsData.itemsTotals?.qty || 0, acctRound(itemsData.itemsTotals?.total)],
+      summaryLines: [
+        ['إجمالي مبيعات الأصناف', acctRound(itemsData.itemsTotals?.total)],
+        ['الخصومات', acctRound(itemsData.totals?.discounts)],
+        ['صافي المبيعات بعد الخصم', acctRound((itemsData.itemsTotals?.total || 0) - (itemsData.totals?.discounts || 0))]
+      ]
+    });
+    xlsxDownload(`items-sales-${period.from}_to_${period.to}-${type}.xlsx`, bytes);
+  };
+
+  const downloadChannelsXlsx = () => {
+    if (!sumData) return;
+    const rows = (sumData.channels || []).map((c) => [c.label, c.count, acctRound(c.total), acctRound(c.payments?.cash), acctRound(c.payments?.visa), acctRound(c.payments?.instapay), acctRound(c.payments?.wallet), acctRound(c.delivery), acctRound(c.discounts)]);
+    const tot = rows.reduce((a, r) => { for (let i = 1; i < r.length; i += 1) a[i] = (a[i] || 0) + (Number(r[i]) || 0); return a; }, []);
+    const bytes = buildXlsxFile({
+      titleRows: [
+        `${RESTAURANT_NAME} — تقرير قنوات البيع`,
+        `الفترة: من ${period.from} إلى ${period.to} (اليوم بيتحسب من 6 الصبح لـ 6 الصبح)`,
+        `اتعمل بتاريخ ${new Date().toLocaleString('ar-EG')}`
+      ],
+      headers: ['القناة', 'عدد الأوردرات', 'إجمالي المبيعات (ج)', 'كاش (ج)', 'فيزا (ج)', 'انستا باي (ج)', 'محفظة (ج)', 'رسوم توصيل (ج)', 'خصومات (ج)'],
+      rows,
+      widths: [14, 14, 18, 14, 14, 14, 14, 14, 14],
+      totalsRow: ['الإجمالي', ...tot.slice(1)]
+    });
+    xlsxDownload(`channels-sales-${period.from}_to_${period.to}.xlsx`, bytes);
+  };
+
+  const loadCatalog = async () => {
+    setCatBusy(true); setCatMsg('');
+    try {
+      const r = await accountantFetch('/api/accountant/reports/catalog');
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setCatMsg(d.error || 'حصل خطأ'); setCatData(null); }
+      else setCatData(d);
+    } catch (e) { if (e.message !== 'unauthorized') setCatMsg('تعذر الاتصال بالسيرفر'); }
+    setCatBusy(false);
+  };
+
+  const downloadCatalogXlsx = () => {
+    if (!catData) return;
+    const rows = (catData.items || []).map((it) => [it.code ?? '-', it.name, it.category || '-', acctRound(it.price), it.available ? 'متاح' : 'موقوف']);
+    const bytes = buildXlsxFile({
+      titleRows: [
+        `${RESTAURANT_NAME} — دليل الأصناف والأكواد`,
+        `كل الأصناف المسجلة (${(catData.items || []).length} صنف) — مرجع بأسماء الأصناف وأكوادها`,
+        `اتعمل بتاريخ ${new Date().toLocaleString('ar-EG')}`
+      ],
+      headers: ['الرمز', 'اسم الصنف', 'التصنيف', 'السعر (ج)', 'الحالة'],
+      rows,
+      widths: [10, 45, 22, 14, 12]
+    });
+    xlsxDownload('items-catalog.xlsx', bytes);
+  };
+
+  const tabBtn = (key, label) => (
+    <button type="button" onClick={() => setTab(key)} className={`px-5 py-2.5 rounded-xl font-black text-sm transition border ${tab === key ? 'bg-[#800020] text-white border-[#FFD700]' : 'bg-[#12080A] text-zinc-300 border-[#3A1218] hover:border-[#800020]'}`}>{label}</button>
+  );
+
+  const itemsNet = (itemsData?.itemsTotals?.total || 0) - (itemsData?.totals?.discounts || 0);
+
+  return (
+    <div dir="rtl" className="min-h-screen bg-[#12080A] text-white px-4 py-8 md:px-8">
+      <div className="max-w-7xl mx-auto space-y-5">
+        <div className="flex flex-wrap gap-3 justify-between items-center border-b border-[#3A1218] pb-4">
+          <div>
+            <h2 className="text-3xl font-black text-[#FFD700]">📊 صفحة المحاسب</h2>
+            <p className="text-sm text-zinc-400 mt-1">{RESTAURANT_NAME} · التقارير دي قراءة بس — مفيش تعديل ولا بيانات عملاء.</p>
+            {isAdmin && <p className="text-xs text-amber-300 mt-1">داخل بحساب الأدمن.</p>}
+          </div>
+          <button type="button" onClick={onLogout} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold">🚪 خروج</button>
+        </div>
+
+{tab !== 'catalog' && (
+        <div className={card + ' space-y-3'}>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div><label className="block text-xs text-zinc-400 mb-1">من يوم</label><input type="date" value={period.from} onChange={(e) => setPeriod({ ...period, from: e.target.value })} className={inp} /></div>
+            <div><label className="block text-xs text-zinc-400 mb-1">إلى يوم</label><input type="date" value={period.to} onChange={(e) => setPeriod({ ...period, to: e.target.value })} className={inp} /></div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => preset('today')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">اليوم</button>
+            <button type="button" onClick={() => preset('yesterday')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">أمس</button>
+            <button type="button" onClick={() => preset('week')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">آخر 7 أيام</button>
+            <button type="button" onClick={() => preset('month')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">آخر 30 يوم</button>
+            <button type="button" onClick={() => preset('thisMonth')} className="bg-zinc-700 hover:bg-zinc-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">الشهر ده</button>
+          </div>
+          <p className="text-[11px] text-zinc-500">الفترة أقصاها 92 يوم. اليوم بيتحسب من 6 الصبح لـ 6 الصبح.</p>
+        </div>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          {tabBtn('sales', '📈 تقرير المبيعات')}
+          {tabBtn('items', '🍽️ تقرير مبيعات الأصناف')}
+          {tabBtn('channels', '🛵 تقرير قنوات البيع')}
+          {tabBtn('catalog', '📋 الأصناف والأكواد')}
+        </div>
+
+        {tab === 'sales' && (
+          <PeriodReportPanel authFetch={accountantFetch} card={card} inp={inp} base="/api/accountant/reports/period" period={period} onPeriodChange={setPeriod} hidePickers />
+        )}
+
+        {tab === 'items' && (
+          <div className={card + ' space-y-4'}>
+            <div>
+              <h4 className="font-black text-lg text-white">🍽️ تقرير مبيعات الأصناف</h4>
+              <p className="text-xs text-zinc-400 mt-1 leading-5">نفس شكل الورقة الصفراء: الرمز واسم الصنف والعدد ومجموع المبيعات. اختار القناة الأول (الكل / استلام / توصيل / طلبات) — الجدول وملف الـ Excel هيطلعوا بنفس القناة اللي اخترتها.</p>
+            </div>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">القناة</label>
+                <select value={type} onChange={(e) => setType(e.target.value)} className={inp}>
+                  {ACCOUNTANT_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
+              </div>
+              <button type="button" disabled={itemsBusy} onClick={() => loadItems(period.from, period.to, type)} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl font-black text-sm">{itemsBusy ? '... جاري التحميل' : '🔄 عرض'}</button>
+              <button type="button" disabled={!itemsData} onClick={downloadItemsXlsx} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl font-black text-sm">⬇ تنزيل Excel</button>
+            </div>
+            {itemsMsg && <p className="text-red-400 text-sm font-bold">{itemsMsg}</p>}
+            {itemsData && (
+              <>
+                {(itemsData.items || []).length === 0 ? (
+                  <p className="text-sm text-zinc-400">مفيش مبيعات أصناف في الفترة دي.</p>
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm min-w-[560px]">
+                        <thead>
+                          <tr className="bg-[#FFFF00] text-black text-xs">
+                            <th className="text-center font-black px-4 py-2.5">الرمز</th>
+                            <th className="text-right font-black px-4 py-2.5">اسم الصنف</th>
+                            <th className="text-center font-black px-2 py-2.5">عدد الأصناف</th>
+                            <th className="text-center font-black px-4 py-2.5">مجموع سعر المبيعات (ج)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(itemsData.items || []).map((it, i) => (
+                            <tr key={it.code ?? it.name} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                              <td className="px-4 py-2.5 text-center font-black text-white">{it.code ?? '-'}</td>
+                              <td className="px-4 py-2.5 text-white">{it.name}</td>
+                              <td className="px-2 py-2.5 text-center text-white">{it.qty}</td>
+                              <td className="px-4 py-2.5 text-center font-black text-white">{money(it.total)}</td>
+                            </tr>
+                          ))}
+                          <tr className="border-t-2 border-[#FFD700]/40 bg-white/[0.05]">
+                            <td className="px-4 py-2.5" />
+                            <td className="px-4 py-2.5 font-black text-white">الإجمالي</td>
+                            <td className="px-2 py-2.5 text-center font-black text-white">{itemsData.itemsTotals?.qty || 0}</td>
+                            <td className="px-4 py-2.5 text-center font-black text-[#FFD700]">{money(itemsData.itemsTotals?.total)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-1.5 text-sm">
+                  <p className="text-zinc-200">إجمالي مبيعات الأصناف: <strong className="text-white">{money(itemsData.itemsTotals?.total)}</strong></p>
+                  <p className="text-zinc-200">الخصومات: <strong className="text-white">{money(itemsData.totals?.discounts)}</strong></p>
+                  <p className="text-zinc-200">صافي المبيعات بعد الخصم: <strong className="text-[#FFD700]">{money(itemsNet)}</strong></p>
+                  <p className="text-xs text-zinc-400">{(itemsData.items || []).length} صنف · {itemsData.totals?.count || 0} أوردر في الفترة · القناة: {acctTypeLabel(itemsData.type)}</p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === 'channels' && (
+          <div className={card + ' space-y-4'}>
+            <div>
+              <h4 className="font-black text-lg text-white">🛵 تقرير قنوات البيع</h4>
+              <p className="text-xs text-zinc-400 mt-1 leading-5">كل قناة لوحدها: استلام من الفرع، وتوصيل، وطلبات — بعدد الأوردرات والمبيعات وطريقة الدفع.</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" disabled={sumBusy} onClick={() => loadSummary(period.from, period.to)} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl font-black text-sm">{sumBusy ? '... جاري التحميل' : '🔄 عرض'}</button>
+              <button type="button" disabled={!sumData} onClick={downloadChannelsXlsx} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl font-black text-sm">⬇ تنزيل Excel</button>
+            </div>
+            {sumMsg && <p className="text-red-400 text-sm font-bold">{sumMsg}</p>}
+            {sumData && (
+              <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[820px]">
+                    <thead>
+                      <tr className="text-zinc-400 text-xs border-b border-white/10">
+                        <th className="text-right font-bold px-4 py-2.5">القناة</th>
+                        <th className="text-center font-bold px-2 py-2.5">عدد الأوردرات</th>
+                        <th className="text-center font-bold px-2 py-2.5">إجمالي المبيعات</th>
+                        <th className="text-center font-bold px-2 py-2.5">كاش</th>
+                        <th className="text-center font-bold px-2 py-2.5">فيزا</th>
+                        <th className="text-center font-bold px-2 py-2.5">انستا باي</th>
+                        <th className="text-center font-bold px-2 py-2.5">محفظة</th>
+                        <th className="text-center font-bold px-2 py-2.5">رسوم توصيل</th>
+                        <th className="text-center font-bold px-2 py-2.5">خصومات</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(sumData.channels || []).map((c, i) => (
+                        <tr key={c.key} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                          <td className="px-4 py-2.5 font-black text-white">{c.label}</td>
+                          <td className="px-2 py-2.5 text-center text-white">{c.count}</td>
+                          <td className="px-2 py-2.5 text-center font-black text-white">{money(c.total)}</td>
+                          <td className="px-2 py-2.5 text-center text-white">{money(c.payments?.cash)}</td>
+                          <td className="px-2 py-2.5 text-center text-white">{money(c.payments?.visa)}</td>
+                          <td className="px-2 py-2.5 text-center text-white">{money(c.payments?.instapay)}</td>
+                          <td className="px-2 py-2.5 text-center text-white">{money(c.payments?.wallet)}</td>
+                          <td className="px-2 py-2.5 text-center text-white">{money(c.delivery)}</td>
+                          <td className="px-2 py-2.5 text-center text-white">{money(c.discounts)}</td>
+                        </tr>
+                      ))}
+                      <tr className="border-t-2 border-[#FFD700]/40 bg-white/[0.05]">
+                        <td className="px-4 py-2.5 font-black text-white">الإجمالي</td>
+                        <td className="px-2 py-2.5 text-center font-black text-white">{sumData.totals?.count || 0}</td>
+                        <td className="px-2 py-2.5 text-center font-black text-[#FFD700]">{money(sumData.totals?.total)}</td>
+                        <td className="px-2 py-2.5 text-center font-black text-white">{money(sumData.totals?.payments?.cash)}</td>
+                        <td className="px-2 py-2.5 text-center font-black text-white">{money((sumData.totals?.payments?.visa || 0) + (sumData.totals?.talabatVisa || 0))}</td>
+                        <td className="px-2 py-2.5 text-center font-black text-white">{money(sumData.totals?.payments?.instapay)}</td>
+                        <td className="px-2 py-2.5 text-center font-black text-white">{money(sumData.totals?.payments?.wallet)}</td>
+                        <td className="px-2 py-2.5 text-center font-black text-white">{money(sumData.totals?.delivery)}</td>
+                        <td className="px-2 py-2.5 text-center font-black text-white">{money(sumData.totals?.discounts)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            {sumData && <p className="text-xs text-zinc-400">طلبات من ضمن المبيعات: {money(sumData.totals?.talabat)} (كاش طلبات {money(sumData.totals?.talabatCash)} · فيزا طلبات {money(sumData.totals?.talabatVisa)}). عمود الفيزا في جدول القنوات بيجمع فيزا طلبات مع باقي الفيزا عشان كل قناة تجمّع إجماليها.</p>}
+          </div>
+        )}
+
+        {tab === 'catalog' && (
+          <div className={card + ' space-y-4'}>
+            <div>
+              <h4 className="font-black text-lg text-white">📋 الأصناف والأكواد</h4>
+              <p className="text-xs text-zinc-400 mt-1 leading-5">دليل كل الأصناف المسجلة — كل صنف جنبه رمزه — حتى اللي متباعش. نزّله Excel عشان يفضل معاك مرجع.</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" disabled={catBusy} onClick={loadCatalog} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl font-black text-sm">{catBusy ? '... جاري التحميل' : '🔄 عرض'}</button>
+              <button type="button" disabled={!catData} onClick={downloadCatalogXlsx} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl font-black text-sm">⬇ تنزيل Excel</button>
+            </div>
+            {catMsg && <p className="text-red-400 text-sm font-bold">{catMsg}</p>}
+            {catData && (
+              <>
+                <p className="text-sm text-zinc-300">{(catData.items || []).length} صنف مسجل</p>
+                {(catData.items || []).length === 0 ? (
+                  <p className="text-sm text-zinc-400">مفيش أصناف مسجلة.</p>
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm min-w-[560px]">
+                        <thead>
+                          <tr className="bg-[#FFFF00] text-black text-xs">
+                            <th className="text-center font-black px-4 py-2.5">الرمز</th>
+                            <th className="text-right font-black px-4 py-2.5">اسم الصنف</th>
+                            <th className="text-right font-black px-4 py-2.5">التصنيف</th>
+                            <th className="text-center font-black px-4 py-2.5">السعر (ج)</th>
+                            <th className="text-center font-black px-4 py-2.5">الحالة</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(catData.items || []).map((it, i) => (
+                            <tr key={it.code ?? it.name} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                              <td className="px-4 py-2.5 text-center font-black text-white">{it.code ?? '-'}</td>
+                              <td className="px-4 py-2.5 text-white">{it.name}</td>
+                              <td className="px-4 py-2.5 text-zinc-300">{it.category || '-'}</td>
+                              <td className="px-4 py-2.5 text-center font-black text-white">{money(it.price)}</td>
+                              <td className="px-4 py-2.5 text-center text-white">{it.available ? 'متاح' : 'موقوف'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const AccountantPage = () => {
+  const [session, setSession] = useState(readAccountant);
+  const handleLogout = () => { clearAccountant(); setSession(null); };
+  if (!session?.token) return <AccountantLogin onLogin={(data) => { saveAccountant(data); setSession(data); }} />;
+  return <AccountantReports token={session.token} isAdmin={session.user?.role === 'admin'} onLogout={handleLogout} />;
 };
 
 
@@ -5791,7 +6352,7 @@ const CustomerChatWidget = () => {
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
-  const isStaffPage = location.pathname === '/pos' || location.pathname === '/cashier';
+  const isStaffPage = location.pathname === '/pos' || location.pathname === '/cashier' || location.pathname === '/accountant';
   const storeStatus = useStoreStatus();
   const [cart, setCart] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
@@ -6013,6 +6574,7 @@ function App() {
           <Route path="/menu" element={<MenuPage menuItems={menuItems} categories={categories} lang={lang} handleOpenBox={handleOpenBox} handleOpenItemDetails={handleOpenItemDetailsModal} cart={cart} setCart={setCart} />} />
           <Route path="/secret-admin-dashboard" element={<AdminDashboard menuItems={menuItems} categories={categories} siteSettings={siteSettings} lang={lang} fetchItems={fetchItems} fetchCategories={fetchCategories} fetchSettings={fetchSettings} />} />
           <Route path="/cashier" element={<CashierDashboard />} />
+          <Route path="/accountant" element={<AccountantPage />} />
           <Route path="/pos" element={<CashierDashboard initialTab="pos" />} />
           <Route path="/cart" element={<CartPage cart={cart} setCart={setCart} lang={lang} storeStatus={storeStatus} />} />
           <Route path="/my-orders" element={<MyOrdersPage cart={cart} setCart={setCart} />} />
