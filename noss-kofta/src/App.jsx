@@ -4,6 +4,8 @@ import { createPortal } from 'react-dom';
 
 const API_BASE = 'https://noss-kofta-production-d57f.up.railway.app';
 const RESTAURANT_NAME = 'نص كفتة';
+const OTHER_API_BASE = 'https://bahbah-backend-production-7ef2.up.railway.app';
+const OTHER_RESTAURANT_NAME = 'بحبح برجر';
 const RESTAURANT_PHONE = '01042258982';
 const WHATSAPP_NUMBER = '201042258982';
 
@@ -3019,7 +3021,7 @@ const periodDownload = (filename, content, type) => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
-const PeriodReportPanel = ({ authFetch, card, inp, base, period, onPeriodChange, hidePickers }) => {
+const PeriodReportPanel = ({ authFetch, card, inp, base, period, onPeriodChange, hidePickers, fetchReport }) => {
   const [fromInner, setFromInner] = useState(() => periodAddDays(periodBizToday(), -6));
   const [toInner, setToInner] = useState(() => periodBizToday());
   // لو اتبعتت فترة من برّه (صفحة المحاسب) بتكون هي المتحكمة؛ غير كده الحالة الداخلية زي ما هي
@@ -3036,7 +3038,7 @@ const PeriodReportPanel = ({ authFetch, card, inp, base, period, onPeriodChange,
     if (!ff || !tt || tt < ff) return alert('اختار فترة صحيحة (تاريخ النهاية بعد البداية)');
     setBusy(true); setMsg(''); setRep(null);
     try {
-      const r = await authFetch(`${base || '/api/reports/period'}?from=${encodeURIComponent(ff)}&to=${encodeURIComponent(tt)}`);
+      const r = fetchReport ? await fetchReport(ff, tt) : await authFetch(`${base || '/api/reports/period'}?from=${encodeURIComponent(ff)}&to=${encodeURIComponent(tt)}`);
       const d = await r.json().catch(() => ({}));
       if (!r.ok) setMsg(d.error || 'حصل خطأ'); else setRep(d);
     } catch (e) { setMsg('تعذر الاتصال بالسيرفر'); }
@@ -3528,11 +3530,109 @@ const xlsxDownload = (filename, bytes) => {
 };
 const acctRound = (v) => Math.round((Number(v) || 0) * 100) / 100;
 
+// ================= الداش بورد المجمعة (مطعمين) =================
+// دوال دمج نقية (من غير React): بتجمع تقارير المطعمين في شكل واحد زي تقرير مطعم واحد،
+// عشان التبويبات تعرضها من غير ما تعرف إن الداتا جاية من سيرفرين.
+const acctNum = (v) => Number(v) || 0;
+const acctSumPayments = (a = {}, b = {}) => {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = acctNum(out[k]) + acctNum(v);
+  return out;
+};
+const acctSumTotals = (a, b) => ({
+  count: acctNum(a?.count) + acctNum(b?.count),
+  total: acctNum(a?.total) + acctNum(b?.total),
+  delivery: acctNum(a?.delivery) + acctNum(b?.delivery),
+  discounts: acctNum(a?.discounts) + acctNum(b?.discounts),
+  talabat: acctNum(a?.talabat) + acctNum(b?.talabat),
+  talabatCash: acctNum(a?.talabatCash) + acctNum(b?.talabatCash),
+  talabatVisa: acctNum(a?.talabatVisa) + acctNum(b?.talabatVisa),
+  cancelled: acctNum(a?.cancelled) + acctNum(b?.cancelled),
+  cancelledTotal: acctNum(a?.cancelledTotal) + acctNum(b?.cancelledTotal),
+  payments: acctSumPayments(a?.payments, b?.payments),
+  advancesTotal: acctNum(a?.advancesTotal) + acctNum(b?.advancesTotal),
+  advancesCount: acctNum(a?.advancesCount) + acctNum(b?.advancesCount),
+  expensesTotal: acctNum(a?.expensesTotal) + acctNum(b?.expensesTotal),
+  otherExpensesTotal: acctNum(a?.otherExpensesTotal) + acctNum(b?.otherExpensesTotal),
+  depositsTotal: acctNum(a?.depositsTotal) + acctNum(b?.depositsTotal)
+});
+const acctDayNums = ['count', 'total', 'delivery', 'discounts', 'talabat', 'talabatCash', 'talabatVisa', 'cancelled', 'cancelledTotal', 'advancesTotal', 'advancesCount', 'expensesTotal', 'otherExpensesTotal', 'depositsTotal'];
+const mergePeriodReports = (a, b) => {
+  if (!a) return b || null;
+  if (!b) return a;
+  const daysMap = new Map();
+  const addDay = (d) => {
+    const key = d.date;
+    const cur = daysMap.get(key);
+    if (!cur) {
+      daysMap.set(key, { ...d, payments: { ...(d.payments || {}) }, advances: [...(d.advances || [])], expenses: [...(d.expenses || [])], deposits: [...(d.deposits || [])], shifts: [...(d.shifts || [])], categories: (d.categories || []).map((c) => ({ ...c, items: [...(c.items || [])] })) });
+      return;
+    }
+    for (const k of acctDayNums) cur[k] = acctNum(cur[k]) + acctNum(d[k]);
+    cur.payments = acctSumPayments(cur.payments, d.payments);
+    cur.advances = [...cur.advances, ...(d.advances || [])];
+    cur.expenses = [...cur.expenses, ...(d.expenses || [])];
+    cur.deposits = [...cur.deposits, ...(d.deposits || [])];
+    cur.shifts = [...cur.shifts, ...(d.shifts || [])];
+    for (const c of d.categories || []) {
+      const ex = cur.categories.find((x) => x.name === c.name);
+      if (!ex) { cur.categories.push({ ...c, items: [...(c.items || [])] }); continue; }
+      ex.qty = acctNum(ex.qty) + acctNum(c.qty);
+      ex.total = acctNum(ex.total) + acctNum(c.total);
+      for (const it of c.items || []) {
+        const ei = ex.items.find((x) => x.name === it.name);
+        if (!ei) ex.items.push({ ...it });
+        else { ei.qty = acctNum(ei.qty) + acctNum(it.qty); ei.total = acctNum(ei.total) + acctNum(it.total); }
+      }
+    }
+  };
+  (a.days || []).forEach(addDay);
+  (b.days || []).forEach(addDay);
+  const days = [...daysMap.values()].sort((x, y) => String(x.date).localeCompare(String(y.date)));
+  const byPerson = new Map();
+  for (const p of [...(a.advancesByPerson || []), ...(b.advancesByPerson || [])]) {
+    const cur = byPerson.get(p.person) || { person: p.person, count: 0, total: 0, lastAt: null };
+    cur.count += acctNum(p.count);
+    cur.total += acctNum(p.total);
+    if (p.lastAt && (!cur.lastAt || new Date(p.lastAt) > new Date(cur.lastAt))) cur.lastAt = p.lastAt;
+    byPerson.set(p.person, cur);
+  }
+  return {
+    from: a.from, to: a.to,
+    daysCount: Math.max(a.daysCount || 0, b.daysCount || 0),
+    generatedAt: new Date().toISOString(),
+    totals: acctSumTotals(a.totals, b.totals),
+    advances: [...(a.advances || []), ...(b.advances || [])],
+    advancesByPerson: [...byPerson.values()].sort((x, y) => y.total - x.total),
+    expenses: [...(a.expenses || []), ...(b.expenses || [])],
+    shifts: [...(a.shifts || []), ...(b.shifts || [])],
+    days
+  };
+};
+// صفوف الأصناف/الدليل: كل صف بيتوسم باسم مطعمه، وبتترتب بالرمز (نص كفتة 1..300 وبعدها بحبح 301..)
+const mergeItemsRows = (ownRows, otherRows, ownName, otherName) => {
+  const all = [
+    ...(ownRows || []).map((r) => ({ ...r, restaurant: ownName })),
+    ...(otherRows || []).map((r) => ({ ...r, restaurant: otherName }))
+  ];
+  all.sort((a, b) => (a.code == null ? 1 : b.code == null ? -1 : Number(a.code) - Number(b.code)));
+  return all;
+};
+// القنوات: سطر لكل مطعم × قناة، والاسم بيبقى "المطعم — القناة"
+const mergeChannels = (ownChannels, otherChannels, ownName, otherName) => {
+  const out = [];
+  for (const [rows, name] of [[ownChannels, ownName], [otherChannels, otherName]]) {
+    for (const c of rows || []) out.push({ ...c, restaurant: name, label: `${name} — ${c.label}` });
+  }
+  return out;
+};
+
 // ================= صفحة المحاسب =================
 // صفحة منفصلة تمامًا: مفيش أي لينك ليها من الكاشير ولا الإدارة ولا صفحات العملاء،
 // والدخول ليها بجلسة لوحدها (accountantSession) غير جلسة الكاشير.
 const ACCOUNTANT_KEY = 'accountantSession';
-const readAccountant = () => { try { return JSON.parse(localStorage.getItem(ACCOUNTANT_KEY)) || null; } catch { return null; } };
+// الجلسة فيها توكن لكل مطعم: { own, other } — والشكل القديم { token } بيتحوّل لـ own بس
+const readAccountant = () => { try { const d = JSON.parse(localStorage.getItem(ACCOUNTANT_KEY)) || null; if (!d) return null; if (d.token && !d.own) return { own: d.token, other: null }; return d; } catch { return null; } };
 const saveAccountant = (data) => { try { localStorage.setItem(ACCOUNTANT_KEY, JSON.stringify(data)); } catch {} };
 const clearAccountant = () => { try { localStorage.removeItem(ACCOUNTANT_KEY); } catch {} };
 
@@ -3540,18 +3640,28 @@ const AccountantLogin = ({ onLogin }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // نفس الرقم السري بيتجرّب على المطعمين: لو المطعم ده اتقبل والتاني لأ (رقم مختلف أو لسه متظبطش)،
+  // بندخل عادي والمطعم التاني بيتوصّل بعدين من جوه الصفحة.
   const submit = async (e) => {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/auth/accountant-login`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'بيانات الدخول غلط');
+      let ownFailed = false;
+      const tryLogin = async (base, isOwn) => {
+        try {
+          const res = await fetch(`${base}/api/auth/accountant-login`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin })
+          });
+          const data = await res.json().catch(() => ({}));
+          return res.ok ? data.token : null;
+        } catch { if (isOwn) ownFailed = true; return null; }
+      };
+      const [ownToken, otherToken] = await Promise.all([tryLogin(API_BASE, true), tryLogin(OTHER_API_BASE, false)]);
+      if (ownFailed) throw new Error('مشكلة في الاتصال بالسيرفر');
+      if (!ownToken) throw new Error('الرقم السري غلط');
       setPin('');
-      onLogin(data);
+      onLogin({ own: ownToken, other: otherToken });
     } catch (err) {
       setError(err.message === 'Failed to fetch' ? 'مشكلة في الاتصال بالسيرفر' : err.message);
     } finally { setLoading(false); }
@@ -3559,8 +3669,8 @@ const AccountantLogin = ({ onLogin }) => {
   return (
     <div dir="rtl" className="min-h-screen bg-[#12080A] flex items-center justify-center p-4">
       <form onSubmit={submit} className="bg-[#1C0D10] border border-[#800020] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
-        <h2 className="text-2xl font-black text-[#FFD700] mb-2">📊 نص كفتة — {RESTAURANT_NAME}</h2>
-        <p className="text-sm text-zinc-400 mb-6 leading-6"></p>
+        <h2 className="text-2xl font-black text-[#FFD700] mb-2">📊 صفحة المحاسب — {RESTAURANT_NAME}</h2>
+        <p className="text-sm text-zinc-400 mb-6 leading-6">دخول المحاسب بس. نفس الرقم السري بيدخّل على المطعمين. التقارير هنا مش بتظهر للكاشير ولا للعملاء.</p>
         <input type="password" placeholder="الرقم السري" value={pin} onChange={(e) => setPin(e.target.value)} autoComplete="current-password" inputMode="numeric" className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg tracking-widest" />
         {error && <p className="text-red-400 text-sm font-bold mb-4">{error}</p>}
         <button type="submit" disabled={loading} className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow disabled:opacity-60">{loading ? 'جاري الدخول...' : 'دخول'}</button>
@@ -3577,10 +3687,18 @@ const ACCOUNTANT_TYPES = [
 ];
 const acctTypeLabel = (k) => (ACCOUNTANT_TYPES.find((t) => t.key === k) || {}).label || 'الكل';
 
-const AccountantReports = ({ token, onLogout }) => {
+const AccountantReports = ({ session, onSessionChange, onLogout }) => {
   const card = 'bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5';
   const inp = 'w-full bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm';
   const [tab, setTab] = useState('sales');
+  const [scope, setScope] = useState('both');
+  const [otherPin, setOtherPin] = useState('');
+  const [otherMsg, setOtherMsg] = useState('');
+  const [otherBusy, setOtherBusy] = useState(false);
+  const [catKey, setCatKey] = useState('');
+  const otherConnected = !!session.other;
+  const effectiveScope = otherConnected ? scope : 'own';
+  const scopeName = effectiveScope === 'both' ? `${RESTAURANT_NAME} + ${OTHER_RESTAURANT_NAME}` : effectiveScope === 'other' ? OTHER_RESTAURANT_NAME : RESTAURANT_NAME;
   const [period, setPeriod] = useState(() => ({ from: periodAddDays(periodBizToday(), -6), to: periodBizToday() }));
   const [type, setType] = useState('all');
   const [itemsData, setItemsData] = useState(null);
@@ -3595,41 +3713,113 @@ const AccountantReports = ({ token, onLogout }) => {
   const [catBusy, setCatBusy] = useState(false);
   const [catMsg, setCatMsg] = useState('');
 
-  const accountantFetch = async (path, opts = {}) => {
-    const res = await fetch(`${API_BASE}${path}`, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${token}` } });
-    if (res.status === 401) { onLogout(); throw new Error('unauthorized'); }
+  // جلب من مطعم واحد (own = نص كفتة، other = بحبح) بالتوكن بتاعه
+  const acctFetch = async (site, path, opts = {}) => {
+    const base = site === 'other' ? OTHER_API_BASE : API_BASE;
+    const tok = site === 'other' ? session.other : session.own;
+    const res = await fetch(`${base}${path}`, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${tok}` } });
+    if (res.status === 401) {
+      if (site === 'own') { onLogout(); throw new Error('unauthorized'); }
+      throw new Error('other-unauthorized');
+    }
     return res;
+  };
+  const accountantFetch = (path, opts = {}) => acctFetch('own', path, opts);
+
+  const fetchSiteJson = async (site, path) => {
+    try {
+      const r = await acctFetch(site, path);
+      const d = await r.json().catch(() => ({}));
+      return r.ok ? d : null;
+    } catch (e) {
+      if (e.message === 'unauthorized') throw e;
+      if (e.message === 'other-unauthorized') return { __otherExpired: true };
+      return null;
+    }
+  };
+
+  // جلب نفس التقرير من المطعم/المطعمين حسب النطاق — المطعم اللي واقع مش بيوقف التاني
+  const loadScoped = async (path) => {
+    const sites = effectiveScope === 'both' ? ['own', 'other'] : [effectiveScope];
+    const out = {};
+    let otherExpired = false;
+    await Promise.all(sites.map(async (s) => {
+      const d = await fetchSiteJson(s, path);
+      if (d && d.__otherExpired) { otherExpired = true; out[s] = null; }
+      else out[s] = d;
+    }));
+    if (otherExpired) onSessionChange({ own: session.own, other: null });
+    return out;
+  };
+
+  // تقرير المبيعات للمطعم/المطعمين — بيرجع شكل زي Response عشان PeriodReportPanel يعرضه زي ما هو
+  const fetchPeriodReport = async (f, t) => {
+    const q = `?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`;
+    if (effectiveScope !== 'both') return acctFetch(effectiveScope, `/api/accountant/reports/period${q}`);
+    const got = await loadScoped(`/api/accountant/reports/period${q}`);
+    const merged = mergePeriodReports(got.own, got.other);
+    if (!merged) return { ok: false, json: async () => ({ error: 'تعذر الاتصال بالسيرفر' }) };
+    return { ok: true, json: async () => merged };
+  };
+
+  const connectOther = async () => {
+    setOtherBusy(true); setOtherMsg('');
+    try {
+      const res = await fetch(`${OTHER_API_BASE}/api/auth/accountant-login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: otherPin })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'الرقم السري غلط');
+      setOtherPin('');
+      onSessionChange({ own: session.own, other: data.token });
+      setScope('both');
+    } catch (e) { setOtherMsg(e.message === 'Failed to fetch' ? 'مشكلة في الاتصال بالسيرفر' : e.message); }
+    setOtherBusy(false);
   };
 
   const loadItems = async (f, t, ty) => {
-    const key = `${f}|${t}|${ty}`;
+    const key = `${f}|${t}|${ty}|${effectiveScope}`;
     setItemsBusy(true); setItemsMsg('');
     try {
-      const r = await accountantFetch(`/api/accountant/reports/items?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&type=${encodeURIComponent(ty)}`);
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { setItemsMsg(d.error || 'حصل خطأ'); setItemsData(null); }
-      else { setItemsData(d); setItemsKey(key); }
+      const got = await loadScoped(`/api/accountant/reports/items?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&type=${encodeURIComponent(ty)}`);
+      if (!got.own && !got.other) { setItemsMsg('تعذر الاتصال بالسيرفر'); setItemsData(null); }
+      else {
+        const rows = mergeItemsRows(got.own?.items, got.other?.items, RESTAURANT_NAME, OTHER_RESTAURANT_NAME);
+        setItemsData({
+          items: rows,
+          itemsTotals: { qty: rows.reduce((a, r) => a + (Number(r.qty) || 0), 0), total: rows.reduce((a, r) => a + (Number(r.total) || 0), 0) },
+          totals: { count: (got.own?.totals?.count || 0) + (got.other?.totals?.count || 0), discounts: (got.own?.totals?.discounts || 0) + (got.other?.totals?.discounts || 0) },
+          type: ty
+        });
+        setItemsKey(key);
+      }
     } catch (e) { if (e.message !== 'unauthorized') setItemsMsg('تعذر الاتصال بالسيرفر'); }
     setItemsBusy(false);
   };
 
   const loadSummary = async (f, t) => {
-    const key = `${f}|${t}`;
+    const key = `${f}|${t}|${effectiveScope}`;
     setSumBusy(true); setSumMsg('');
     try {
-      const r = await accountantFetch(`/api/accountant/reports/summary?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { setSumMsg(d.error || 'حصل خطأ'); setSumData(null); }
-      else { setSumData(d); setSumKey(key); }
+      const got = await loadScoped(`/api/accountant/reports/summary?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
+      if (!got.own && !got.other) { setSumMsg('تعذر الاتصال بالسيرفر'); setSumData(null); }
+      else {
+        setSumData({
+          channels: mergeChannels(got.own?.channels, got.other?.channels, RESTAURANT_NAME, OTHER_RESTAURANT_NAME),
+          totals: acctSumTotals(got.own?.totals, got.other?.totals)
+        });
+        setSumKey(key);
+      }
     } catch (e) { if (e.message !== 'unauthorized') setSumMsg('تعذر الاتصال بالسيرفر'); }
     setSumBusy(false);
   };
 
   useEffect(() => {
-    if (tab === 'items' && itemsKey !== `${period.from}|${period.to}|${type}`) loadItems(period.from, period.to, type);
-    if (tab === 'channels' && sumKey !== `${period.from}|${period.to}`) loadSummary(period.from, period.to);
-    if (tab === 'catalog' && !catData && !catBusy) loadCatalog();
-  }, [tab, period, type]);
+    if (tab === 'items' && itemsKey !== `${period.from}|${period.to}|${type}|${effectiveScope}`) loadItems(period.from, period.to, type);
+    if (tab === 'channels' && sumKey !== `${period.from}|${period.to}|${effectiveScope}`) loadSummary(period.from, period.to);
+    if (tab === 'catalog' && catKey !== effectiveScope) loadCatalog();
+  }, [tab, period, type, effectiveScope]);
 
   const preset = (kind) => {
     const today = periodBizToday();
@@ -3643,25 +3833,25 @@ const AccountantReports = ({ token, onLogout }) => {
 
   const downloadItemsXlsx = () => {
     if (!itemsData) return;
-    const rows = (itemsData.items || []).map((it) => [it.code ?? '-', it.name, it.qty, acctRound(it.total)]);
+    const rows = (itemsData.items || []).map((it) => [it.restaurant || '-', it.code ?? '-', it.name, it.qty, acctRound(it.total)]);
     const bytes = buildXlsxFile({
       titleRows: [
-        `${RESTAURANT_NAME} — تقرير مبيعات الأصناف`,
+        `${scopeName} — تقرير مبيعات الأصناف`,
         `الفترة: من ${period.from} إلى ${period.to} (اليوم بيتحسب من 6 الصبح لـ 6 الصبح)`,
         `القناة: ${acctTypeLabel(type)}`,
         `اتعمل بتاريخ ${new Date().toLocaleString('ar-EG')}`
       ],
-      headers: ['الرمز', 'اسم الصنف', 'عدد الأصناف', 'مجموع سعر المبيعات (ج)'],
+      headers: ['المطعم', 'الرمز', 'اسم الصنف', 'عدد الأصناف', 'مجموع سعر المبيعات (ج)'],
       rows,
-      widths: [10, 45, 14, 22],
-      totalsRow: ['', 'الإجمالي', itemsData.itemsTotals?.qty || 0, acctRound(itemsData.itemsTotals?.total)],
+      widths: [16, 10, 45, 14, 22],
+      totalsRow: ['', '', 'الإجمالي', itemsData.itemsTotals?.qty || 0, acctRound(itemsData.itemsTotals?.total)],
       summaryLines: [
         ['إجمالي مبيعات الأصناف', acctRound(itemsData.itemsTotals?.total)],
         ['الخصومات', acctRound(itemsData.totals?.discounts)],
         ['صافي المبيعات بعد الخصم', acctRound((itemsData.itemsTotals?.total || 0) - (itemsData.totals?.discounts || 0))]
       ]
     });
-    xlsxDownload(`items-sales-${period.from}_to_${period.to}-${type}.xlsx`, bytes);
+    xlsxDownload(`items-sales-${period.from}_to_${period.to}-${type}-${effectiveScope}.xlsx`, bytes);
   };
 
   const downloadChannelsXlsx = () => {
@@ -3670,7 +3860,7 @@ const AccountantReports = ({ token, onLogout }) => {
     const tot = rows.reduce((a, r) => { for (let i = 1; i < r.length; i += 1) a[i] = (a[i] || 0) + (Number(r[i]) || 0); return a; }, []);
     const bytes = buildXlsxFile({
       titleRows: [
-        `${RESTAURANT_NAME} — تقرير قنوات البيع`,
+        `${scopeName} — تقرير قنوات البيع`,
         `الفترة: من ${period.from} إلى ${period.to} (اليوم بيتحسب من 6 الصبح لـ 6 الصبح)`,
         `اتعمل بتاريخ ${new Date().toLocaleString('ar-EG')}`
       ],
@@ -3679,34 +3869,36 @@ const AccountantReports = ({ token, onLogout }) => {
       widths: [14, 14, 18, 14, 14, 14, 14, 14, 14],
       totalsRow: ['الإجمالي', ...tot.slice(1)]
     });
-    xlsxDownload(`channels-sales-${period.from}_to_${period.to}.xlsx`, bytes);
+    xlsxDownload(`channels-sales-${period.from}_to_${period.to}-${effectiveScope}.xlsx`, bytes);
   };
 
   const loadCatalog = async () => {
     setCatBusy(true); setCatMsg('');
     try {
-      const r = await accountantFetch('/api/accountant/reports/catalog');
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { setCatMsg(d.error || 'حصل خطأ'); setCatData(null); }
-      else setCatData(d);
+      const got = await loadScoped('/api/accountant/reports/catalog');
+      if (!got.own && !got.other) { setCatMsg('تعذر الاتصال بالسيرفر'); setCatData(null); }
+      else {
+        setCatData({ items: mergeItemsRows(got.own?.items, got.other?.items, RESTAURANT_NAME, OTHER_RESTAURANT_NAME) });
+        setCatKey(effectiveScope);
+      }
     } catch (e) { if (e.message !== 'unauthorized') setCatMsg('تعذر الاتصال بالسيرفر'); }
     setCatBusy(false);
   };
 
   const downloadCatalogXlsx = () => {
     if (!catData) return;
-    const rows = (catData.items || []).map((it) => [it.code ?? '-', it.name, it.category || '-', acctRound(it.price), it.available ? 'متاح' : 'موقوف']);
+    const rows = (catData.items || []).map((it) => [it.restaurant || '-', it.code ?? '-', it.name, it.category || '-', acctRound(it.price), it.available ? 'متاح' : 'موقوف']);
     const bytes = buildXlsxFile({
       titleRows: [
-        `${RESTAURANT_NAME} — دليل الأصناف والأكواد`,
+        `${scopeName} — دليل الأصناف والأكواد`,
         `كل الأصناف المسجلة (${(catData.items || []).length} صنف) — مرجع بأسماء الأصناف وأكوادها`,
         `اتعمل بتاريخ ${new Date().toLocaleString('ar-EG')}`
       ],
-      headers: ['الرمز', 'اسم الصنف', 'التصنيف', 'السعر (ج)', 'الحالة'],
+      headers: ['المطعم', 'الرمز', 'اسم الصنف', 'التصنيف', 'السعر (ج)', 'الحالة'],
       rows,
-      widths: [10, 45, 22, 14, 12]
+      widths: [16, 10, 45, 22, 14, 12]
     });
-    xlsxDownload('items-catalog.xlsx', bytes);
+    xlsxDownload(`items-catalog-${effectiveScope}.xlsx`, bytes);
   };
 
   const tabBtn = (key, label) => (
@@ -3720,11 +3912,31 @@ const AccountantReports = ({ token, onLogout }) => {
       <div className="max-w-7xl mx-auto space-y-5">
         <div className="flex flex-wrap gap-3 justify-between items-center border-b border-[#3A1218] pb-4">
           <div>
-            <h2 className="text-3xl font-black text-[#FFD700]">📊نص كفتة</h2>
-            <p className="text-sm text-zinc-400 mt-1">{RESTAURANT_NAME} · التقارير دي قراءة بس — مفيش تعديل ولا بيانات عملاء.</p>
+            <h2 className="text-3xl font-black text-[#FFD700]">📊 صفحة المحاسب</h2>
+            <p className="text-sm text-zinc-400 mt-1">{scopeName} · التقارير دي قراءة بس — مفيش تعديل ولا بيانات عملاء.</p>
           </div>
           <button type="button" onClick={onLogout} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold">🚪 خروج</button>
         </div>
+
+        {otherConnected && (
+        <div className={card + ' flex flex-wrap gap-2 items-center'}>
+          <span className="text-sm font-black text-white">المطعم:</span>
+          <button type="button" onClick={() => setScope('both')} className={`px-4 py-2 rounded-xl font-black text-sm transition border ${effectiveScope === 'both' ? 'bg-[#800020] text-white border-[#FFD700]' : 'bg-[#12080A] text-zinc-300 border-[#3A1218] hover:border-[#800020]'}`}>الكل (المطعمين)</button>
+          <button type="button" onClick={() => setScope('own')} className={`px-4 py-2 rounded-xl font-black text-sm transition border ${effectiveScope === 'own' ? 'bg-[#800020] text-white border-[#FFD700]' : 'bg-[#12080A] text-zinc-300 border-[#3A1218] hover:border-[#800020]'}`}>{RESTAURANT_NAME}</button>
+          <button type="button" onClick={() => setScope('other')} className={`px-4 py-2 rounded-xl font-black text-sm transition border ${effectiveScope === 'other' ? 'bg-[#800020] text-white border-[#FFD700]' : 'bg-[#12080A] text-zinc-300 border-[#3A1218] hover:border-[#800020]'}`}>{OTHER_RESTAURANT_NAME}</button>
+        </div>
+        )}
+
+        {!otherConnected && (
+        <div className={card + ' space-y-3 border-[#FFD700]/50'}>
+          <p className="text-sm text-zinc-200 leading-6">⚠️ <strong>{OTHER_RESTAURANT_NAME} غير متصل</strong> — التقارير دلوقتي من {RESTAURANT_NAME} بس. لو الرقم السري هناك مختلف أو لسه متظبطش، اكتبه هنا عشان توصّله.</p>
+          <div className="flex flex-wrap gap-2 items-center">
+            <input type="password" placeholder={`الرقم السري بتاع ${OTHER_RESTAURANT_NAME}`} value={otherPin} onChange={(e) => setOtherPin(e.target.value)} autoComplete="current-password" inputMode="numeric" className={inp + ' max-w-xs'} />
+            <button type="button" disabled={otherBusy} onClick={connectOther} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-4 py-2.5 rounded-xl font-black text-sm">{otherBusy ? '... جاري التوصيل' : 'توصيل'}</button>
+          </div>
+          {otherMsg && <p className="text-red-400 text-sm font-bold">{otherMsg}</p>}
+        </div>
+        )}
 
 {tab !== 'catalog' && (
         <div className={card + ' space-y-3'}>
@@ -3751,7 +3963,7 @@ const AccountantReports = ({ token, onLogout }) => {
         </div>
 
         {tab === 'sales' && (
-          <PeriodReportPanel authFetch={accountantFetch} card={card} inp={inp} base="/api/accountant/reports/period" period={period} onPeriodChange={setPeriod} hidePickers />
+          <PeriodReportPanel authFetch={accountantFetch} card={card} inp={inp} base="/api/accountant/reports/period" period={period} onPeriodChange={setPeriod} hidePickers fetchReport={fetchPeriodReport} />
         )}
 
         {tab === 'items' && (
@@ -3778,9 +3990,10 @@ const AccountantReports = ({ token, onLogout }) => {
                 ) : (
                   <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm min-w-[560px]">
+                      <table className="w-full text-sm min-w-[680px]">
                         <thead>
                           <tr className="bg-[#FFFF00] text-black text-xs">
+                            <th className="text-right font-black px-4 py-2.5">المطعم</th>
                             <th className="text-center font-black px-4 py-2.5">الرمز</th>
                             <th className="text-right font-black px-4 py-2.5">اسم الصنف</th>
                             <th className="text-center font-black px-2 py-2.5">عدد الأصناف</th>
@@ -3789,7 +4002,8 @@ const AccountantReports = ({ token, onLogout }) => {
                         </thead>
                         <tbody>
                           {(itemsData.items || []).map((it, i) => (
-                            <tr key={it.code ?? it.name} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                            <tr key={`${it.restaurant}-${it.code ?? it.name}`} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                              <td className="px-4 py-2.5 font-black text-white">{it.restaurant || '-'}</td>
                               <td className="px-4 py-2.5 text-center font-black text-white">{it.code ?? '-'}</td>
                               <td className="px-4 py-2.5 text-white">{it.name}</td>
                               <td className="px-2 py-2.5 text-center text-white">{it.qty}</td>
@@ -3797,6 +4011,7 @@ const AccountantReports = ({ token, onLogout }) => {
                             </tr>
                           ))}
                           <tr className="border-t-2 border-[#FFD700]/40 bg-white/[0.05]">
+                            <td className="px-4 py-2.5" />
                             <td className="px-4 py-2.5" />
                             <td className="px-4 py-2.5 font-black text-white">الإجمالي</td>
                             <td className="px-2 py-2.5 text-center font-black text-white">{itemsData.itemsTotals?.qty || 0}</td>
@@ -3811,7 +4026,7 @@ const AccountantReports = ({ token, onLogout }) => {
                   <p className="text-zinc-200">إجمالي مبيعات الأصناف: <strong className="text-white">{money(itemsData.itemsTotals?.total)}</strong></p>
                   <p className="text-zinc-200">الخصومات: <strong className="text-white">{money(itemsData.totals?.discounts)}</strong></p>
                   <p className="text-zinc-200">صافي المبيعات بعد الخصم: <strong className="text-[#FFD700]">{money(itemsNet)}</strong></p>
-                  <p className="text-xs text-zinc-400">{(itemsData.items || []).length} صنف · {itemsData.totals?.count || 0} أوردر في الفترة · القناة: {acctTypeLabel(itemsData.type)}</p>
+                  <p className="text-xs text-zinc-400">{(itemsData.items || []).length} صنف · {itemsData.totals?.count || 0} أوردر في الفترة · القناة: {acctTypeLabel(itemsData.type)} · النطاق: {scopeName}</p>
                 </div>
               </>
             )}
@@ -3899,9 +4114,10 @@ const AccountantReports = ({ token, onLogout }) => {
                 ) : (
                   <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm min-w-[560px]">
+                      <table className="w-full text-sm min-w-[680px]">
                         <thead>
                           <tr className="bg-[#FFFF00] text-black text-xs">
+                            <th className="text-right font-black px-4 py-2.5">المطعم</th>
                             <th className="text-center font-black px-4 py-2.5">الرمز</th>
                             <th className="text-right font-black px-4 py-2.5">اسم الصنف</th>
                             <th className="text-right font-black px-4 py-2.5">التصنيف</th>
@@ -3911,7 +4127,8 @@ const AccountantReports = ({ token, onLogout }) => {
                         </thead>
                         <tbody>
                           {(catData.items || []).map((it, i) => (
-                            <tr key={it.code ?? it.name} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                            <tr key={`${it.restaurant}-${it.code ?? it.name}`} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                              <td className="px-4 py-2.5 font-black text-white">{it.restaurant || '-'}</td>
                               <td className="px-4 py-2.5 text-center font-black text-white">{it.code ?? '-'}</td>
                               <td className="px-4 py-2.5 text-white">{it.name}</td>
                               <td className="px-4 py-2.5 text-zinc-300">{it.category || '-'}</td>
@@ -3936,8 +4153,8 @@ const AccountantReports = ({ token, onLogout }) => {
 const AccountantPage = () => {
   const [session, setSession] = useState(readAccountant);
   const handleLogout = () => { clearAccountant(); setSession(null); };
-  if (!session?.token) return <AccountantLogin onLogin={(data) => { saveAccountant(data); setSession(data); }} />;
-  return <AccountantReports token={session.token} onLogout={handleLogout} />;
+  if (!session?.own) return <AccountantLogin onLogin={(data) => { saveAccountant(data); setSession(data); }} />;
+  return <AccountantReports session={session} onSessionChange={(next) => { saveAccountant(next); setSession(next); }} onLogout={handleLogout} />;
 };
 
 

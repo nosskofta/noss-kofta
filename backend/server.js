@@ -98,7 +98,7 @@ const itemSchema = new mongoose.Schema({
   isOffer: { type: Boolean, default: false },
   available: { type: Boolean, default: true },
   order: { type: Number, default: 0 },
-  code: { type: Number }, // رمز الصنف للمحاسب (1..N لكل مطعم، ثابت ومش بيتغير)
+  code: { type: Number }, // رمز الصنف للمحاسب (نص كفتة 1..300، ثابت ومش بيتغير)
 
   // النظام القديم (متروك عشان الأصناف القديمة تفضل شغالة)
   addons: [{ name: String, price: Number }],
@@ -117,28 +117,31 @@ const itemSchema = new mongoose.Schema({
 });
 const Item = mongoose.model("Item", itemSchema);
 
-// رموز الأصناف للمحاسب: كل صنف ليه رمز ثابت (1..N) حسب ترتيب إضافته.
-// الصنف الجديد بياخد الرقم اللي بعد آخر رمز، والمسح مش بيعيد الترقيم عشان الرمز يفضل ثابت في التقارير القديمة.
+// رموز الأصناف للمحاسب: نص كفتة 1..300 وبحبح 301..600 — عشان الرمز يبقى واحد
+// في الداش بورد المجمعة من غير تضارب. كل صنف ليه رمز ثابت حسب ترتيب إضافته،
+// والمسح مش بيعيد الترقيم عشان الرمز يفضل ثابت في التقارير القديمة.
+const ITEM_CODE_START = 1;
+const ITEM_CODE_END = 1000;
 const ensureItemCodes = async () => {
-  const coded = await Item.find({ code: { $ne: null } }).select("code").lean();
-  const used = new Set(coded.map((i) => Number(i.code)).filter((n) => Number.isFinite(n) && n > 0));
-  let next = used.size ? Math.max(...used) : 0;
-  const missing = await Item.find({ $or: [{ code: null }, { code: { $exists: false } }] }).sort({ createdAt: 1, _id: 1 }).select("_id").lean();
-  let assigned = 0;
-  for (const doc of missing) {
-    next += 1;
-    await Item.updateOne({ _id: doc._id }, { $set: { code: next } });
-    assigned += 1;
-  }
-  // إصلاح أي رموز مكررة (لو حصلت من تعديل يدوي قديم): المكرر بس بياخد رمز جديد
-  const all = await Item.find({ code: { $ne: null } }).sort({ createdAt: 1, _id: 1 }).select("_id code").lean();
-  const seen = new Set();
+  const valid = (n) => Number.isInteger(n) && n >= ITEM_CODE_START && n <= ITEM_CODE_END;
+  const all = await Item.find().sort({ createdAt: 1, _id: 1 }).select("_id code").lean();
+  // أعلى رمز صحيح موجود — الجديد بياخد اللي بعده
+  let next = ITEM_CODE_START - 1;
   for (const doc of all) {
-    if (seen.has(Number(doc.code))) {
-      next += 1;
-      await Item.updateOne({ _id: doc._id }, { $set: { code: next } });
-      assigned += 1;
-    } else seen.add(Number(doc.code));
+    const c = Number(doc.code);
+    if (valid(c)) next = Math.max(next, c);
+  }
+  // أول ظهور للرمز الصحيح بيفضل زي ما هو؛ الناقص والمكرر واللي برّه النطاق بياخد رمز جديد
+  const seen = new Set();
+  let assigned = 0;
+  for (const doc of all) {
+    const c = Number(doc.code);
+    if (valid(c) && !seen.has(c)) { seen.add(c); continue; }
+    next += 1;
+    if (next > ITEM_CODE_END) console.warn(`\u26A0\uFE0F رموز الأصناف: عدد الأصناف عدّى ${ITEM_CODE_END}، والرمز ${next} برّه النطاق`);
+    await Item.updateOne({ _id: doc._id }, { $set: { code: next } });
+    seen.add(next);
+    assigned += 1;
   }
   if (assigned > 0) console.log(`\u{1F522} رموز أصناف المحاسب: اتعيّن ${assigned} رمز جديد`);
   return assigned;
@@ -909,8 +912,10 @@ app.get("/api/items/:id/image", async (req, res) => {
 app.post("/api/items", requireAuth, requireAdmin, async (req, res) => {
   try {
     const count = await Item.countDocuments({ category: req.body.category });
-    const lastCoded = await Item.findOne({ code: { $ne: null } }).sort({ code: -1 }).select("code").lean();
-    const nextCode = (Number(lastCoded?.code) || 0) + 1;
+    const coded = await Item.find({ code: { $ne: null } }).select("code").lean();
+    const inRange = coded.map((i) => Number(i.code)).filter((n) => Number.isInteger(n) && n >= ITEM_CODE_START && n <= ITEM_CODE_END);
+    const nextCode = (inRange.length ? Math.max(...inRange) : ITEM_CODE_START - 1) + 1;
+    if (nextCode > ITEM_CODE_END) console.warn(`\u26A0\uFE0F رموز الأصناف: عدد الأصناف عدّى ${ITEM_CODE_END}، والرمز ${nextCode} برّه النطاق`);
     const newItem = new Item({ ...req.body, order: count, code: nextCode });
     res.json(await newItem.save());
   } catch (err) {
