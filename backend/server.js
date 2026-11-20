@@ -2009,6 +2009,85 @@ app.delete("/api/orders/:id", requireAuth, requireAdmin, async (req, res) => {
 // =========================
 // SHIFTS + REPORTS
 // =========================
+// ---------- تجميع الأوردرات (نفس قواعد الفلوس بتاعة buildReport بالظبط — بتتستخدم في تقرير الوردية وتقرير الفترة) ----------
+const newOrderAcc = () => ({ count: 0, total: 0, delivery: 0, discounts: 0, talabat: 0, talabatCash: 0, talabatVisa: 0, driverCash: 0, payments: {}, byType: {}, byCashier: {}, catMap: new Map(), boxMap: new Map() });
+const accumulateOrderInto = (acc, o, ctx) => {
+  const g = Number(o.grandTotal) || 0;
+  // أجرة التوصيل بتروح للسواق مباشرة، فمش بتتحسب ضمن المبيعات
+  const fee = o.orderType === "delivery" ? Math.min(g, Number(o.deliveryFee) || 0) : 0;
+  const sale = g - fee;
+  acc.count += 1;
+  acc.total += sale;
+  acc.delivery += fee;
+  acc.discounts += Number(o.discountAmount) || 0;
+  if (o.orderType === "talabat") {
+    acc.talabat += g;
+    if (o.paymentMethod === "cash") {
+      acc.talabatCash += g;
+      acc.payments.cash = (acc.payments.cash || 0) + g;
+    } else {
+      acc.talabatVisa += g;
+    }
+  } else {
+    // كاش: اللي دخل الدرج فعلاً = الجزء الكاش − الأجرة. فيزا/انستا/محفظة: اللي العميل دفعه للمطعم. المقسّم بيتوزّع على طرقه
+    const parts = splitOf(o) || [{ method: o.paymentMethod || "cash", amount: g }];
+    for (const p of parts) acc.payments[p.method] = (acc.payments[p.method] || 0) + (p.method === "cash" ? Math.max(0, p.amount - fee) : p.amount);
+  }
+  const type = (acc.byType[o.orderType] = acc.byType[o.orderType] || { count: 0, total: 0 });
+  type.count += 1; type.total += sale;
+  const who = o.source === "pos" ? (o.createdBy || o.completedBy || "-") : (o.completedBy || o.createdBy || "-");
+  const cashier = (acc.byCashier[who] = acc.byCashier[who] || { count: 0, total: 0, discounts: 0 });
+  cashier.count += 1; cashier.total += sale; cashier.discounts += Number(o.discountAmount) || 0;
+  for (const it of o.items || []) {
+    const baseName = String(it.name || "صنف بدون اسم");
+    const catName = ctx.catOf.get(baseName) || "أخرى";
+    const qty = Number(it.quantity) || 0;
+    const revenue = (Number(it.price) || 0) * qty;
+    if (!acc.catMap.has(catName)) acc.catMap.set(catName, { name: catName, qty: 0, total: 0, items: new Map() });
+    const cat = acc.catMap.get(catName);
+    cat.qty += qty; cat.total += revenue;
+    // افصل أحجام/أنواع الدابل والتربل في تقرير المطبخ بدل دمجها تحت اسم واحد.
+    // التفصيل: نفصل كل اختيار إجباري (زي الحجم: ربع صدر / ربع ورك / نص فرخة) في سطر لوحده بدل دمجهم تحت اسم الصنف
+    const modList = Array.isArray(it.modifiers) ? it.modifiers : [];
+    const catItem = ctx.itemByName.get(baseName);
+    // أي اختيار إجباري، أو مجموعة اسمها حجم / نوع / سنجل دابل تربل، بيتفصل في سطر لوحده في الجرد
+    const requiredGroups = new Set(catItem ? groupsForItem(catItem).filter((g) => Number(g.min) > 0 || /حجم|حجمه|size|نوع|وزن|سنجل|دابل|تربل/i.test(String(g.name || ""))).map((g) => String(g.name || "").trim()) : []);
+    const variantParts = [];
+    const boxParts = [];
+    for (const mod of modList) {
+      const text = String(mod || "");
+      // محتويات البوكس ("2× كفتة"): بتتجمع في قسم لوحدها عشان الجرد يعرف الكميات الفعلية
+      const boxM = /^\s*(\d+)\s*×\s*(.+?)\s*$/.exec(text);
+      if (boxM) { acc.boxMap.set(boxM[2], (acc.boxMap.get(boxM[2]) || 0) + Number(boxM[1]) * qty); boxParts.push(`${boxM[1]}× ${boxM[2]}`); continue; }
+      const colon = text.indexOf(":");
+      if (colon < 0) continue;
+      if (!requiredGroups.has(text.slice(0, colon).trim())) continue;
+      variantParts.push(text.slice(colon + 1).replace(/\s*\(\s*\+?\s*\d+(?:\.\d+)?\s*ج\s*\)\s*$/, "").trim());
+    }
+    let variant = variantParts.filter(Boolean).join(" + ");
+    if (!variant) {
+      const variantMatch = `${baseName} ${modList.join(" ")}`.match(/\b(double|triple|single|دابل|تربل|سنجل)\b/i);
+      variant = variantMatch ? variantMatch[0] : "";
+    }
+    let kitchenName = variant && !baseName.toLowerCase().includes(variant.toLowerCase()) ? `${baseName} - ${variant}` : baseName;
+    // البوكس: نظهر محتوياته جنب اسمه ("بوكس 3 (2× كفتة، 1× ...)")
+    if (boxParts.length) kitchenName = `${kitchenName} (${boxParts.join("، ")})`;
+    const row = cat.items.get(kitchenName) || { name: kitchenName, qty: 0, total: 0 };
+    row.qty += qty; row.total += revenue;
+    cat.items.set(kitchenName, row);
+  }
+};
+const categoriesOfAcc = (acc) => {
+  const catMap = new Map(acc.catMap);
+  if (acc.boxMap.size) {
+    const boxItems = new Map([...acc.boxMap.entries()].map(([name, qty]) => [name, { name, qty, total: 0 }]));
+    catMap.set("محتويات البوكسات", { name: "محتويات البوكسات", qty: [...acc.boxMap.values()].reduce((a, b) => a + b, 0), total: 0, items: boxItems });
+  }
+  return [...catMap.values()]
+    .map((c) => ({ name: c.name, qty: c.qty, total: c.total, items: [...c.items.values()].sort((a, b) => b.qty - a.qty) }))
+    .sort((a, b) => b.total - a.total);
+};
+
 const buildReport = async (from, to, shift = null) => {
   const fromD = new Date(from), toD = new Date(to);
   const [orders, cancelledList, catalog] = await Promise.all([
@@ -2017,17 +2096,13 @@ const buildReport = async (from, to, shift = null) => {
         { source: "pos", orderType: { $in: ["pickup", "talabat"] }, status: { $ne: "cancelled" }, createdAt: { $gt: fromD, $lte: toD } },
         { status: "completed", completedAt: { $gt: fromD, $lte: toD }, $or: [{ source: { $ne: "pos" } }, { source: "pos", orderType: "delivery" }] }
       ]
-    }).lean(),
+    }).select("orderId grandTotal orderType deliveryFee discountAmount paymentMethod paymentSplit source createdBy completedBy createdAt completedAt status items").lean(),
     Order.find({ status: "cancelled", cancelledAt: { $gt: fromD, $lte: toD } }).select("grandTotal orderId cancelledAfterPrint cancelledBy").lean(),
     Item.find().select("name category modifierGroups sizes addons").lean()
   ]);
 
-  const catOf = new Map(catalog.map((i) => [i.name, i.category]));
-  const itemByName = new Map(catalog.map((i) => [i.name, i]));
-  const payments = {}, byType = {}, byCashier = {};
-  const catMap = new Map();
-  const boxMap = new Map();
-  let total = 0, delivery = 0, discounts = 0, talabat = 0, talabatCash = 0, talabatVisa = 0, driverCash = 0;
+  const ctx = { catOf: new Map(catalog.map((i) => [i.name, i.category])), itemByName: new Map(catalog.map((i) => [i.name, i])) };
+  const acc = newOrderAcc();
 
   // كل تقرير وردية يخص الكاشير الذي فتحها فقط، ولا يخلط مبيعات الكاشير الآخر.
   const shiftOrders = shift
@@ -2042,82 +2117,9 @@ const buildReport = async (from, to, shift = null) => {
     ? cancelledList.filter((o) => !o.cancelledBy || String(o.cancelledBy) === String(shift.openedBy || ""))
     : cancelledList;
   shiftOrders.sort((a, b) => new Date(a.completedAt || a.createdAt) - new Date(b.completedAt || b.createdAt));
-  for (const o of shiftOrders) {
-    const g = Number(o.grandTotal) || 0;
-    // أجرة التوصيل بتروح للسواق مباشرة، فمش بتتحسب ضمن المبيعات
-    const fee = o.orderType === "delivery" ? Math.min(g, Number(o.deliveryFee) || 0) : 0;
-    const sale = g - fee;
-    total += sale;
-    delivery += fee;
-    discounts += Number(o.discountAmount) || 0;
+  for (const o of shiftOrders) accumulateOrderInto(acc, o, ctx);
 
-    if (o.orderType === "talabat") {
-      talabat += g;
-      if (o.paymentMethod === "cash") {
-        talabatCash += g;
-        payments.cash = (payments.cash || 0) + g;
-      } else {
-        talabatVisa += g;
-      }
-    } else {
-      // كاش: اللي دخل الدرج فعلاً = الجزء الكاش − الأجرة. فيزا/انستا/محفظة: اللي العميل دفعه للمطعم. المقسّم بيتوزّع على طرقه
-      const parts = splitOf(o) || [{ method: o.paymentMethod || "cash", amount: g }];
-      for (const p of parts) payments[p.method] = (payments[p.method] || 0) + (p.method === "cash" ? Math.max(0, p.amount - fee) : p.amount);
-    }
-
-    const type = (byType[o.orderType] = byType[o.orderType] || { count: 0, total: 0 });
-    type.count += 1; type.total += sale;
-    const who = o.source === "pos" ? (o.createdBy || o.completedBy || "-") : (o.completedBy || o.createdBy || "-");
-    const cashier = (byCashier[who] = byCashier[who] || { count: 0, total: 0, discounts: 0 });
-    cashier.count += 1; cashier.total += sale; cashier.discounts += Number(o.discountAmount) || 0;
-
-    for (const it of o.items || []) {
-      const baseName = String(it.name || "صنف بدون اسم");
-      const catName = catOf.get(baseName) || "أخرى";
-      const qty = Number(it.quantity) || 0;
-      const revenue = (Number(it.price) || 0) * qty;
-      if (!catMap.has(catName)) catMap.set(catName, { name: catName, qty: 0, total: 0, items: new Map() });
-      const cat = catMap.get(catName);
-      cat.qty += qty; cat.total += revenue;
-      // افصل أحجام/أنواع الدابل والتربل في تقرير المطبخ بدل دمجها تحت اسم واحد.
-      // التفصيل: نفصل كل اختيار إجباري (زي الحجم: ربع صدر / ربع ورك / نص فرخة) في سطر لوحده بدل دمجهم تحت اسم الصنف
-      const modList = Array.isArray(it.modifiers) ? it.modifiers : [];
-      const catItem = itemByName.get(baseName);
-      // أي اختيار إجباري، أو مجموعة اسمها حجم / نوع / سنجل دابل تربل، بيتفصل في سطر لوحده في الجرد
-      const requiredGroups = new Set(catItem ? groupsForItem(catItem).filter((g) => Number(g.min) > 0 || /حجم|حجمه|size|نوع|وزن|سنجل|دابل|تربل/i.test(String(g.name || ""))).map((g) => String(g.name || "").trim()) : []);
-      const variantParts = [];
-      const boxParts = [];
-      for (const mod of modList) {
-        const text = String(mod || "");
-        // محتويات البوكس ("2× كفتة"): بتتجمع في قسم لوحدها عشان الجرد يعرف الكميات الفعلية
-        const boxM = /^\s*(\d+)\s*×\s*(.+?)\s*$/.exec(text);
-        if (boxM) { boxMap.set(boxM[2], (boxMap.get(boxM[2]) || 0) + Number(boxM[1]) * qty); boxParts.push(`${boxM[1]}× ${boxM[2]}`); continue; }
-        const colon = text.indexOf(":");
-        if (colon < 0) continue;
-        if (!requiredGroups.has(text.slice(0, colon).trim())) continue;
-        variantParts.push(text.slice(colon + 1).replace(/\s*\(\s*\+?\s*\d+(?:\.\d+)?\s*ج\s*\)\s*$/, "").trim());
-      }
-      let variant = variantParts.filter(Boolean).join(" + ");
-      if (!variant) {
-        const variantMatch = `${baseName} ${modList.join(" ")}`.match(/\b(double|triple|single|دابل|تربل|سنجل)\b/i);
-        variant = variantMatch ? variantMatch[0] : "";
-      }
-      let kitchenName = variant && !baseName.toLowerCase().includes(variant.toLowerCase()) ? `${baseName} - ${variant}` : baseName;
-      // البوكس: نظهر محتوياته جنب اسمه ("بوكس 3 (2× كفتة، 1× ...)")
-      if (boxParts.length) kitchenName = `${kitchenName} (${boxParts.join("، ")})`;
-      const row = cat.items.get(kitchenName) || { name: kitchenName, qty: 0, total: 0 };
-      row.qty += qty; row.total += revenue;
-      cat.items.set(kitchenName, row);
-    }
-  }
-
-  if (boxMap.size) {
-    const boxItems = new Map([...boxMap.entries()].map(([name, qty]) => [name, { name, qty, total: 0 }]));
-    catMap.set("محتويات البوكسات", { name: "محتويات البوكسات", qty: [...boxMap.values()].reduce((a, b) => a + b, 0), total: 0, items: boxItems });
-  }
-  const categories = [...catMap.values()]
-    .map((c) => ({ name: c.name, qty: c.qty, total: c.total, items: [...c.items.values()].sort((a, b) => b.qty - a.qty) }))
-    .sort((a, b) => b.total - a.total);
+  const categories = categoriesOfAcc(acc);
 
   // المصروفات (كل حركة "out" من الدرج) بتتخصم من كاش الدرج بس، مش من المبيعات، وتتكتب بالتفصيل في التقرير
   let expenseMoves = [];
@@ -2131,8 +2133,8 @@ const buildReport = async (from, to, shift = null) => {
   const expensesTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
 
   const report = {
-    from: fromD, to: toD, count: shiftOrders.length, total, grossSales: total, netSales: total, expenses, expensesTotal, delivery, discounts, talabat, talabatCash, talabatVisa, driverCash,
-    payments, byType, byCashier, cancelled: shiftCancelled.length,
+    from: fromD, to: toD, count: acc.count, total: acc.total, grossSales: acc.total, netSales: acc.total, expenses, expensesTotal, delivery: acc.delivery, discounts: acc.discounts, talabat: acc.talabat, talabatCash: acc.talabatCash, talabatVisa: acc.talabatVisa, driverCash: acc.driverCash,
+    payments: acc.payments, byType: acc.byType, byCashier: acc.byCashier, cancelled: shiftCancelled.length,
     cancelledTotal: shiftCancelled.reduce((sum, order) => sum + (Number(order.grandTotal) || 0), 0),
     cancelledPrinted: shiftCancelled.filter((order) => order.cancelledAfterPrint).length,
     categories,
@@ -2149,7 +2151,7 @@ const buildReport = async (from, to, shift = null) => {
     Object.assign(report, {
       openedBy: shift.openedBy, openingCash: shift.openingCash || 0, movements: moves, cashIn, cashOut,
       awaitingOrders, awaitingTotal: awaitingOrders.reduce((sum, o) => sum + o.amount, 0),
-      expectedCash: (shift.openingCash || 0) + (payments.cash || 0) + cashIn - cashOut
+      expectedCash: (shift.openingCash || 0) + (acc.payments.cash || 0) + cashIn - cashOut
     });
   }
   return report;
@@ -2158,14 +2160,19 @@ const buildReport = async (from, to, shift = null) => {
 // ---------- تقارير المحاسب (قراءة بس — مفيش بيانات عملاء هنا، تجميعات بس) ----------
 // نفس طلب الأوردرات ونفس قواعد الفلوس بتاعة buildReport بالظبط (أجرة التوصيل برّه المبيعات،
 // الدفع المقسّم بيتوزّع على طرقه، طلبات إجماليها الكامل وكاش طلبات في الكاش)، عشان الأرقام تطابق تقرير المبيعات.
+// كاش صغير في الذاكرة (30 ثانية): تبويب الأصناف وتبويب القنوات بيطلبوا نفس الفترة ورا بعض، فالمسح التقيل يتعمل مرة واحدة بس
+const accountantSummaryCache = new Map();
 const buildAccountantSummary = async (from, to, typeFilter = "all") => {
   const fromD = new Date(from), toD = new Date(to);
+  const cacheKey = `${fromD.getTime()}|${toD.getTime()}|${typeFilter}`;
+  const cacheHit = accountantSummaryCache.get(cacheKey);
+  if (cacheHit && Date.now() - cacheHit.at < 30000) return cacheHit.data;
   const allOrders = await Order.find({
     $or: [
       { source: "pos", orderType: { $in: ["pickup", "talabat"] }, status: { $ne: "cancelled" }, createdAt: { $gt: fromD, $lte: toD } },
       { status: "completed", completedAt: { $gt: fromD, $lte: toD }, $or: [{ source: { $ne: "pos" } }, { source: "pos", orderType: "delivery" }] }
     ]
-  }).lean();
+  }).select("grandTotal orderType deliveryFee discountAmount paymentMethod paymentSplit items").lean();
   const catalog = await Item.find().select("name category code").lean();
   const orders = typeFilter === "all" ? allOrders : allOrders.filter((o) => o.orderType === typeFilter);
 
@@ -2252,13 +2259,16 @@ const buildAccountantSummary = async (from, to, typeFilter = "all") => {
     return a.code - b.code;
   });
   const channels = [...channelsMap.values()];
-  return {
+  const result = {
     from, to, type: typeFilter,
     totals,
     channels,
     items,
     itemsTotals: { qty: items.reduce((a, r) => a + r.qty, 0), total: items.reduce((a, r) => a + r.total, 0) }
   };
+  accountantSummaryCache.set(cacheKey, { at: Date.now(), data: result });
+  if (accountantSummaryCache.size > 20) accountantSummaryCache.delete(accountantSummaryCache.keys().next().value);
+  return result;
 };
 
 // التقارير القديمة اتحفظت بصافي مبيعات = المبيعات − المصروفات. هنا بنصححها وقت القراءة بس (الداتابيز زي ما هي)
@@ -2596,6 +2606,59 @@ const periodNormalizeMovement = (m, shift) => ({
   isAdvance: periodMovementIsAdvance(m)
 });
 
+// مفتاح اليوم التجاري لأي لحظة، بنفس حدود استعلامات buildReport بالظبط ($gt من بداية اليوم، $lte نهايته):
+// أوردر متسجّل 6 الصبح بالظبط بيتحسب على اليوم اللي قبله، فبنرجّع مفتاح (اللحظة ناقص 1 مللي ثانية)
+const dayKeyForInstant = (t) => businessDayKey(new Date(new Date(t).getTime() - 1));
+
+// تقرير الفترة في مرور واحد على الداتابيز بدل مرور لكل يوم:
+// استعلام واحد للأوردرات + واحد للملغي + واحد للكتالوج، وبعدين كل أوردر بيتحط في يومه
+// (أوردرات الكاشير استلام/طلبات بيوم إنشائها، والدليفري والأونلاين بيوم إتمامها — زي فرعين استعلام buildReport بالظبط)
+const buildPeriodDays = async (fromKey, toKey) => {
+  const { from: periodFrom } = dayWindow(fromKey);
+  const { to: periodTo } = dayWindow(toKey);
+  const now = new Date();
+  const toD = periodTo > now ? now : periodTo; // زي زمان: آخر يوم بيتقفل على دلوقتي مش على 6 الصبح بتاع بكره
+  const [orders, cancelledList, catalog] = await Promise.all([
+    Order.find({
+      $or: [
+        { source: "pos", orderType: { $in: ["pickup", "talabat"] }, status: { $ne: "cancelled" }, createdAt: { $gt: periodFrom, $lte: toD } },
+        { status: "completed", completedAt: { $gt: periodFrom, $lte: toD }, $or: [{ source: { $ne: "pos" } }, { source: "pos", orderType: "delivery" }] }
+      ]
+    }).select("orderId grandTotal orderType deliveryFee discountAmount paymentMethod paymentSplit source createdBy completedBy createdAt completedAt status items").lean(),
+    Order.find({ status: "cancelled", cancelledAt: { $gt: periodFrom, $lte: toD } }).select("grandTotal orderId cancelledAfterPrint cancelledBy").lean(),
+    Item.find().select("name category modifierGroups sizes addons").lean()
+  ]);
+  const ctx = { catOf: new Map(catalog.map((i) => [i.name, i.category])), itemByName: new Map(catalog.map((i) => [i.name, i])) };
+  const keys = [];
+  for (let k = fromKey; ; k = addDaysKey(k, 1)) { keys.push(k); if (k === toKey) break; }
+  const slots = new Map(keys.map((k) => [k, { acc: newOrderAcc(), cancelled: 0, cancelledTotal: 0 }]));
+  orders.sort((a, b) => new Date(a.completedAt || a.createdAt) - new Date(b.completedAt || b.createdAt));
+  for (const o of orders) {
+    const ts = (o.source === "pos" && (o.orderType === "pickup" || o.orderType === "talabat") && o.status !== "cancelled") ? o.createdAt : o.completedAt;
+    if (!ts) continue;
+    const slot = slots.get(dayKeyForInstant(ts));
+    if (!slot) continue;
+    accumulateOrderInto(slot.acc, o, ctx);
+  }
+  for (const c of cancelledList) {
+    if (!c.cancelledAt) continue;
+    const slot = slots.get(dayKeyForInstant(c.cancelledAt));
+    if (!slot) continue;
+    slot.cancelled += 1;
+    slot.cancelledTotal += Number(c.grandTotal) || 0;
+  }
+  return keys.map((key) => {
+    const slot = slots.get(key);
+    const a = slot.acc;
+    return {
+      date: key, count: a.count, total: a.total, delivery: a.delivery, discounts: a.discounts,
+      talabat: a.talabat, talabatCash: a.talabatCash, talabatVisa: a.talabatVisa,
+      cancelled: slot.cancelled, cancelledTotal: slot.cancelledTotal,
+      payments: a.payments, categories: categoriesOfAcc(a)
+    };
+  });
+};
+
 const handlePeriodReport = async (req, res) => {
   try {
     const fromKey = String(req.query.from || "");
@@ -2642,12 +2705,13 @@ const handlePeriodReport = async (req, res) => {
     }
     allMovements.sort((a, b) => new Date(a.at) - new Date(b.at));
 
+    const periodDays = await buildPeriodDays(fromKey, toKey);
     const days = [];
-    for (const key of keys) {
+    for (const pd of periodDays) {
+      const key = pd.date;
       const { from: dayFrom, to: dayTo } = dayWindow(key);
       const upTo = dayTo > now ? now : dayTo;
-      const rep = await buildReport(dayFrom, upTo, null);
-      const t = dayTotalsOf(rep);
+      const t = pd;
       const dayMoves = allMovements.filter((m) => m.day === key);
       const advances = dayMoves.filter((m) => m.isAdvance);
       const expenses = dayMoves.filter((m) => m.type === "out");
@@ -2664,7 +2728,7 @@ const handlePeriodReport = async (req, res) => {
         otherExpensesTotal: expenses.reduce((a, m) => a + (m.isAdvance ? 0 : m.amount), 0),
         deposits, depositsTotal: deposits.reduce((a, m) => a + m.amount, 0),
         shifts: shiftSummaries.filter((s) => s.day === key),
-        categories: rep.categories || []
+        categories: pd.categories || []
       });
     }
 

@@ -3696,6 +3696,9 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
   const [otherMsg, setOtherMsg] = useState('');
   const [otherBusy, setOtherBusy] = useState(false);
   const [catKey, setCatKey] = useState('');
+  // كاش تقارير المحاسب: التبديل بين المطعمين أو الرجوع لتبويب اتفتح قبل كده يعرض البيانات على طول من غير ما يرجع للسيرفر
+  const reportCache = useRef(new Map());
+  const cachePut = (k, v) => { const m = reportCache.current; if (m.size >= 60) m.delete(m.keys().next().value); m.set(k, v); };
   const otherConnected = !!session.other;
   const effectiveScope = otherConnected ? scope : 'own';
   const scopeName = effectiveScope === 'both' ? `${RESTAURANT_NAME} + ${OTHER_RESTAURANT_NAME}` : effectiveScope === 'other' ? OTHER_RESTAURANT_NAME : RESTAURANT_NAME;
@@ -3754,11 +3757,21 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
 
   // تقرير المبيعات للمطعم/المطعمين — بيرجع شكل زي Response عشان PeriodReportPanel يعرضه زي ما هو
   const fetchPeriodReport = async (f, t) => {
+    const cacheKey = `period|${effectiveScope}|${f}|${t}`;
+    const hit = reportCache.current.get(cacheKey);
+    if (hit) return { ok: true, json: async () => hit };
     const q = `?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`;
-    if (effectiveScope !== 'both') return acctFetch(effectiveScope, `/api/accountant/reports/period${q}`);
+    if (effectiveScope !== 'both') {
+      const r = await acctFetch(effectiveScope, `/api/accountant/reports/period${q}`);
+      if (!r.ok) return r;
+      const d = (await r.json().catch(() => null)) || {};
+      if (d && !d.error) cachePut(cacheKey, d);
+      return { ok: true, json: async () => d };
+    }
     const got = await loadScoped(`/api/accountant/reports/period${q}`);
     const merged = mergePeriodReports(got.own, got.other);
     if (!merged) return { ok: false, json: async () => ({ error: 'تعذر الاتصال بالسيرفر' }) };
+    cachePut(cacheKey, merged);
     return { ok: true, json: async () => merged };
   };
 
@@ -3780,18 +3793,22 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
 
   const loadItems = async (f, t, ty) => {
     const key = `${f}|${t}|${ty}|${effectiveScope}`;
+    const cachedItems = reportCache.current.get(`items|${key}`);
+    if (cachedItems) { setItemsData(cachedItems); setItemsKey(key); return; }
     setItemsBusy(true); setItemsMsg('');
     try {
       const got = await loadScoped(`/api/accountant/reports/items?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}&type=${encodeURIComponent(ty)}`);
       if (!got.own && !got.other) { setItemsMsg('تعذر الاتصال بالسيرفر'); setItemsData(null); }
       else {
         const rows = mergeItemsRows(got.own?.items, got.other?.items, RESTAURANT_NAME, OTHER_RESTAURANT_NAME);
-        setItemsData({
+        const data = {
           items: rows,
           itemsTotals: { qty: rows.reduce((a, r) => a + (Number(r.qty) || 0), 0), total: rows.reduce((a, r) => a + (Number(r.total) || 0), 0) },
           totals: { count: (got.own?.totals?.count || 0) + (got.other?.totals?.count || 0), discounts: (got.own?.totals?.discounts || 0) + (got.other?.totals?.discounts || 0) },
           type: ty
-        });
+        };
+        cachePut(`items|${key}`, data);
+        setItemsData(data);
         setItemsKey(key);
       }
     } catch (e) { if (e.message !== 'unauthorized') setItemsMsg('تعذر الاتصال بالسيرفر'); }
@@ -3800,15 +3817,19 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
 
   const loadSummary = async (f, t) => {
     const key = `${f}|${t}|${effectiveScope}`;
+    const cachedSum = reportCache.current.get(`summary|${key}`);
+    if (cachedSum) { setSumData(cachedSum); setSumKey(key); return; }
     setSumBusy(true); setSumMsg('');
     try {
       const got = await loadScoped(`/api/accountant/reports/summary?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`);
       if (!got.own && !got.other) { setSumMsg('تعذر الاتصال بالسيرفر'); setSumData(null); }
       else {
-        setSumData({
+        const data = {
           channels: mergeChannels(got.own?.channels, got.other?.channels, RESTAURANT_NAME, OTHER_RESTAURANT_NAME),
           totals: acctSumTotals(got.own?.totals, got.other?.totals)
-        });
+        };
+        cachePut(`summary|${key}`, data);
+        setSumData(data);
         setSumKey(key);
       }
     } catch (e) { if (e.message !== 'unauthorized') setSumMsg('تعذر الاتصال بالسيرفر'); }
@@ -3873,12 +3894,16 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
   };
 
   const loadCatalog = async () => {
+    const cachedCat = reportCache.current.get(`catalog|${effectiveScope}`);
+    if (cachedCat) { setCatData(cachedCat); setCatKey(effectiveScope); return; }
     setCatBusy(true); setCatMsg('');
     try {
       const got = await loadScoped('/api/accountant/reports/catalog');
       if (!got.own && !got.other) { setCatMsg('تعذر الاتصال بالسيرفر'); setCatData(null); }
       else {
-        setCatData({ items: mergeItemsRows(got.own?.items, got.other?.items, RESTAURANT_NAME, OTHER_RESTAURANT_NAME) });
+        const data = { items: mergeItemsRows(got.own?.items, got.other?.items, RESTAURANT_NAME, OTHER_RESTAURANT_NAME) };
+        cachePut(`catalog|${effectiveScope}`, data);
+        setCatData(data);
         setCatKey(effectiveScope);
       }
     } catch (e) { if (e.message !== 'unauthorized') setCatMsg('تعذر الاتصال بالسيرفر'); }
@@ -3963,7 +3988,7 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
         </div>
 
         {tab === 'sales' && (
-          <PeriodReportPanel authFetch={accountantFetch} card={card} inp={inp} base="/api/accountant/reports/period" period={period} onPeriodChange={setPeriod} hidePickers fetchReport={fetchPeriodReport} />
+          <PeriodReportPanel authFetch={accountantFetch} card={card} inp={inp} base="/api/accountant/reports/period" period={period} onPeriodChange={setPeriod} hidePickers fetchReport={fetchPeriodReport} key={effectiveScope} />
         )}
 
         {tab === 'items' && (
