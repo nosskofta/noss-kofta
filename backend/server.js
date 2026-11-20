@@ -318,7 +318,6 @@ const Shift = mongoose.model("Shift", shiftSchema);
 const AUTH_SECRET = process.env.AUTH_SECRET || "";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const ADMIN_PIN = process.env.ADMIN_PIN || "";
-const ACCOUNTANT_USERNAME = (process.env.ACCOUNTANT_USERNAME || "accountant").toLowerCase().trim() || "accountant";
 const ACCOUNTANT_PIN = process.env.ACCOUNTANT_PIN || "";
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
@@ -498,24 +497,17 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-// المحاسب (أو الأدمن) — للتقارير بس. توكن المحاسب مينفعش في requireAuth/requireAdmin،
-// فمش بيوصل لأي حاجة غير راوتات المحاسب اللي تحت.
-const requireAccountantOrAdmin = (req, res, next) => {
+// المحاسب بس — للتقارير بس. توكن المحاسب مينفعش في requireAuth/requireAdmin،
+// فمش بيوصل لأي حاجة غير راوتات المحاسب اللي تحت. توكن الأدمن مرفوض هنا.
+const requireAccountant = (req, res, next) => {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   const payload = token ? verifyToken(token) : null;
   if (!payload) return res.status(401).json({ error: "غير مصرح" });
-  if (payload.role === "accountant") {
-    if (!accountantStamp || payload.s !== accountantStamp) return res.status(401).json({ error: "غير مصرح" });
-    req.user = { _id: "accountant", name: "المحاسب", username: ACCOUNTANT_USERNAME, role: "accountant" };
-    return next();
-  }
-  if (payload.role === "admin") {
-    if (payload.s !== adminStamp) return res.status(401).json({ error: "غير مصرح" });
-    req.user = { _id: "admin", name: "المدير", username: ADMIN_USERNAME, role: "admin" };
-    return next();
-  }
-  return res.status(401).json({ error: "غير مصرح" });
+  if (payload.role !== "accountant") return res.status(401).json({ error: "غير مصرح" });
+  if (!accountantStamp || payload.s !== accountantStamp) return res.status(401).json({ error: "غير مصرح" });
+  req.user = { _id: "accountant", name: "المحاسب", role: "accountant" };
+  return next();
 };
 
 // ---------- حسابات العملاء (رقم تليفون + رقم سري) ----------
@@ -632,14 +624,13 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// ---------- دخول المحاسب (يوزر + رقم سري من Railway، قراءة تقارير بس) ----------
+// ---------- دخول المحاسب (رقم سري بس من Railway، قراءة تقارير بس) ----------
 app.post("/api/auth/accountant-login", async (req, res) => {
   try {
     if (!ACCOUNTANT_PIN || ACCOUNTANT_PIN.length < 4) return res.status(503).json({ error: "حساب المحاسب لسه متظبطش في Railway — ضيف ACCOUNTANT_PIN" });
-    const username = String(req.body?.username || "").toLowerCase().trim();
     const pin = String(req.body?.pin || "");
-    if (!username || !pin || pin.length > 200) return res.status(400).json({ error: "اكتب اليوزر والرقم السري" });
-    const userKey = `acctlogin:${req.ip}:${username}`;
+    if (!pin || pin.length > 200) return res.status(400).json({ error: "اكتب الرقم السري" });
+    const userKey = `acctlogin:${req.ip}`;
     const ipKey = `acctloginip:${req.ip}`;
     if (
       (peekBucket(userKey)?.count || 0) >= MAX_LOGIN_FAILS_PER_USER ||
@@ -647,18 +638,18 @@ app.post("/api/auth/accountant-login", async (req, res) => {
     ) {
       return res.status(429).json({ error: "محاولات غلط كتير، استنى 15 دقيقة وحاول تاني" });
     }
-    if (username !== ACCOUNTANT_USERNAME || !safeEqual(pin, ACCOUNTANT_PIN)) {
+    if (!safeEqual(pin, ACCOUNTANT_PIN)) {
       hitBucket(userKey, LOGIN_WINDOW_MS);
       hitBucket(ipKey, LOGIN_WINDOW_MS);
       if ((peekBucket(userKey)?.count || 0) >= MAX_LOGIN_FAILS_PER_USER) {
-        void sendTelegramAlert(`\u{1F510} محاولات دخول محاسب غلط كتير\nالمستخدم: ${username}\nاتقفل 15 دقيقة بعد ${MAX_LOGIN_FAILS_PER_USER} محاولات فاشلة`);
+        void sendTelegramAlert(`\u{1F510} محاولات دخول محاسب غلط كتير\nاتقفل 15 دقيقة بعد ${MAX_LOGIN_FAILS_PER_USER} محاولات فاشلة`);
       }
-      return res.status(401).json({ error: "اليوزر أو الرقم السري غلط" });
+      return res.status(401).json({ error: "الرقم السري غلط" });
     }
     buckets.delete(userKey);
     res.json({
       token: signToken({ id: "accountant", role: "accountant", s: accountantStamp }, 12 * 60 * 60 * 1000),
-      user: { id: "accountant", name: "المحاسب", username: ACCOUNTANT_USERNAME, role: "accountant" }
+      user: { id: "accountant", name: "المحاسب", role: "accountant" }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2702,7 +2693,7 @@ const handlePeriodReport = async (req, res) => {
   }
 };
 app.get("/api/reports/period", requireAuth, requireAdmin, handlePeriodReport);
-app.get("/api/accountant/reports/period", requireAccountantOrAdmin, handlePeriodReport);
+app.get("/api/accountant/reports/period", requireAccountant, handlePeriodReport);
 
 // ---------- راوتات المحاسب (تجميعات بس — مفيش أسماء ولا تليفونات ولا عناوين عملاء) ----------
 const validateAccountantPeriod = (req, res) => {
@@ -2728,7 +2719,7 @@ const validateAccountantPeriod = (req, res) => {
   return { fromKey, toKey, periodFrom, periodTo };
 };
 
-app.get("/api/accountant/reports/summary", requireAccountantOrAdmin, async (req, res) => {
+app.get("/api/accountant/reports/summary", requireAccountant, async (req, res) => {
   try {
     const p = validateAccountantPeriod(req, res);
     if (!p) return;
@@ -2739,7 +2730,7 @@ app.get("/api/accountant/reports/summary", requireAccountantOrAdmin, async (req,
   }
 });
 
-app.get("/api/accountant/reports/items", requireAccountantOrAdmin, async (req, res) => {
+app.get("/api/accountant/reports/items", requireAccountant, async (req, res) => {
   try {
     const p = validateAccountantPeriod(req, res);
     if (!p) return;
@@ -2753,7 +2744,7 @@ app.get("/api/accountant/reports/items", requireAccountantOrAdmin, async (req, r
 });
 
 // دليل الأصناف والأكواد للمحاسب: كل الأصناف حتى اللي متباعش — مرجع بس، من غير فترة
-app.get("/api/accountant/reports/catalog", requireAccountantOrAdmin, async (req, res) => {
+app.get("/api/accountant/reports/catalog", requireAccountant, async (req, res) => {
   try {
     await ensureItemCodes(); // أي صنف جديد من غير رمز ياخد رقمه قبل ما يطلع في الدليل
     const items = await Item.find().select("code name category price available").sort({ code: 1, _id: 1 }).lean();

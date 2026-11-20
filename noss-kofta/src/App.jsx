@@ -3537,18 +3537,16 @@ const saveAccountant = (data) => { try { localStorage.setItem(ACCOUNTANT_KEY, JS
 const clearAccountant = () => { try { localStorage.removeItem(ACCOUNTANT_KEY); } catch {} };
 
 const AccountantLogin = ({ onLogin }) => {
-  const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const adminSession = readSession();
   const submit = async (e) => {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/auth/accountant-login`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, pin })
+        body: JSON.stringify({ pin })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'بيانات الدخول غلط');
@@ -3561,15 +3559,11 @@ const AccountantLogin = ({ onLogin }) => {
   return (
     <div dir="rtl" className="min-h-screen bg-[#12080A] flex items-center justify-center p-4">
       <form onSubmit={submit} className="bg-[#1C0D10] border border-[#800020] p-8 rounded-2xl w-full max-w-md shadow-2xl text-center">
-        <h2 className="text-2xl font-black text-[#FFD700] mb-2">📊— {RESTAURANT_NAME}</h2>
-        <p className="text-sm text-zinc-400 mb-6 leading-6"></p>
-        <input type="text" placeholder="اسم المستخدم" value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" autoComplete="username" className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg" />
+        <h2 className="text-2xl font-black text-[#FFD700] mb-2">📊 صفحة المحاسب — {RESTAURANT_NAME}</h2>
+        <p className="text-sm text-zinc-400 mb-6 leading-6">دخول المحاسب بس. التقارير هنا مش بتظهر للكاشير ولا للعملاء.</p>
         <input type="password" placeholder="الرقم السري" value={pin} onChange={(e) => setPin(e.target.value)} autoComplete="current-password" inputMode="numeric" className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-center mb-4 text-lg tracking-widest" />
         {error && <p className="text-red-400 text-sm font-bold mb-4">{error}</p>}
         <button type="submit" disabled={loading} className="w-full bg-[#800020] text-white font-bold py-3 rounded-xl hover:bg-[#990026] transition shadow disabled:opacity-60">{loading ? 'جاري الدخول...' : 'دخول'}</button>
-        {adminSession?.token && adminSession.user?.role === 'admin' && (
-          <button type="button" onClick={() => onLogin(adminSession)} className="w-full mt-3 bg-zinc-700 hover:bg-zinc-600 text-white font-bold py-3 rounded-xl transition">الدخول بحساب الأدمن</button>
-        )}
       </form>
     </div>
   );
@@ -3583,7 +3577,7 @@ const ACCOUNTANT_TYPES = [
 ];
 const acctTypeLabel = (k) => (ACCOUNTANT_TYPES.find((t) => t.key === k) || {}).label || 'الكل';
 
-const AccountantReports = ({ token, isAdmin, onLogout }) => {
+const AccountantReports = ({ token, onLogout }) => {
   const card = 'bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5';
   const inp = 'w-full bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm';
   const [tab, setTab] = useState('sales');
@@ -3728,7 +3722,6 @@ const AccountantReports = ({ token, isAdmin, onLogout }) => {
           <div>
             <h2 className="text-3xl font-black text-[#FFD700]">📊 صفحة المحاسب</h2>
             <p className="text-sm text-zinc-400 mt-1">{RESTAURANT_NAME} · التقارير دي قراءة بس — مفيش تعديل ولا بيانات عملاء.</p>
-            {isAdmin && <p className="text-xs text-amber-300 mt-1">داخل بحساب الأدمن.</p>}
           </div>
           <button type="button" onClick={onLogout} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-xl text-sm font-bold">🚪 خروج</button>
         </div>
@@ -3944,7 +3937,7 @@ const AccountantPage = () => {
   const [session, setSession] = useState(readAccountant);
   const handleLogout = () => { clearAccountant(); setSession(null); };
   if (!session?.token) return <AccountantLogin onLogin={(data) => { saveAccountant(data); setSession(data); }} />;
-  return <AccountantReports token={session.token} isAdmin={session.user?.role === 'admin'} onLogout={handleLogout} />;
+  return <AccountantReports token={session.token} onLogout={handleLogout} />;
 };
 
 
