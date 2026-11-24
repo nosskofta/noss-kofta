@@ -3480,7 +3480,7 @@ const xlsxZipStore = (files) => {
 // rows: صفوف، كل خلية نص أو رقم. titleRows: سطور عنوان في الأول.
 // totalsRow: صف إجمالي عريض. summaryLines: [[نص، رقم], ...] بعد سطر فاضي.
 // الأنماط: 0 عادي، 1 عنوان الجدول (أصفر وعريض)، 2 عريض، 3 عنوان كبير.
-const buildXlsxFile = ({ titleRows = [], headers, rows, widths = [], totalsRow = null, summaryLines = [] }) => {
+const buildXlsxFile = ({ titleRows = [], headers, rows, widths = [], totalsRow = null, summaryLines = [], extraSections = [] }) => {
   const strings = [];
   const strIdx = new Map();
   const sIdx = (v) => { const s = String(v ?? ''); if (!strIdx.has(s)) { strIdx.set(s, strings.length); strings.push(s); } return strIdx.get(s); };
@@ -3493,6 +3493,12 @@ const buildXlsxFile = ({ titleRows = [], headers, rows, widths = [], totalsRow =
   if (summaryLines.length) {
     sheetRows.push([]);
     summaryLines.forEach(([label, val]) => sheetRows.push([{ v: label, s: 2 }, { v: val, s: 2 }]));
+  }
+  for (const sec of extraSections) {
+    sheetRows.push([]);
+    sheetRows.push([{ v: sec.title, s: 3 }]);
+    sheetRows.push(sec.headers.map((h) => ({ v: h, s: 1 })));
+    sec.rows.forEach((r) => sheetRows.push(r.map((c) => ({ v: c, s: 0 }))));
   }
   const body = sheetRows.map((row, ri) => {
     const cells = row.map((cell, ci) => {
@@ -3854,7 +3860,11 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
 
   const downloadItemsXlsx = () => {
     if (!itemsData) return;
-    const rows = (itemsData.items || []).map((it) => [it.restaurant || '-', it.code ?? '-', it.name, it.qty, acctRound(it.total)]);
+    const rows = [];
+    (itemsData.items || []).forEach((it) => {
+      rows.push([it.restaurant || '-', it.code ?? '-', it.name, it.qty, acctRound(it.total)]);
+      (it.contents || []).forEach((c) => rows.push([it.restaurant || '-', c.code ?? '-', `↳ ${c.name}`, c.qty, '']));
+    });
     const bytes = buildXlsxFile({
       titleRows: [
         `${scopeName} — تقرير مبيعات الأصناف`,
@@ -3901,7 +3911,10 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
       const got = await loadScoped('/api/accountant/reports/catalog');
       if (!got.own && !got.other) { setCatMsg('تعذر الاتصال بالسيرفر'); setCatData(null); }
       else {
-        const data = { items: mergeItemsRows(got.own?.items, got.other?.items, RESTAURANT_NAME, OTHER_RESTAURANT_NAME) };
+        const data = {
+          items: mergeItemsRows(got.own?.items, got.other?.items, RESTAURANT_NAME, OTHER_RESTAURANT_NAME),
+          boxContents: mergeItemsRows(got.own?.boxContents, got.other?.boxContents, RESTAURANT_NAME, OTHER_RESTAURANT_NAME)
+        };
         cachePut(`catalog|${effectiveScope}`, data);
         setCatData(data);
         setCatKey(effectiveScope);
@@ -3921,7 +3934,12 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
       ],
       headers: ['المطعم', 'الرمز', 'اسم الصنف', 'التصنيف', 'السعر (ج)', 'الحالة'],
       rows,
-      widths: [16, 10, 45, 22, 14, 12]
+      widths: [16, 10, 45, 22, 14, 12],
+      extraSections: (catData.boxContents || []).length ? [{
+        title: `📦 محتويات البوكسات وأكوادها (${(catData.boxContents || []).length} محتوى)`,
+        headers: ['المطعم', 'الرمز', 'اسم المحتوى'],
+        rows: (catData.boxContents || []).map((c) => [c.restaurant || '-', c.code ?? '-', c.name])
+      }] : []
     });
     xlsxDownload(`items-catalog-${effectiveScope}.xlsx`, bytes);
   };
@@ -4027,13 +4045,24 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
                         </thead>
                         <tbody>
                           {(itemsData.items || []).map((it, i) => (
-                            <tr key={`${it.restaurant}-${it.code ?? it.name}`} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
-                              <td className="px-4 py-2.5 font-black text-white">{it.restaurant || '-'}</td>
-                              <td className="px-4 py-2.5 text-center font-black text-white">{it.code ?? '-'}</td>
-                              <td className="px-4 py-2.5 text-white">{it.name}</td>
-                              <td className="px-2 py-2.5 text-center text-white">{it.qty}</td>
-                              <td className="px-4 py-2.5 text-center font-black text-white">{money(it.total)}</td>
-                            </tr>
+                            <React.Fragment key={`${it.restaurant}-${it.code ?? it.name}`}>
+                              <tr className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                                <td className="px-4 py-2.5 font-black text-white">{it.restaurant || '-'}</td>
+                                <td className="px-4 py-2.5 text-center font-black text-white">{it.code ?? '-'}</td>
+                                <td className="px-4 py-2.5 text-white">{it.name}</td>
+                                <td className="px-2 py-2.5 text-center text-white">{it.qty}</td>
+                                <td className="px-4 py-2.5 text-center font-black text-white">{money(it.total)}</td>
+                              </tr>
+                              {(it.contents || []).map((c, j) => (
+                                <tr key={`c-${j}`} className="bg-white/[0.015]">
+                                  <td className="px-4 py-2 text-zinc-400 text-xs">{it.restaurant || '-'}</td>
+                                  <td className="px-4 py-2 text-center font-black text-zinc-300 text-xs">{c.code ?? '-'}</td>
+                                  <td className="px-4 py-2 text-zinc-300 text-xs">↳ {c.name}</td>
+                                  <td className="px-2 py-2 text-center text-zinc-300 text-xs">{c.qty}</td>
+                                  <td className="px-4 py-2 text-center text-zinc-500 text-xs">—</td>
+                                </tr>
+                              ))}
+                            </React.Fragment>
                           ))}
                           <tr className="border-t-2 border-[#FFD700]/40 bg-white/[0.05]">
                             <td className="px-4 py-2.5" />
@@ -4159,6 +4188,33 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
                               <td className="px-4 py-2.5 text-zinc-300">{it.category || '-'}</td>
                               <td className="px-4 py-2.5 text-center font-black text-white">{money(it.price)}</td>
                               <td className="px-4 py-2.5 text-center text-white">{it.available ? 'متاح' : 'موقوف'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+                <p className="text-sm text-zinc-300 mt-6">📦 محتويات البوكسات وأكوادها — {(catData.boxContents || []).length} محتوى</p>
+                {(catData.boxContents || []).length === 0 ? (
+                  <p className="text-sm text-zinc-400">مفيش محتويات بوكسات مسجلة.</p>
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm min-w-[480px]">
+                        <thead>
+                          <tr className="bg-[#FFFF00] text-black text-xs">
+                            <th className="text-right font-black px-4 py-2.5">المطعم</th>
+                            <th className="text-center font-black px-4 py-2.5">الرمز</th>
+                            <th className="text-right font-black px-4 py-2.5">اسم المحتوى</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(catData.boxContents || []).map((c, i) => (
+                            <tr key={`${c.restaurant}-${c.code ?? c.name}`} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                              <td className="px-4 py-2.5 font-black text-white">{c.restaurant || '-'}</td>
+                              <td className="px-4 py-2.5 text-center font-black text-white">{c.code ?? '-'}</td>
+                              <td className="px-4 py-2.5 text-white">{c.name}</td>
                             </tr>
                           ))}
                         </tbody>

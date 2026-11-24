@@ -147,6 +147,64 @@ const ensureItemCodes = async () => {
   return assigned;
 };
 
+// رموز محتويات البوكسات للمحاسب: نطاق منفصل 2001..3000 — كل محتوى (زي "كفتة" جوه بوكس)
+// ليه رمز ثابت خاص بيه، مختلف عن أي رمز صنف في المنيو، عشان الجرد يفرّق بين الكفتة
+// اللي طلعت جوه بوكس والكفتة اللي اتباعت ساندوتش عادي. المحتوى ملوش سعر لوحده.
+const BOX_CONTENT_CODE_START = 2001;
+const BOX_CONTENT_CODE_END = 3000;
+const boxContentSchema = new mongoose.Schema({
+  name: { type: String, required: true, unique: true },
+  code: { type: Number }
+});
+const BoxContent = mongoose.model("BoxContent", boxContentSchema);
+
+// أسماء محتويات البوكسات بترتيب أول ظهور: الموجود بيفضل برمزه، والجديد بياخد اللي بعده.
+// الكود بيتاخد من أعلى رمز صحيح موجود — عشان ميتكررش رمز مع محتوى تاني.
+const ensureBoxContentCodes = async (namesInOrder) => {
+  const out = new Map();
+  const names = [];
+  const seenNames = new Set();
+  for (const raw of namesInOrder || []) {
+    const n = String(raw || "").trim();
+    if (!n || seenNames.has(n)) continue;
+    seenNames.add(n);
+    names.push(n);
+  }
+  if (names.length === 0) return out;
+  const all = await BoxContent.find().select("name code").lean();
+  const byName = new Map(all.map((d) => [d.name, d]));
+  const valid = (n) => Number.isInteger(n) && n >= BOX_CONTENT_CODE_START && n <= BOX_CONTENT_CODE_END;
+  let next = BOX_CONTENT_CODE_START - 1;
+  for (const d of all) {
+    const c = Number(d.code);
+    if (valid(c)) next = Math.max(next, c);
+  }
+  const inBatch = new Set(names);
+  const seen = new Set();
+  for (const d of all) {
+    const c = Number(d.code);
+    if (valid(c) && !inBatch.has(d.name)) seen.add(c);
+  }
+  let assigned = 0;
+  for (const name of names) {
+    const doc = byName.get(name);
+    const c = doc ? Number(doc.code) : NaN;
+    if (doc && valid(c) && !seen.has(c)) {
+      seen.add(c);
+      out.set(name, c);
+      continue;
+    }
+    next += 1;
+    if (next > BOX_CONTENT_CODE_END) console.warn(`\u26A0\uFE0F رموز محتويات البوكسات: عدد المحتويات عدّى ${BOX_CONTENT_CODE_END}، والرمز ${next} برّه النطاق`);
+    if (doc) await BoxContent.updateOne({ _id: doc._id }, { $set: { code: next } });
+    else await new BoxContent({ name, code: next }).save();
+    seen.add(next);
+    out.set(name, next);
+    assigned += 1;
+  }
+  if (assigned > 0) console.log(`\u{1F522} رموز محتويات البوكسات: اتعيّن ${assigned} رمز جديد`);
+  return out;
+};
 // =========================
 // Delivery Zones
 // =========================
@@ -2162,6 +2220,22 @@ const buildReport = async (from, to, shift = null) => {
 // الدفع المقسّم بيتوزّع على طرقه، طلبات إجماليها الكامل وكاش طلبات في الكاش)، عشان الأرقام تطابق تقرير المبيعات.
 // كاش صغير في الذاكرة (30 ثانية): تبويب الأصناف وتبويب القنوات بيطلبوا نفس الفترة ورا بعض، فالمسح التقيل يتعمل مرة واحدة بس
 const accountantSummaryCache = new Map();
+// نفس ريجيكس محتويات البوكس اللي في buildReport ("2× كفتة") — عشان الجرد يطابق تقرير المطبخ
+const BOX_CONTENT_RE = /^\s*(\d+)\s*×\s*(.+?)\s*$/;
+// تجميع محتويات البوكس من تعديلات صنف في أوردر: "2× كفتة" × كمية الصنف
+const addBoxContents = (contentsMap, rowKey, modifiers, qty) => {
+  const mods = Array.isArray(modifiers) ? modifiers : [];
+  for (const mod of mods) {
+    const boxM = BOX_CONTENT_RE.exec(String(mod || ""));
+    if (!boxM) continue;
+    const cName = boxM[2].trim();
+    const cQty = Number(boxM[1]) * qty;
+    if (!cName || !cQty) continue;
+    if (!contentsMap.has(rowKey)) contentsMap.set(rowKey, new Map());
+    const cm = contentsMap.get(rowKey);
+    cm.set(cName, (cm.get(cName) || 0) + cQty);
+  }
+};
 const buildAccountantSummary = async (from, to, typeFilter = "all") => {
   const fromD = new Date(from), toD = new Date(to);
   const cacheKey = `${fromD.getTime()}|${toD.getTime()}|${typeFilter}`;
@@ -2204,12 +2278,14 @@ const buildAccountantSummary = async (from, to, typeFilter = "all") => {
     return best;
   };
   const itemRows = new Map();
+  const contentsMap = new Map(); // مفتاح الصف ← (اسم المحتوى ← الكمية)
   const addItemRow = (base, qty, revenue) => {
     const key = base ? `cat:${base.name}` : `raw:${String(base?.name || "صنف بدون اسم")}`;
     const row = itemRows.get(key) || { code: base?.code ?? null, name: base?.name || String(base?.name || "صنف بدون اسم"), category: base?.category || "أخرى", qty: 0, total: 0 };
     row.qty += qty;
     row.total += revenue;
     itemRows.set(key, row);
+    return key;
   };
 
   for (const o of orders) {
@@ -2248,11 +2324,25 @@ const buildAccountantSummary = async (from, to, typeFilter = "all") => {
     for (const it of o.items || []) {
       const qty = Number(it.quantity) || 0;
       const revenue = (Number(it.price) || 0) * qty;
-      addItemRow(resolveBase(it.name), qty, revenue);
+      const rowKey = addItemRow(resolveBase(it.name), qty, revenue);
+      // محتويات البوكس ("2× كفتة" في التعديلات): بتتجمع تحت الصنف الأب عشان الجرد
+      addBoxContents(contentsMap, rowKey, it.modifiers, qty);
     }
   }
 
-  const items = [...itemRows.values()].sort((a, b) => {
+  // أكواد محتويات البوكسات: كل محتوى ليه رمز ثابت من نطاق منفصل (2001..3000)
+  const contentNames = [];
+  for (const cm of contentsMap.values()) for (const n of cm.keys()) contentNames.push(n);
+  const contentCodes = await ensureBoxContentCodes(contentNames);
+  const items = [...itemRows.entries()].map(([rowKey, r]) => {
+    const cm = contentsMap.get(rowKey);
+    if (cm && cm.size) {
+      r.contents = [...cm.entries()]
+        .map(([name, qty]) => ({ code: contentCodes.get(name) ?? null, name, qty }))
+        .sort((a, b) => b.qty - a.qty || String(a.name).localeCompare(String(b.name)));
+    }
+    return r;
+  }).sort((a, b) => {
     if (a.code == null && b.code == null) return b.total - a.total || String(a.name).localeCompare(String(b.name));
     if (a.code == null) return 1;
     if (b.code == null) return -1;
@@ -2818,7 +2908,12 @@ app.get("/api/accountant/reports/catalog", requireAccountant, async (req, res) =
     await ensureItemCodes(); // أي صنف جديد من غير رمز ياخد رقمه قبل ما يطلع في الدليل
     const items = await Item.find().select("code name category price available").sort({ code: 1, _id: 1 }).lean();
     items.sort((a, b) => (a.code == null ? 1 : b.code == null ? -1 : Number(a.code) - Number(b.code)));
-    res.json({ items: items.map((i) => ({ code: i.code ?? null, name: i.name, category: i.category, price: Number(i.price) || 0, available: i.available !== false })) });
+    const boxContents = await BoxContent.find().select("code name").sort({ code: 1, _id: 1 }).lean();
+    boxContents.sort((a, b) => (a.code == null ? 1 : b.code == null ? -1 : Number(a.code) - Number(b.code)));
+    res.json({
+      items: items.map((i) => ({ code: i.code ?? null, name: i.name, category: i.category, price: Number(i.price) || 0, available: i.available !== false })),
+      boxContents: boxContents.map((c) => ({ code: c.code ?? null, name: c.name }))
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
