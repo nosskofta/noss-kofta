@@ -18,12 +18,13 @@ app.set('trust proxy', 1);
 // CORS
 // =========================
 app.disable("x-powered-by");
-// لو ضفت ALLOWED_ORIGINS في Railway (روابط الموقع مفصولة بفاصلة) السيرفر بيقبل طلبات المتصفح منها بس. لو مش مضافة، بيشتغل زي الأول.
+// دومينين المطعمين بس — لو ضفت ALLOWED_ORIGINS في Railway (روابط مفصولة بفاصلة) هي اللي بتتطبق بدل القايمة دي. من غيرها السيرفر بيقبل دومينين المطعمين بس، وعمره ما بيقبل أي موقع (*).
+const DEFAULT_ALLOWED_ORIGINS = ["https://noss-kofta.vercel.app", "https://bahbah-burger.vercel.app"];
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((v) => v.trim().replace(/\/$/, "")).filter(Boolean);
+const EFFECTIVE_ALLOWED_ORIGINS = ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : DEFAULT_ALLOWED_ORIGINS;
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (!ALLOWED_ORIGINS.length) res.header("Access-Control-Allow-Origin", "*");
-  else if (origin && ALLOWED_ORIGINS.includes(origin)) { res.header("Access-Control-Allow-Origin", origin); res.header("Vary", "Origin"); }
+  if (origin && EFFECTIVE_ALLOWED_ORIGINS.includes(origin)) { res.header("Access-Control-Allow-Origin", origin); res.header("Vary", "Origin"); }
   res.header("X-Content-Type-Options", "nosniff");
   res.header("X-Frame-Options", "DENY");
   res.header("Referrer-Policy", "no-referrer");
@@ -515,7 +516,7 @@ const checkAdminPin = (req, pin) => {
 };
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const MAX_LOGIN_FAILS_PER_USER = 8;
+const MAX_LOGIN_FAILS_PER_USER = 5;
 const MAX_LOGIN_FAILS_PER_IP = 30;
 
 const orderLimiter = (req, res, next) => {
@@ -598,10 +599,13 @@ const requireCustomerAuth = (req, res, next) => {
   next();
 };
 
-// حدّ محاولات دخول العملاء: 8 محاولات غلط لنفس الرقم+IP في 15 دقيقة (نفس نمط قفل دخول الكاشير)
-const MAX_CUSTOMER_LOGIN_FAILS = 8;
-const customerLoginKey = (req, phone) => `custlogin:${req.ip}:${phone}`;
-const customerLoginLocked = (req, phone) => (peekBucket(customerLoginKey(req, phone))?.count || 0) >= MAX_CUSTOMER_LOGIN_FAILS;
+// حدّ محاولات دخول العملاء: 5 محاولات غلط في 15 دقيقة — على الرقم لوحده وعلى الـ IP لوحده، وأي واحد فيهم بيقفل (نفس نمط قفل دخول الكاشير)
+const MAX_CUSTOMER_LOGIN_FAILS = 5;
+const customerLoginPhoneKey = (phone) => `custlogin:phone:${phone}`;
+const customerLoginIpKey = (req) => `custlogin:ip:${req.ip}`;
+const customerLoginLocked = (req, phone) => (peekBucket(customerLoginPhoneKey(phone))?.count || 0) >= MAX_CUSTOMER_LOGIN_FAILS || (peekBucket(customerLoginIpKey(req))?.count || 0) >= MAX_CUSTOMER_LOGIN_FAILS;
+const recordCustomerLoginFail = (req, phone) => { hitBucket(customerLoginPhoneKey(phone), LOGIN_WINDOW_MS); hitBucket(customerLoginIpKey(req), LOGIN_WINDOW_MS); };
+const clearCustomerLoginFails = (req, phone) => { buckets.delete(customerLoginPhoneKey(phone)); buckets.delete(customerLoginIpKey(req)); };
 
 // ---------- شات دعم العملاء (كول سنتر) ----------
 // توكن شات للضيوف: بيثبت إن المتصفح ده هو صاحب الرقم اللي بدأ المحادثة، من غير رقم سري
@@ -679,6 +683,7 @@ app.post("/api/auth/login", async (req, res) => {
     }
 
     buckets.delete(userKey);
+    buckets.delete(ipKey);
     res.json(session);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -708,6 +713,7 @@ app.post("/api/auth/accountant-login", async (req, res) => {
       return res.status(401).json({ error: "الرقم السري غلط" });
     }
     buckets.delete(userKey);
+    buckets.delete(ipKey);
     res.json({
       token: signToken({ id: "accountant", role: "accountant", s: accountantStamp }, 12 * 60 * 60 * 1000),
       user: { id: "accountant", name: "المحاسب", role: "accountant" }
@@ -1406,10 +1412,11 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
       if (existingCustomer?.pinHash) {
         const pinOk = await verifyPassword(pinRaw, existingCustomer.pinHash);
         if (!pinOk) {
-          hitBucket(customerLoginKey(req, phoneNorm), LOGIN_WINDOW_MS);
+          recordCustomerLoginFail(req, phoneNorm);
           return res.status(401).json({ error: "الرقم السري غلط. اتأكد منه، أو امسحه واطلب كضيف من غير رقم سري" });
         }
         customerToken = signCustomerToken(phoneNorm);
+        clearCustomerLoginFails(req, phoneNorm);
       } else {
         if (!isValidCustomerPin(pinRaw)) {
           return res.status(400).json({ error: "الرقم السري لازم يكون من 4 لـ 6 أرقام، ومش أرقام سهلة زي 1234" });
@@ -1468,10 +1475,10 @@ app.post("/api/customers/login", async (req, res) => {
     const customer = await Customer.findOne({ phone }).lean();
     const ok = await verifyPassword(pin, customer?.pinHash || DUMMY_HASH);
     if (!customer?.pinHash || !ok) {
-      hitBucket(customerLoginKey(req, phone), LOGIN_WINDOW_MS);
+      recordCustomerLoginFail(req, phone);
       return wrong();
     }
-    buckets.delete(customerLoginKey(req, phone));
+    clearCustomerLoginFails(req, phone);
     res.json({
       token: signCustomerToken(phone),
       profile: { name: customer.name || "", phone, address: customer.address || "", zoneName: customer.zoneName || "" }
