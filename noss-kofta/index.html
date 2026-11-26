@@ -1,10 +1,44 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Noss Kofta</title>
+    <title>نص كفتة | Noss Kofta - كفتة ومشويات في الشروق</title>
+    <meta name="description" content="نص كفتة — كفتة ومشويات على الفحم في مدينة الشروق. اطلب أونلاين دلوقتي: كفتة، مشويات، بوكسات وساندوتشات." />
+
+    <!-- Open Graph / WhatsApp Preview Tags -->
+    <meta property="og:title" content="نص كفتة | Noss Kofta - كفتة ومشويات في الشروق" />
+    <meta property="og:description" content="نص كفتة — كفتة ومشويات على الفحم في مدينة الشروق. اطلب أونلاين دلوقتي: كفتة، مشويات، بوكسات وساندوتشات." />
+    <meta property="og:image" content="https://noss-kofta.vercel.app/og-image.jpg" />
+    <meta property="og:url" content="https://noss-kofta.vercel.app" />
+    <meta property="og:type" content="website" />
+
+    <!-- Preconnect to the backend -->
+    <link rel="preconnect" href="https://noss-kofta-production-d57f.up.railway.app" />
+
+    <!-- Restaurant structured data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Restaurant",
+      "name": "نص كفتة | Noss Kofta",
+      "url": "https://noss-kofta.vercel.app",
+      "telephone": "+201042258982",
+      "servesCuisine": "كفتة ومشويات",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "مدينة الشروق",
+        "addressCountry": "EG"
+      },
+      "openingHoursSpecification": {
+        "@type": "OpeningHoursSpecification",
+        "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+        "opens": "12:00",
+        "closes": "03:00"
+      }
+    }
+    </script>
 
     <!-- Meta Pixel Code -->
     <script>
