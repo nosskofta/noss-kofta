@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+Disallow: /accountant
+Disallow: /cashier
+Disallow: /pos
+Disallow: /secret-admin-dashboard
+
+Sitemap: https://noss-kofta.vercel.app/sitemap.xml
