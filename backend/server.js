@@ -1163,7 +1163,7 @@ app.put("/api/store-hours", requireAuth, requireAdmin, async (req, res) => {
 });
 
 const POS_PAYMENTS = ["cash", "visa", "instapay", "wallet"];
-const WEBSITE_PAYMENTS = ["cash", "visa", "instapay"];
+const WEBSITE_PAYMENTS = ["cash", "visa", "instapay", "wallet"];
 const PAY_LABEL_AR = { cash: "كاش", visa: "فيزا", instapay: "انستا باي", wallet: "محفظة", split: "مقسّم" };
 const splitOf = (o) => (Array.isArray(o?.paymentSplit) && o.paymentSplit.length ? o.paymentSplit.map((p) => ({ method: p.method, amount: Number(p.amount) || 0 })) : null);
 // الجزء الكاش من الأوردر (اللي بيدخل الدرج أو اللي السواق بيحصّله)

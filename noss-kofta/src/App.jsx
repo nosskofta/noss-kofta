@@ -49,6 +49,24 @@ const clearChatIdentity = () => {
   try { localStorage.removeItem(CHAT_KEY); } catch {}
 };
 
+// ================= سلة العميل — بتتحفظ في المتصفح وبترجع لما الصفحة تتفتح تاني =================
+const CUSTOMER_CART_KEY = 'noss-kofta-cart-v1';
+const readCustomerCart = () => {
+  try {
+    const raw = localStorage.getItem(CUSTOMER_CART_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((line) => line && typeof line === 'object' && typeof line._id === 'string' && line._id.length > 0 && typeof line.name === 'string' && typeof line.price === 'number');
+  } catch { return []; }
+};
+const saveCustomerCart = (cart) => {
+  try { localStorage.setItem(CUSTOMER_CART_KEY, JSON.stringify(cart)); } catch {}
+};
+const clearCustomerCart = () => {
+  try { localStorage.removeItem(CUSTOMER_CART_KEY); } catch {}
+};
+
 // صوت تنبيه الشات عند العميل (بيشتغل بعد أول تفاعل مع الصفحة — قيد المتصفح)
 let chatAudioCtx = null;
 const unlockChatAudio = () => {
@@ -482,7 +500,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                       </div>
                     )}
                     <div onClick={() => { if (!soldOut) handleOpenItemDetails(item); }} className={`w-full h-[320px] bg-[#12080A] overflow-hidden relative ${soldOut ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-                      <img src={item.image} alt={item.name} className={`w-full h-full object-cover group-hover:scale-105 transition duration-300 ${soldOut ? 'grayscale' : ''}`} />
+                      <img src={item.image} alt={item.name} loading="lazy" decoding="async" className={`w-full h-full object-cover group-hover:scale-105 transition duration-300 ${soldOut ? 'grayscale' : ''}`} />
                     </div>
                     <div className="p-4 flex items-center justify-between bg-[#220E13] border-t border-[#3A1218]">
                       <div>
@@ -533,6 +551,13 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
 const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDetails, cart, setCart }) => {
   const t = translations[lang];
   const [selectedCategory, setSelectedCategory] = useState('الكل');
+  const catRowRef = useRef(null);
+  useEffect(() => {
+    try {
+      const el = catRowRef.current && catRowRef.current.querySelector('[data-active-cat="true"]');
+      if (el) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    } catch {}
+  }, [selectedCategory]);
 
   const categoriesToShow = selectedCategory === 'الكل' || selectedCategory === 'All'
     ? categories 
@@ -542,8 +567,10 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
     <section className="px-8 py-12 max-w-7xl mx-auto min-h-screen relative bg-[#12080A] text-white">
       <h2 className="text-3xl font-bold text-[#FFD700] mb-6 border-b border-[#3A1218] pb-4">{t.ourMenu}</h2>
       
-      <div className="flex gap-3 overflow-x-auto pb-4 mb-12 scrollbar-none sticky top-20 bg-[#12080A]/95 py-3 z-30 backdrop-blur-md">
+      <div className="relative mb-12 sticky top-20 z-30">
+      <div ref={catRowRef} className="flex gap-3 overflow-x-auto pb-4 scrollbar-none bg-[#12080A]/95 py-3 backdrop-blur-md">
         <button
+          data-active-cat={(selectedCategory === 'الكل' || selectedCategory === 'All') ? 'true' : undefined}
           onClick={() => setSelectedCategory(lang === 'ar' ? 'الكل' : 'All')}
           className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap transition duration-300 active:scale-95 border ${
             selectedCategory === 'الكل' || selectedCategory === 'All'
@@ -556,6 +583,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
         {categories.map(cat => (
           <button
             key={cat._id}
+            data-active-cat={selectedCategory === cat.name ? 'true' : undefined}
             onClick={() => setSelectedCategory(cat.name)}
             className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap transition duration-300 active:scale-95 border ${
               selectedCategory === cat.name 
@@ -566,6 +594,8 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
             {cat.name}
           </button>
         ))}
+      </div>
+      <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 w-12 bg-gradient-to-r from-[#12080A] to-transparent" />
       </div>
 
       {categoriesToShow.length === 0 ? (
@@ -612,7 +642,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                           </div>
                         )}
                         <div onClick={() => { if (soldOut) return; item.type === 'box' ? handleOpenBox(item) : handleOpenItemDetails(item); }} className={`w-full h-48 object-cover bg-[#12080A] overflow-hidden ${soldOut ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-                          <img src={item.image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta"} alt={item.name} className={`w-full h-full object-cover group-hover:scale-105 transition duration-300 ${soldOut ? 'grayscale' : ''}`} />
+                          <img src={item.image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta"} alt={item.name} loading="lazy" decoding="async" className={`w-full h-full object-cover group-hover:scale-105 transition duration-300 ${soldOut ? 'grayscale' : ''}`} />
                         </div>
                         <div className="p-4 flex-1 flex flex-col bg-[#1C0D10]">
                           <h3 className="text-xl font-bold mb-1 text-white">{item.name}</h3>
@@ -2140,6 +2170,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
     }
 
     setCart([]);
+    clearCustomerCart();
     setPlacedOrderId(orderId);
   };
 
@@ -5833,7 +5864,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
       try { localStorage.setItem('nossKoftaDrivers', JSON.stringify([name, ...readDrivers().filter(d => d !== name)].slice(0, 12))); } catch (e) {}
     }
     if (!ord.paymentMethod) {
-      if (!['cash', 'visa', 'instapay'].includes(completionPay)) return alert('اختار طريقة الدفع قبل تأكيد التسليم');
+      if (!['cash', 'visa', 'instapay', 'wallet'].includes(completionPay)) return alert('اختار طريقة الدفع قبل تأكيد التسليم');
       extra.paymentMethod = completionPay;
     }
     driverBusyRef.current = true;
@@ -6250,7 +6281,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
               <div className="space-y-2">
                 <p className="text-sm text-zinc-300 font-bold">اختار طريقة الدفع *</p>
                 <div className="grid grid-cols-3 gap-2">
-                  {[['cash', '💵 كاش'], ['visa', '💳 فيزا'], ['instapay', '📱 انستا باي']].map(([key, label]) => <button key={key} type="button" onClick={() => setCompletionPay(key)} className={`py-3 rounded-xl text-xs font-black border ${completionPay === key ? 'bg-green-600 text-white border-green-400' : 'bg-[#12080A] text-zinc-300 border-[#3A1218]'}`}>{label}</button>)}
+                  {[['cash', '💵 كاش'], ['visa', '💳 فيزا'], ['instapay', '📱 انستا باي'], ['wallet', '👛 محفظة']].map(([key, label]) => <button key={key} type="button" onClick={() => setCompletionPay(key)} className={`py-3 rounded-xl text-xs font-black border ${completionPay === key ? 'bg-green-600 text-white border-green-400' : 'bg-[#12080A] text-zinc-300 border-[#3A1218]'}`}>{label}</button>)}
                 </div>
               </div>
             )}
@@ -6645,7 +6676,7 @@ function App() {
   const location = useLocation();
   const isStaffPage = location.pathname === '/pos' || location.pathname === '/cashier' || location.pathname === '/accountant';
   const storeStatus = useStoreStatus();
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState(() => readCustomerCart());
   const [menuItems, setMenuItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [siteSettings, setSiteSettings] = useState({ heroImage: '', heroTitleAr: 'أقوى العروض 🔥', heroTitleEn: 'Strongest Offers 🔥', logoImage: '' });
@@ -6707,6 +6738,18 @@ function App() {
     };
     fetchAllData();
   }, []);
+
+  // سلة العميل: بتتحفظ مع كل تغيير، وأي صنف اتشال من المنيو بيتمسح من السلة المحفوظة
+  useEffect(() => { saveCustomerCart(cart); }, [cart]);
+  useEffect(() => {
+    if (!menuItems || menuItems.length === 0) return;
+    setCart((prev) => {
+      if (!prev || prev.length === 0) return prev;
+      const validIds = new Set(menuItems.map((m) => String(m._id)));
+      const pruned = prev.filter((line) => line && validIds.has(String(line._id)));
+      return pruned.length === prev.length ? prev : pruned;
+    });
+  }, [menuItems]);
 
   const handleSecretLogoClick = () => {
     setLogoClicks(prev => {
