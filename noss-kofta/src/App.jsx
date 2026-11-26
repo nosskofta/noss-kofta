@@ -67,6 +67,21 @@ const clearCustomerCart = () => {
   try { localStorage.removeItem(CUSTOMER_CART_KEY); } catch {}
 };
 
+// أرقام الموبايل المصري — زي بحبح: تطبيع (أرقام عربي و+20) + فحص إنه رقم موبايل حقيقي
+const normalizePhoneDigits = (v) => String(v || '').replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/\D/g, '');
+const normalizeEgPhoneInput = (v) => {
+  let d = normalizePhoneDigits(v);
+  if (d.startsWith('0020')) d = '0' + d.slice(4);
+  else if (d.startsWith('20') && d.length >= 12) d = '0' + d.slice(2);
+  return d.slice(0, 11);
+};
+const isEgMobile = (p) => /^01[0125]\d{8}$/.test(p);
+const isFakeEgPhone = (p) => {
+  if (!isEgMobile(p)) return false;
+  const tail = p.slice(3);
+  return /^(\d)\1+$/.test(tail) || /(\d)\1{6,}/.test(p) || '01234567890123456789'.includes(tail) || '98765432109876543210'.includes(tail) || /^(\d{2})\1{3}$/.test(tail) || /^(\d{4})\1$/.test(tail);
+};
+
 // صوت تنبيه الشات عند العميل (بيشتغل بعد أول تفاعل مع الصفحة — قيد المتصفح)
 let chatAudioCtx = null;
 const unlockChatAudio = () => {
@@ -1978,6 +1993,10 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
   const [customerAddress, setCustomerAddress] = useState('');
 
   const [placedOrderId, setPlacedOrderId] = useState(null);
+  const [phoneInfo, setPhoneInfo] = useState(null);
+  // آخر بيانات اتعبّت لوحدها من البحث بالرقم — عشان نمسحها بس لو الرقم اتغيّر، ومنمسحش اللي العميل كتبه بنفسه
+  const autofilledRef = useRef({ name: '', address: '' });
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   // حساب العميل (اختياري): لو داخل بحسابه بنملا بياناته المحفوظة، ولو كتب رقم سري جديد بيتحفظ لحسابه
   const [customerPin, setCustomerPin] = useState('');
@@ -2014,6 +2033,61 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
       })
       .catch(() => {});
   }, []);
+
+  // لو الرقم ده عميل سابق: نجيب اسمه (ولو موثّق بيتعبّى لوحده)، ولو رقم جديد بننبّه إن الكاشير هيتصل لتأكيده — زي بحبح
+  useEffect(() => {
+    setPhoneInfo(null);
+    // امسح بس البيانات اللي كانت متعبّية من الرقم السابق — لو العميل كتب اسمه/عنوانه بنفسه متتمسحش
+    setCustomerName((prev) => (prev === autofilledRef.current.name ? '' : prev));
+    setCustomerAddress((prev) => (prev === autofilledRef.current.address ? '' : prev));
+    autofilledRef.current = { name: '', address: '' };
+    if (!isEgMobile(customerPhone) || isFakeEgPhone(customerPhone)) return;
+    let cancelled = false;
+    const runPublicLookup = () => {
+      fetch(`${API_BASE}/api/customers/lookup?phone=${customerPhone}`).then(r => {
+        // لو اتقفلنا من كتر الطلبات (429) نكمّل كأن الرقم جديد — البحث ميوقفش الطلب أبداً
+        if (r.status === 429) return { ok: true, name: '' };
+        return r.json().catch(() => null);
+      }).then(d => {
+        if (cancelled || !d) return;
+        // الرد الموحّد: اسم فاضي = رقم جديد → مسار توثيق المكالمة، اسم موجود = عميل راجع
+        if (!d.name) { setPhoneInfo({ needsCallVerification: true }); return; }
+        setPhoneInfo(d);
+        setCustomerName(d.name || '');
+        autofilledRef.current.name = d.name || '';
+        if (orderType === 'delivery') {
+          setCustomerAddress(d.address || '');
+          autofilledRef.current.address = d.address || '';
+          const z = d.zoneName ? deliveryZones.find(x => x.name === d.zoneName) : null;
+          if (z) setSelectedZone(z);
+        }
+      }).catch(() => {});
+    };
+    // عميل مسجّل دخول برقمه: نجيب بياناته الكاملة المحفوظة من حسابه (مش البحث العام اللي بيرجع الاسم بس)
+    const session = readCustomer();
+    if (session && session.token && session.phone === customerPhone) {
+      fetch(`${API_BASE}/api/customers/me`, { headers: { Authorization: `Bearer ${session.token}` } }).then(async (r) => {
+        if (r.status === 401) { clearCustomer(); setLoggedInCustomer(null); return null; }
+        return r.json().catch(() => null);
+      }).then(d => {
+        if (cancelled) return;
+        if (!d || !d.profile) { runPublicLookup(); return; }
+        const p = d.profile;
+        setPhoneInfo({ known: true, name: p.name || '' });
+        setCustomerName(p.name || '');
+        autofilledRef.current.name = p.name || '';
+        if (orderType === 'delivery') {
+          setCustomerAddress(p.address || '');
+          autofilledRef.current.address = p.address || '';
+          const z = p.zoneName ? deliveryZones.find(x => x.name === p.zoneName) : null;
+          if (z) setSelectedZone(z);
+        }
+      }).catch(() => { if (!cancelled) runPublicLookup(); });
+      return () => { cancelled = true; };
+    }
+    runPublicLookup();
+    return () => { cancelled = true; };
+  }, [customerPhone, deliveryZones, orderType]);
 
   useEffect(() => {
     if (savedZoneName && deliveryZones.length > 0) {
@@ -2053,10 +2127,21 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
     setCart(cart.filter(i => i.name !== itemName));
   };
 
+  // قبل الإرسال: نراجع البيانات ونطلب من العميل يتأكد من رقمه — زي بحبح
+  const requestSend = () => {
+    if (cart.length === 0) return alert("السلة فارغة!");
+    if (!customerName.trim()) return alert("من فضلك اكتب اسمك الكامل.");
+    if (!isEgMobile(customerPhone)) return alert("من فضلك اكتب رقم موبايل صحيح مكون من 11 رقم بيبدأ بـ 01.");
+    if (isFakeEgPhone(customerPhone)) return alert("الرقم ده شكله مش حقيقي. اكتب رقمك الصح عشان نقدر نتواصل معاك.");
+    if (orderType === 'delivery' && !customerAddress.trim()) return alert("من فضلك اكتب عنوان الاستلام بالتفصيل.");
+    if (customerPin && (customerPin.length < 4 || customerPin.length > 6)) return alert("الرقم السري لازم يكون من 4 لـ 6 أرقام، أو سيبه فاضي.");
+    setConfirmOpen(true);
+  };
+
   const sendOrderToWhatsApp = async () => {
     if (cart.length === 0) return alert("السلة فارغة!");
     if (!customerName.trim()) return alert("من فضلك اكتب اسمك الكامل.");
-    if (!customerPhone.trim() || customerPhone.length !== 11 || isNaN(customerPhone)) {
+    if (!isEgMobile(customerPhone) || isFakeEgPhone(customerPhone)) {
       return alert("من فضلك اكتب رقم تليفون صحيح مكون من 11 رقم.");
     }
     if (customerPin && (customerPin.length < 4 || customerPin.length > 6)) {
@@ -2261,7 +2346,11 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
           </div>
           <div>
             <label className="block text-xs text-zinc-300 mb-1">رقم التليفون (11 رقم) *</label>
-            <input type="text" maxLength="11" placeholder="010xxxxxxxx" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value.replace(/\D/g, ''))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-wider" />
+            <input type="text" inputMode="numeric" maxLength="11" autoComplete="tel" placeholder="010xxxxxxxx" value={customerPhone} onChange={(e) => setCustomerPhone(normalizeEgPhoneInput(e.target.value))} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm tracking-wider" dir="ltr" />
+                {customerPhone.length === 11 && isFakeEgPhone(customerPhone) && <p className="text-xs text-red-400 mt-1">الرقم ده شكله مش حقيقي، اكتب رقمك الصح.</p>}
+                {customerPhone.length === 11 && !isEgMobile(customerPhone) && <p className="text-xs text-red-400 mt-1">لازم يبدأ بـ 010 أو 011 أو 012 أو 015.</p>}
+                {customerPhone.length === 11 && isEgMobile(customerPhone) && !isFakeEgPhone(customerPhone) && phoneInfo?.needsCallVerification && <p className="text-xs text-amber-300 mt-1">أول مرة؟ الكاشير هيتصل لتأكيد الرقم، وبعدها بياناتك هتتحفظ للطلبات الجاية.</p>}
+                {phoneInfo?.name && <p className="text-xs text-green-400 mt-1">✅ أهلاً بيك تاني{phoneInfo.name ? ` يا ${phoneInfo.name}` : ''}! جبنالك بياناتك المحفوظة.</p>}
           </div>
 
           {!loggedInCustomer?.token && (
@@ -2300,10 +2389,24 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
           )}
         </div>
 
+        {confirmOpen && (
+          <div className="nkfx-fade fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4" onClick={() => setConfirmOpen(false)}>
+            <div dir="rtl" className="nkfx-rise bg-[#1C0D10] border border-[#800020] rounded-3xl w-full max-w-sm p-6 text-center space-y-4" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-xl font-black text-[#FFD700]">تأكيد رقم التليفون</h3>
+              <p className="text-zinc-300 text-sm">هنتواصل معاك على الرقم ده لتأكيد الأوردر. اتأكد إنه صح:</p>
+              <div className="text-3xl font-black text-white tracking-widest" dir="ltr">{customerPhone}</div>
+              <p className="text-xs text-zinc-400">{customerName}{orderType === 'delivery' ? ` — ${customerAddress}` : ' — استلام من الفرع'}</p>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setConfirmOpen(false)} className="flex-1 py-3 rounded-xl bg-zinc-700 text-white font-bold transition active:scale-[0.98]">✏️ تعديل</button>
+                <button type="button" onClick={() => { setConfirmOpen(false); sendOrderToWhatsApp(); }} className="flex-1 py-3 rounded-xl bg-[#25D366] text-black font-black transition active:scale-[0.98]">✅ الرقم صح، ابعت</button>
+              </div>
+            </div>
+          </div>
+        )}
         {storeClosed && (
           <div className="mt-6 bg-[#800020]/20 border border-[#800020] text-[#FFD700] rounded-xl p-4 text-sm font-bold text-center leading-relaxed">🌙 {storeStatus.message}</div>
         )}
-        <button onClick={sendOrderToWhatsApp} disabled={storeClosed} className={`w-full font-black text-lg py-4 rounded-xl transition mt-4 flex items-center justify-center gap-2 shadow-lg active:scale-[0.97] ${storeClosed ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-[#25D366] text-black hover:bg-[#20bd5a] cursor-pointer'}`}>
+        <button onClick={requestSend} disabled={storeClosed} className={`w-full font-black text-lg py-4 rounded-xl transition mt-4 flex items-center justify-center gap-2 shadow-lg active:scale-[0.97] ${storeClosed ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed' : 'bg-[#25D366] text-black hover:bg-[#20bd5a] cursor-pointer'}`}>
           {storeClosed ? '🌙 الطلب مقفول دلوقتي' : t.whatsappOrder}
         </button>
       </div>
@@ -3882,8 +3985,8 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
     if (!itemsData) return;
     const rows = [];
     (itemsData.items || []).forEach((it) => {
-      rows.push([it.restaurant || '-', it.code ?? '-', it.name, it.qty, acctRound(it.total)]);
-      (it.contents || []).forEach((c) => rows.push([it.restaurant || '-', c.code ?? '-', `↳ ${c.name}`, c.qty, '']));
+      rows.push([it.restaurant || '-', it.code ?? '-', it.name, '—', it.qty, acctRound(it.total)]);
+      (it.contents || []).forEach((c) => rows.push([it.restaurant || '-', c.code ?? '-', `↳ ${c.name}`, `${c.boxName || it.name}${(c.box ?? it.code) != null ? ` (${c.box ?? it.code})` : ''}`, c.qty, '']));
     });
     const bytes = buildXlsxFile({
       titleRows: [
@@ -3892,10 +3995,10 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
         `القناة: ${acctTypeLabel(type)}`,
         `اتعمل بتاريخ ${new Date().toLocaleString('ar-EG')}`
       ],
-      headers: ['المطعم', 'الرمز', 'اسم الصنف', 'عدد الأصناف', 'مجموع سعر المبيعات (ج)'],
+      headers: ['المطعم', 'الرمز', 'اسم الصنف', 'البوكس', 'عدد الأصناف', 'مجموع سعر المبيعات (ج)'],
       rows,
-      widths: [16, 10, 45, 14, 22],
-      totalsRow: ['', '', 'الإجمالي', itemsData.itemsTotals?.qty || 0, acctRound(itemsData.itemsTotals?.total)],
+      widths: [16, 10, 45, 22, 14, 22],
+      totalsRow: ['', '', 'الإجمالي', '', itemsData.itemsTotals?.qty || 0, acctRound(itemsData.itemsTotals?.total)],
       summaryLines: [
         ['إجمالي مبيعات الأصناف', acctRound(itemsData.itemsTotals?.total)],
         ['الخصومات', acctRound(itemsData.totals?.discounts)],
@@ -3957,8 +4060,8 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
       widths: [16, 10, 45, 22, 14, 12],
       extraSections: (catData.boxContents || []).length ? [{
         title: `📦 محتويات البوكسات وأكوادها (${(catData.boxContents || []).length} محتوى)`,
-        headers: ['المطعم', 'الرمز', 'اسم المحتوى'],
-        rows: (catData.boxContents || []).map((c) => [c.restaurant || '-', c.code ?? '-', c.name])
+        headers: ['المطعم', 'الرمز', 'البوكس', 'اسم المحتوى'],
+        rows: (catData.boxContents || []).map((c) => [c.restaurant || '-', c.code ?? '-', c.boxName ? `${c.boxName}${c.box != null ? ` (${c.box})` : ''}` : '-', c.name])
       }] : []
     });
     xlsxDownload(`items-catalog-${effectiveScope}.xlsx`, bytes);
@@ -4221,19 +4324,21 @@ const AccountantReports = ({ session, onSessionChange, onLogout }) => {
                 ) : (
                   <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm min-w-[480px]">
+                      <table className="w-full text-sm min-w-[560px]">
                         <thead>
                           <tr className="bg-[#FFFF00] text-black text-xs">
                             <th className="text-right font-black px-4 py-2.5">المطعم</th>
                             <th className="text-center font-black px-4 py-2.5">الرمز</th>
+                            <th className="text-right font-black px-4 py-2.5">البوكس</th>
                             <th className="text-right font-black px-4 py-2.5">اسم المحتوى</th>
                           </tr>
                         </thead>
                         <tbody>
                           {(catData.boxContents || []).map((c, i) => (
-                            <tr key={`${c.restaurant}-${c.code ?? c.name}`} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
+                            <tr key={`${c.restaurant}-${c.box ?? ''}-${c.code ?? c.name}`} className={i % 2 === 1 ? 'bg-white/[0.03]' : ''}>
                               <td className="px-4 py-2.5 font-black text-white">{c.restaurant || '-'}</td>
                               <td className="px-4 py-2.5 text-center font-black text-white">{c.code ?? '-'}</td>
+                              <td className="px-4 py-2.5 text-white">{c.boxName ? `${c.boxName}${c.box != null ? ` (${c.box})` : ''}` : '-'}</td>
                               <td className="px-4 py-2.5 text-white">{c.name}</td>
                             </tr>
                           ))}
@@ -6020,6 +6125,8 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
           {ord.driverName && <p>🛵 <span className="text-zinc-300 text-xs">السواق: {ord.driverName}</span></p>}
           {ord.status === 'cancelled' && <p>✖ <span className="text-red-400 text-xs">سبب الإلغاء: {ord.cancelReason} ({ord.cancelledBy})</span></p>}
           {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.customerAddress}</span></p>}
+          {ord.orderType === 'delivery' && ord.customerPhone && ord.customerPhone !== '-' && ord.phoneStatus !== 'verified' && ord.phoneStatus !== 'known' && <p className="bg-orange-500/15 border border-orange-500/50 text-orange-300 rounded-lg px-2 py-1 text-xs font-bold">🆕 رقم غير موثّق — اتصل بالعميل، وبعد التأكيد اضغط زر توثيق الرقم</p>}
+          {(ord.phoneStatus === 'verified' || ord.phoneStatus === 'known') && <p className="text-green-400 text-xs font-bold">✅ رقم موثّق ({ord.phoneOrders || 0} أوردر مكتمل)</p>}
           {ord.createdAt && <p>🕒 <span className="text-zinc-400 text-xs">{new Date(ord.createdAt).toLocaleString('ar-EG')}</span></p>}
           {ord.acceptedBy && <p>✅ <span className="text-zinc-400 text-xs">قبله: {ord.acceptedBy}</span></p>}
           {ord.completedBy && <p>🏁 <span className="text-zinc-400 text-xs">أنهاه: {ord.completedBy}</span></p>}
@@ -6047,9 +6154,22 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
           <span className="text-[#FFD700] text-lg font-black">{ord.grandTotal} ج</span>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {ord.orderType === 'delivery' && ord.customerPhone && ord.customerPhone !== '-' && ord.phoneStatus !== 'verified' && ord.phoneStatus !== 'known' && ord.status !== 'cancelled' && (
+            <button onClick={async () => {
+              const confirmed = window.confirm(`هل اتصلت فعلاً بالعميل ${ord.customerPhone} وتأكدت إن الرقم يخصه؟`);
+              if (!confirmed) return;
+              try {
+                const r = await authFetch('/api/customers/verify-by-call', { method: 'POST', body: JSON.stringify({ phone: ord.customerPhone }) });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) return alert(d.error || 'تعذر توثيق الرقم');
+                alert('تم توثيق الرقم وحفظ بيانات العميل');
+                fetchOrders();
+              } catch { alert('تعذر الاتصال بالسيرفر'); }
+            }} className="w-full bg-emerald-700 hover:bg-emerald-600 text-white py-2 rounded-xl text-xs font-black">📞 اتصلت بالعميل — توثيق الرقم</button>
+          )}
           {ord.status === 'pending' && (
-            <button disabled={busyOrderIds.includes(String(ord._id || ord.orderId))} onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')} className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">✅ قبول الأوردر (إيقاف الصوت)</button>
+            <button disabled={(ord.orderType === 'delivery' && ord.customerPhone && ord.customerPhone !== '-' && ord.phoneStatus !== 'verified' && ord.phoneStatus !== 'known') || busyOrderIds.includes(String(ord._id || ord.orderId))} title={ord.orderType === 'delivery' && ord.customerPhone && ord.customerPhone !== '-' && ord.phoneStatus !== 'verified' && ord.phoneStatus !== 'known' ? 'اتصل بالعميل وأكّد الرقم الأول' : 'قبول الأوردر'} onClick={() => updateOrderStatus(ord._id || ord.orderId, 'accepted')} className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">✅ قبول الأوردر (إيقاف الصوت)</button>
           )}
           {ord.status === 'accepted' && ord.awaitingCash && (
             <button disabled={busyOrderIds.includes(String(ord._id || ord.orderId))} onClick={() => receiveCash(ord)} className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-black transition shadow-lg">💵 استلمت النقدية من السواق ({Math.max(0, cashPartOf(ord) - (Number(ord.deliveryFee) || 0))} ج)</button>

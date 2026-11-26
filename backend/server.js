@@ -148,62 +148,156 @@ const ensureItemCodes = async () => {
   return assigned;
 };
 
-// رموز محتويات البوكسات للمحاسب: نطاق منفصل 2001..3000 — كل محتوى (زي "كفتة" جوه بوكس)
+// رموز محتويات البوكسات للمحاسب: نطاق منفصل 2001..3000 — كل زوج (بوكس، محتوى)
 // ليه رمز ثابت خاص بيه، مختلف عن أي رمز صنف في المنيو، عشان الجرد يفرّق بين الكفتة
-// اللي طلعت جوه بوكس والكفتة اللي اتباعت ساندوتش عادي. المحتوى ملوش سعر لوحده.
+// اللي طلعت جوه بوكس والكفتة اللي اتباعت ساندوتش عادي — وبين نفس الساندوتش في
+// بوكسين مختلفين (كفتة بوكس 3 ≠ كفتة بوكس 4). المحتوى ملوش سعر لوحده.
+// box = رمز البوكس الأب في المنيو (ولو البوكس مش في الكتالوج بيبقى null وboxName هو المرجع).
 const BOX_CONTENT_CODE_START = 2001;
 const BOX_CONTENT_CODE_END = 3000;
 const boxContentSchema = new mongoose.Schema({
-  name: { type: String, required: true, unique: true },
+  name: { type: String, required: true },
+  box: { type: Number },
+  boxName: { type: String },
   code: { type: Number }
 });
+boxContentSchema.index({ box: 1, boxName: 1, name: 1 }, { unique: true });
 const BoxContent = mongoose.model("BoxContent", boxContentSchema);
 
-// أسماء محتويات البوكسات بترتيب أول ظهور: الموجود بيفضل برمزه، والجديد بياخد اللي بعده.
+// مفتاح الزوج (بوكس، محتوى): رمز البوكس الأب، أو اسمه لو ملوش رمز
+const boxContentPairKey = (box, boxName, name) => `${box ?? `name:${boxName || ""}`}|${name}`;
+// فلتر البحث عن مستند زوج: بالرمز لو موجود، وبالاسم لو البوكس ملوش رمز
+const boxContentPairFilter = (box, boxName, name) => (box != null ? { box, name } : { box: null, boxName, name });
+
+// أزواج (بوكس، محتوى) بترتيب أول ظهور: الموجود بيفضل برمزه، والجديد بياخد اللي بعده.
 // الكود بيتاخد من أعلى رمز صحيح موجود — عشان ميتكررش رمز مع محتوى تاني.
-const ensureBoxContentCodes = async (namesInOrder) => {
-  const out = new Map();
-  const names = [];
-  const seenNames = new Set();
-  for (const raw of namesInOrder || []) {
-    const n = String(raw || "").trim();
-    if (!n || seenNames.has(n)) continue;
-    seenNames.add(n);
-    names.push(n);
+// ترحيل: مستندات قديمة {name, code} من غير بوكس — أول زوج يظهر بنفس الاسم بياخد
+// الرمز القديم، وباقي الأزواج بنفس الاسم بتاخد رموز جديدة. الرموز الموجودة مبتتغيرش.
+const ensureBoxContentCodes = async (pairsInOrder) => {
+  const out = new Map(); // مفتاح الزوج ← الرمز
+  const pairs = [];
+  const seenPairs = new Set();
+  for (const raw of pairsInOrder || []) {
+    const name = String(raw?.name || "").trim();
+    const box = raw?.box == null || raw?.box === "" ? null : Number(raw.box);
+    const boxName = String(raw?.boxName || "").trim();
+    if (!name) continue;
+    const key = boxContentPairKey(box, boxName, name);
+    if (seenPairs.has(key)) continue;
+    seenPairs.add(key);
+    pairs.push({ box, boxName, name, key });
   }
-  if (names.length === 0) return out;
-  const all = await BoxContent.find().select("name code").lean();
-  const byName = new Map(all.map((d) => [d.name, d]));
+  if (pairs.length === 0) return out;
+  // الفهرس القديم unique على الاسم لوحده كان بيمنع نفس الاسم في بوكسين — نشيله مرة واحدة (لو مش موجود بيتجاهل)
+  try { await BoxContent.collection.dropIndex("name_1"); } catch {}
+  const all = await BoxContent.find().select("name box boxName code").lean();
+  const byPair = new Map();
+  const legacyByName = new Map();
+  for (const d of all) {
+    if (d.box != null) byPair.set(boxContentPairKey(Number(d.box), d.boxName, d.name), d);
+    else if (!legacyByName.has(d.name)) legacyByName.set(d.name, d);
+  }
   const valid = (n) => Number.isInteger(n) && n >= BOX_CONTENT_CODE_START && n <= BOX_CONTENT_CODE_END;
   let next = BOX_CONTENT_CODE_START - 1;
   for (const d of all) {
     const c = Number(d.code);
     if (valid(c)) next = Math.max(next, c);
   }
-  const inBatch = new Set(names);
+  const batchKeys = new Set(pairs.map((p) => p.key));
+  const batchNames = new Set(pairs.map((p) => p.name));
   const seen = new Set();
   for (const d of all) {
     const c = Number(d.code);
-    if (valid(c) && !inBatch.has(d.name)) seen.add(c);
+    if (!valid(c)) continue;
+    // رمز مستند مش في الدفعة دي محجوز؛ ورمز مستند قديم لاسم في الدفعة بيفضل متاح لأول زوج يطالب بيه
+    if (d.box != null) { if (!batchKeys.has(boxContentPairKey(Number(d.box), d.boxName, d.name))) seen.add(c); }
+    else if (!batchNames.has(d.name)) seen.add(c);
   }
+  const claimedLegacy = new Set();
   let assigned = 0;
-  for (const name of names) {
-    const doc = byName.get(name);
+  const freshCode = () => {
+    next += 1;
+    if (next > BOX_CONTENT_CODE_END) console.warn(`رموز محتويات البوكسات: عدد المحتويات عدّى ${BOX_CONTENT_CODE_END}، والرمز ${next} برّه النطاق`);
+    return next;
+  };
+  for (const p of pairs) {
+    const doc = byPair.get(p.key);
     const c = doc ? Number(doc.code) : NaN;
     if (doc && valid(c) && !seen.has(c)) {
       seen.add(c);
-      out.set(name, c);
+      out.set(p.key, c);
       continue;
     }
-    next += 1;
-    if (next > BOX_CONTENT_CODE_END) console.warn(`\u26A0\uFE0F رموز محتويات البوكسات: عدد المحتويات عدّى ${BOX_CONTENT_CODE_END}، والرمز ${next} برّه النطاق`);
-    if (doc) await BoxContent.updateOne({ _id: doc._id }, { $set: { code: next } });
-    else await new BoxContent({ name, code: next }).save();
-    seen.add(next);
-    out.set(name, next);
+    if (doc) {
+      // مستند الزوج موجود بس رمزه ناقص/برّه النطاق/متكرر — نديه رمز جديد
+      const nc = freshCode();
+      await BoxContent.updateOne({ _id: doc._id }, { $set: { boxName: p.boxName, code: nc } });
+      seen.add(nc);
+      out.set(p.key, nc);
+      assigned += 1;
+      continue;
+    }
+    const legacy = legacyByName.get(p.name);
+    if (legacy && !claimedLegacy.has(p.name)) {
+      claimedLegacy.add(p.name);
+      const lc = Number(legacy.code);
+      if (valid(lc) && !seen.has(lc)) {
+        const claimed = await BoxContent.updateOne({ _id: legacy._id, box: null }, { $set: { box: p.box, boxName: p.boxName } });
+        if (claimed.modifiedCount > 0) {
+          seen.add(lc);
+          out.set(p.key, lc);
+          continue;
+        }
+        const again = await BoxContent.findById(legacy._id).select("box code").lean();
+        if (again && Number(again.box) === Number(p.box) && valid(Number(again.code))) {
+          seen.add(Number(again.code));
+          out.set(p.key, Number(again.code));
+          continue;
+        }
+        // اتاخد لزوج تاني — نكمّل كأن مفيش مستند قديم
+      } else {
+        // رمز المستند القديم مش صالح أو محجوز — نطالب بالمستند برمز جديد
+        const nc = freshCode();
+        const claimed = await BoxContent.updateOne({ _id: legacy._id, box: null }, { $set: { box: p.box, boxName: p.boxName, code: nc } });
+        if (claimed.modifiedCount > 0) {
+          seen.add(nc);
+          out.set(p.key, nc);
+          assigned += 1;
+          continue;
+        }
+        const again = await BoxContent.findById(legacy._id).select("box code").lean();
+        if (again && Number(again.box) === Number(p.box) && valid(Number(again.code))) {
+          seen.add(Number(again.code));
+          out.set(p.key, Number(again.code));
+          continue;
+        }
+      }
+    }
+    // زوج جديد تمامًا
+    const nc = freshCode();
+    let created = await BoxContent.findOne(boxContentPairFilter(p.box, p.boxName, p.name)).select("_id code").lean();
+    if (!created) {
+      try {
+        created = await new BoxContent({ name: p.name, box: p.box, boxName: p.boxName, code: nc }).save();
+      } catch (e) {
+        if (e?.code === 11000) created = await BoxContent.findOne(boxContentPairFilter(p.box, p.boxName, p.name)).select("_id code").lean();
+        else throw e;
+      }
+    }
+    const cc = Number(created?.code);
+    if (valid(cc) && !seen.has(cc)) {
+      seen.add(cc);
+      out.set(p.key, cc);
+      if (cc === nc) assigned += 1;
+      continue;
+    }
+    // رجع مستند برمز مش صالح أو متكرر (سباق نادر) — نصلّحه بالرمز الجديد
+    await BoxContent.updateOne({ _id: created._id }, { $set: { boxName: p.boxName, code: nc } });
+    seen.add(nc);
+    out.set(p.key, nc);
     assigned += 1;
   }
-  if (assigned > 0) console.log(`\u{1F522} رموز محتويات البوكسات: اتعيّن ${assigned} رمز جديد`);
+  if (assigned > 0) console.log(`رموز محتويات البوكسات: اتعيّن ${assigned} رمز جديد`);
   return out;
 };
 // =========================
@@ -267,6 +361,9 @@ const orderSchema = new mongoose.Schema({
   source: { type: String, default: "web" },
   paymentMethod: { type: String },
   talabatNo: { type: String },
+  // حالة توثيق رقم العميل بالمكالمة (زي بحبح): verified للموثّق، new للجديد
+  phoneStatus: { type: String },
+  phoneOrders: { type: Number },
   discountPercent: { type: Number, default: 0 },
   discountAmount: { type: Number, default: 0 },
   discountReason: { type: String, default: "" },
@@ -314,6 +411,11 @@ const customerSchema = new mongoose.Schema({
   pinSetAt: { type: Date },
   pinResetAt: { type: Date },
   pinResetBy: { type: String, default: "" },
+  // توثيق الرقم بمكالمة فعلية من الكاشير (زي بحبح)
+  verified: { type: Boolean, default: false },
+  verifiedAt: { type: Date },
+  verifiedBy: { type: String, default: "" },
+  orderCount: { type: Number, default: 0 },
   ordersCount: { type: Number, default: 0 },
   lastOrderAt: { type: Date },
   createdAt: { type: Date, default: Date.now }
@@ -552,6 +654,24 @@ const requireAuth = async (req, res, next) => {
   } catch (err) {
     res.status(401).json({ error: "غير مصرح" });
   }
+};
+
+// مصادقة اختيارية: لو الطلب معاه توكن صالح بنملا req.user، ولو مفيش بنكمّل من غيره (للردود العامة المخفّفة)
+const optionalAuth = async (req, res, next) => {
+  try {
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+    const payload = token ? verifyToken(token) : null;
+    if (payload) {
+      if (payload.role === "admin") {
+        if (payload.s === adminStamp) req.user = { _id: "admin", name: "المدير", username: ADMIN_USERNAME, role: "admin" };
+      } else {
+        const user = await Staff.findById(payload.id);
+        if (user && user.active && user.role === "cashier") req.user = user;
+      }
+    }
+  } catch {}
+  next();
 };
 
 const requireAdmin = (req, res, next) => {
@@ -1063,6 +1183,15 @@ const normPhone = (v) => {
   return d;
 };
 const isValidPhone = (v) => /^\d{8,15}$/.test(normPhone(v));
+// رقم موبايل مصري صحيح (01 + 0/1/2/5 + 8 أرقام) — زي بحبح
+const isEgMobile = (p) => /^01[0125]\d{8}$/.test(normPhone(p));
+const isFakeEgPhone = (p) => {
+  const n = normPhone(p);
+  if (!isEgMobile(n)) return false;
+  const tail = n.slice(3);
+  return /^(\d)\1+$/.test(tail) || /(\d)\1{6,}/.test(n) || "01234567890123456789".includes(tail)
+    || "98765432109876543210".includes(tail) || /^(\d{2})\1{3}$/.test(tail) || /^(\d{4})\1$/.test(tail);
+};
 const upsertCustomer = async ({ phone, name, address, zoneName }) => {
   try {
     const p = normPhone(phone);
@@ -1078,6 +1207,32 @@ const upsertCustomer = async ({ phone, name, address, zoneName }) => {
   } catch (err) {
     if (err?.code !== 11000) console.error("upsertCustomer error:", err.message);
   }
+};
+
+// حالة الرقم: موثّق قبل كده ولا جديد (زي بحبح)
+const phoneHistory = async (phone) => {
+  const p = normPhone(phone);
+  if (!isEgMobile(p)) return { status: "new", count: 0 };
+  const customer = await Customer.findOne({ phone: p, verified: true }).select("orderCount").lean();
+  return customer ? { status: "verified", count: customer.orderCount || 0 } : { status: "new", count: 0 };
+};
+
+// نحفظ بيانات العميل من آخر أوردر حتى لو الرقم لسه مش موثّق — التوثيق بالمكالمة هو اللي بيخليها تتعبّى تلقائي بعد كده (زي بحبح)
+const rememberUnverifiedCustomer = async (order) => {
+  if (!order || !isEgMobile(order.customerPhone)) return;
+  const p = normPhone(order.customerPhone);
+  const existing = await Customer.findOne({ phone: p });
+  if (existing?.verified) {
+    existing.orderCount = await Order.countDocuments({ customerPhone: p, status: "completed" });
+    await existing.save();
+    return;
+  }
+  const patch = {
+    name: order.customerName || "",
+    address: order.orderType === "delivery" ? (order.customerAddress || "") : (existing?.address || ""),
+    zoneName: order.orderType === "delivery" ? (order.zoneName || "") : (existing?.zoneName || "")
+  };
+  await Customer.findOneAndUpdate({ phone: p }, { $set: patch, $setOnInsert: { verified: false, orderCount: 0 } }, { upsert: true, new: true, setDefaultsOnInsert: true });
 };
 
 // =========================
@@ -1362,8 +1517,9 @@ const buildOrderFromBody = async (body = {}, zone = null) => {
 
   const customerName = cleanText(body.customerName, 80);
   if (!customerName) return { error: "الاسم مطلوب" };
-  const customerPhone = cleanText(body.customerPhone, 20);
-  if (!/^\+?\d{8,15}$/.test(customerPhone)) return { error: "رقم التليفون غير صحيح" };
+  const customerPhone = normPhone(cleanText(body.customerPhone, 20));
+  if (!isEgMobile(customerPhone)) return { error: "اكتب رقم موبايل مصري صحيح (11 رقم بيبدأ بـ 01)" };
+  if (isFakeEgPhone(customerPhone)) return { error: "الرقم ده شكله مش حقيقي. اكتب رقمك الصح عشان نتواصل معاك" };
 
   const orderType = body.orderType === "delivery" ? "delivery" : body.orderType === "pickup" ? "pickup" : null;
   if (!orderType) return { error: "نوع الاستلام غير صحيح" };
@@ -1425,7 +1581,9 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
       }
     }
 
+    { const h = await phoneHistory(order.customerPhone); order.phoneStatus = h.status; order.phoneOrders = h.count; }
     const saved = await new Order(order).save();
+    await rememberUnverifiedCustomer(saved.toObject());
     if (pinIsNew) {
       // حفظ الرقم السري مشفراً (محاولتين عشان سباق الإنشاء مع upsertCustomer)
       const pinHash = await hashPassword(pinRaw);
@@ -1455,6 +1613,41 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     if (err.code === 11000) return res.status(409).json({ error: "الأوردر ده اتبعت قبل كده" });
     res.status(500).json({ error: err.message });
   }
+});
+
+// لا نعيد بيانات العملاء إلا بعد ما الكاشير يوثّق الرقم بمكالمة فعلية.
+// الرد للضيوف واحد دايماً (نفس الشكل ونفس الحالة) سواء الرقم مسجّل أو لأ — عشان مينفعش حد يجرّب أرقام ويعرف مين عميل.
+app.get("/api/customers/lookup", optionalAuth, async (req, res) => {
+  try {
+    const bucket = hitBucket(`lookup:${req.ip}`, 60 * 1000);
+    if (bucket.count > 10) return res.status(429).json({ error: "محاولات كتير، حاول بعد شوية" });
+    const phone = normPhone(req.query.phone);
+    const customer = (isEgMobile(phone) && !isFakeEgPhone(phone)) ? await Customer.findOne({ phone, verified: true }).lean() : null;
+    // من غير تسجيل دخول: الاسم بس (فاضي لو الرقم مش مسجّل) — العنوان للكاشير المسجّل دخوله بس
+    if (!req.user) return res.json({ ok: true, name: customer ? (customer.name || "") : "" });
+    if (!isEgMobile(phone) || isFakeEgPhone(phone)) return res.json({ known: false });
+    if (!customer) return res.json({ known: false, needsCallVerification: true });
+    res.json({ known: true, verified: true, orders: customer.orderCount || 0,
+      name: customer.name || "", address: customer.address || "", zoneName: customer.zoneName || "" });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// الكاشير يؤكد الرقم بعد مكالمة فعلية. نحفظ بيانات آخر أوردر ونسمح بإعادة استخدامها بعد ذلك.
+app.post("/api/customers/verify-by-call", requireAuth, async (req, res) => {
+  try {
+    const phone = normPhone(req.body?.phone);
+    if (!isEgMobile(phone) || isFakeEgPhone(phone)) return res.status(400).json({ error: "رقم الموبايل غير صحيح" });
+    const latest = await Order.findOne({ customerPhone: phone, status: { $ne: "cancelled" } }).sort({ createdAt: -1 }).lean();
+    if (!latest) return res.status(404).json({ error: "مش لاقي أوردر للموبايل ده" });
+    const count = await Order.countDocuments({ customerPhone: phone, status: "completed" });
+    const customer = await Customer.findOneAndUpdate({ phone }, { $set: {
+      name: latest.customerName || "", address: latest.orderType === "delivery" ? (latest.customerAddress || "") : "",
+      zoneName: latest.orderType === "delivery" ? (latest.zoneName || "") : "",
+      verified: true, verifiedAt: new Date(), verifiedBy: req.user.name, orderCount: count
+    } }, { upsert: true, new: true, setDefaultsOnInsert: true });
+    await Order.updateMany({ customerPhone: phone }, { $set: { phoneStatus: "verified", phoneOrders: count } });
+    res.json({ ok: true, customer: { phone: customer.phone, name: customer.name, verified: true } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // =========================
@@ -1891,11 +2084,13 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
     if (!currentShift) return res.status(409).json({ error: "الوردية اتقفلت، افتح وردية جديدة قبل تسجيل الأوردر" });
     const counter = await Counter.findOneAndUpdate({ key: "pos" }, { $inc: { seq: 1 } }, { new: true, upsert: true });
     const orderId = `P${counter.seq}`;
+    const posPhone = orderType === "delivery" && isEgMobile(normPhone(customerPhone)) ? await phoneHistory(normPhone(customerPhone)) : {};
     const saved = await new Order({
       orderId, shiftReceiptNo: currentShift.receiptSeq, shiftId: currentShift._id,
       customerName, customerPhone, orderType, customerAddress, zoneName, deliveryFee,
       items, itemsTotal, grandTotal, status: "accepted", source: "pos", paymentMethod, ...(paymentSplit ? { paymentSplit } : {}),
       talabatNo, discountPercent, discountAmount, discountReason, orderNote,
+      ...(posPhone.status ? { phoneStatus: posPhone.status, phoneOrders: posPhone.count } : {}),
       createdBy: req.user.name, acceptedBy: req.user.name, acceptedAt: offlineAt || new Date(),
       ...(clientRef ? { clientRef } : {}), ...(offlineAt ? { createdAt: offlineAt } : {})
     }).save();
@@ -1904,6 +2099,7 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
       void sendTelegramAlert(`💳 دفع مقسّم - أوردر #${saved.orderId}\nالإجمالي: ${grandTotal} ج\nالتقسيم: ${describePayment(saved)}\nالكاشير: ${req.user.name}`);
     }
     console.log(`✅ POS order saved: #${saved.orderId} by ${req.user.name}`);
+    await rememberUnverifiedCustomer(saved.toObject());
     if (customerPhone !== "-") void upsertCustomer({ phone: customerPhone, name: customerName, address: orderType === "delivery" ? customerAddress : "", zoneName: orderType === "delivery" ? zoneName : "" });
     if (discountPercent > 0) {
       void sendTelegramAlert(discountAlertText(saved, req.user.name));
@@ -2229,8 +2425,10 @@ const buildReport = async (from, to, shift = null) => {
 const accountantSummaryCache = new Map();
 // نفس ريجيكس محتويات البوكس اللي في buildReport ("2× كفتة") — عشان الجرد يطابق تقرير المطبخ
 const BOX_CONTENT_RE = /^\s*(\d+)\s*×\s*(.+?)\s*$/;
-// تجميع محتويات البوكس من تعديلات صنف في أوردر: "2× كفتة" × كمية الصنف
-const addBoxContents = (contentsMap, rowKey, modifiers, qty) => {
+// تجميع محتويات البوكس من تعديلات صنف في أوردر: "2× كفتة" × كمية الصنف —
+// بتتجمع تحت صف البوكس الأب، ومفتاح كل محتوى هو زوج (بوكس، محتوى) عشان نفس
+// الساندوتش في بوكسين مختلفين يتحسب لكل بوكس لوحده برمزه الخاص.
+const addBoxContents = (contentsMap, rowKey, boxCode, boxName, modifiers, qty) => {
   const mods = Array.isArray(modifiers) ? modifiers : [];
   for (const mod of mods) {
     const boxM = BOX_CONTENT_RE.exec(String(mod || ""));
@@ -2240,7 +2438,10 @@ const addBoxContents = (contentsMap, rowKey, modifiers, qty) => {
     if (!cName || !cQty) continue;
     if (!contentsMap.has(rowKey)) contentsMap.set(rowKey, new Map());
     const cm = contentsMap.get(rowKey);
-    cm.set(cName, (cm.get(cName) || 0) + cQty);
+    const key = boxContentPairKey(boxCode, boxName, cName);
+    const prev = cm.get(key);
+    if (prev) prev.qty += cQty;
+    else cm.set(key, { name: cName, qty: cQty, box: boxCode ?? null, boxName });
   }
 };
 const buildAccountantSummary = async (from, to, typeFilter = "all") => {
@@ -2285,7 +2486,7 @@ const buildAccountantSummary = async (from, to, typeFilter = "all") => {
     return best;
   };
   const itemRows = new Map();
-  const contentsMap = new Map(); // مفتاح الصف ← (اسم المحتوى ← الكمية)
+  const contentsMap = new Map(); // مفتاح الصف ← (مفتاح زوج (بوكس، محتوى) ← {name, qty, box, boxName})
   const addItemRow = (base, qty, revenue) => {
     const key = base ? `cat:${base.name}` : `raw:${String(base?.name || "صنف بدون اسم")}`;
     const row = itemRows.get(key) || { code: base?.code ?? null, name: base?.name || String(base?.name || "صنف بدون اسم"), category: base?.category || "أخرى", qty: 0, total: 0 };
@@ -2331,21 +2532,22 @@ const buildAccountantSummary = async (from, to, typeFilter = "all") => {
     for (const it of o.items || []) {
       const qty = Number(it.quantity) || 0;
       const revenue = (Number(it.price) || 0) * qty;
-      const rowKey = addItemRow(resolveBase(it.name), qty, revenue);
-      // محتويات البوكس ("2× كفتة" في التعديلات): بتتجمع تحت الصنف الأب عشان الجرد
-      addBoxContents(contentsMap, rowKey, it.modifiers, qty);
+      const base = resolveBase(it.name);
+      const rowKey = addItemRow(base, qty, revenue);
+      // محتويات البوكس ("2× كفتة" في التعديلات): بتتجمع تحت الصنف الأب عشان الجرد — بهوية البوكس الأب
+      addBoxContents(contentsMap, rowKey, base?.code ?? null, base?.name || it.name, it.modifiers, qty);
     }
   }
 
-  // أكواد محتويات البوكسات: كل محتوى ليه رمز ثابت من نطاق منفصل (2001..3000)
-  const contentNames = [];
-  for (const cm of contentsMap.values()) for (const n of cm.keys()) contentNames.push(n);
-  const contentCodes = await ensureBoxContentCodes(contentNames);
+  // أكواد محتويات البوكسات: كل زوج (بوكس، محتوى) ليه رمز ثابت من نطاق منفصل (2001..3000)
+  const contentPairs = [];
+  for (const cm of contentsMap.values()) for (const v of cm.values()) contentPairs.push({ box: v.box, boxName: v.boxName, name: v.name });
+  const contentCodes = await ensureBoxContentCodes(contentPairs);
   const items = [...itemRows.entries()].map(([rowKey, r]) => {
     const cm = contentsMap.get(rowKey);
     if (cm && cm.size) {
-      r.contents = [...cm.entries()]
-        .map(([name, qty]) => ({ code: contentCodes.get(name) ?? null, name, qty }))
+      r.contents = [...cm.values()]
+        .map((v) => ({ code: contentCodes.get(boxContentPairKey(v.box, v.boxName, v.name)) ?? null, name: v.name, qty: v.qty, box: v.box ?? null, boxName: v.boxName }))
         .sort((a, b) => b.qty - a.qty || String(a.name).localeCompare(String(b.name)));
     }
     return r;
@@ -2915,11 +3117,11 @@ app.get("/api/accountant/reports/catalog", requireAccountant, async (req, res) =
     await ensureItemCodes(); // أي صنف جديد من غير رمز ياخد رقمه قبل ما يطلع في الدليل
     const items = await Item.find().select("code name category price available").sort({ code: 1, _id: 1 }).lean();
     items.sort((a, b) => (a.code == null ? 1 : b.code == null ? -1 : Number(a.code) - Number(b.code)));
-    const boxContents = await BoxContent.find().select("code name").sort({ code: 1, _id: 1 }).lean();
+    const boxContents = await BoxContent.find().select("code name box boxName").sort({ code: 1, _id: 1 }).lean();
     boxContents.sort((a, b) => (a.code == null ? 1 : b.code == null ? -1 : Number(a.code) - Number(b.code)));
     res.json({
       items: items.map((i) => ({ code: i.code ?? null, name: i.name, category: i.category, price: Number(i.price) || 0, available: i.available !== false })),
-      boxContents: boxContents.map((c) => ({ code: c.code ?? null, name: c.name }))
+      boxContents: boxContents.map((c) => ({ code: c.code ?? null, name: c.name, box: c.box ?? null, boxName: c.boxName || null }))
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3052,5 +3254,5 @@ if (!MONGO_URI) {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 السيرفر شغال على البورت ${PORT}`);
 });
-//1234
+
 connectToDatabase();
