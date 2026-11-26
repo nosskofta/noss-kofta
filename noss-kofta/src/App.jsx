@@ -479,7 +479,7 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
               </>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 transition-all duration-300 nkfx-stagger">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 transition-all duration-300 nkfx-stagger">
               {offerItems.slice(currentIndex, currentIndex + 3).map((item) => {
                 const finalPrice = getDiscountedPrice(item.price, item.discount);
                 const cartItem = cart.find(i => i.name === item.name);
@@ -487,50 +487,46 @@ const HomePage = ({ lang, siteSettings, menuItems, handleOpenItemDetails, cart, 
                 const soldOut = item.available === false;
 
                 return (
-                  <div 
-                    key={item._id} 
-                    className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative pt-8 nkfx-rise ${soldOut ? 'opacity-60' : ''}`}
+                  <div
+                    key={item._id}
+                    className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden shadow-2xl hover:border-[#800020] transition duration-300 group flex flex-col relative nkfx-rise ${soldOut ? 'opacity-60' : ''}`}
                   >
-                    {soldOut && (
-                      <div className="absolute top-3 left-3 z-30 bg-red-600 text-white text-sm font-black px-3 py-1 rounded-full shadow-lg">⛔ غير متاح حالياً</div>
-                    )}
-                    {item.discount > 0 && (
-                      <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-r from-[#FFD700] via-[#FFE55C] to-[#FFD700] text-black text-center py-2 font-black text-base md:text-lg shadow-xl border-b-2 border-black/20 tracking-wider">
-                        🔥 خصم  {item.discount}%  🔥
-                      </div>
-                    )}
-                    <div onClick={() => { if (!soldOut) handleOpenItemDetails(item); }} className={`w-full h-[320px] bg-[#12080A] overflow-hidden relative ${soldOut ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                    <div onClick={() => { if (!soldOut) handleOpenItemDetails(item); }} className={`relative w-full aspect-[4/3] bg-[#12080A] overflow-hidden shrink-0 ${soldOut ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
                       <img src={item.image} alt={item.name} loading="lazy" decoding="async" className={`w-full h-full object-cover group-hover:scale-105 transition duration-300 ${soldOut ? 'grayscale' : ''}`} />
+                      {soldOut && (
+                        <div className="absolute top-2 left-2 z-30 bg-red-600 text-white text-[11px] font-black px-2 py-0.5 rounded-full shadow-lg">⛔ غير متاح</div>
+                      )}
+                      {!soldOut && item.discount > 0 && (
+                        <div className="absolute top-2 right-2 z-20 bg-[#FFD700] text-black text-xs font-black px-2.5 py-1 rounded-full shadow-lg">خصم {item.discount}%</div>
+                      )}
                     </div>
-                    <div className="p-4 flex items-center justify-between bg-[#220E13] border-t border-[#3A1218]">
-                      <div>
-                        <h4 className="font-bold text-lg text-white">{item.name}</h4>
-                        <div className="flex items-center gap-2 mt-1">
-                          {item.discount > 0 ? (
-                            <>
-                              <span className="text-zinc-400 line-through text-sm font-bold">{item.price} ج</span>
-                              <span className="text-[#FFD700] font-black text-lg">{finalPrice} ج</span>
-                            </>
-                          ) : (
-                            <span className="text-[#FFD700] font-black text-lg">{item.price} ج</span>
-                          )}
-                        </div>
+                    <div className="p-2.5 sm:p-3 flex-1 flex flex-col bg-[#1C0D10] gap-1.5">
+                      <h4 className="text-[15px] font-extrabold leading-snug text-white">{item.name}</h4>
+                      {item.description && <p className="text-xs text-zinc-400 leading-relaxed line-clamp-2">{item.description}</p>}
+                      <div className="flex items-baseline gap-2 mt-auto">
+                        {item.discount > 0 ? (
+                          <>
+                            <span className="text-zinc-400 line-through text-xs font-bold">{item.price} ج</span>
+                            <span className="text-[#FFD700] text-lg font-black">{finalPrice} ج</span>
+                          </>
+                        ) : (
+                          <span className="text-[#FFD700] text-lg font-black">{item.price} ج</span>
+                        )}
                       </div>
-                      
                       {soldOut ? (
-                        <button disabled className="bg-zinc-700 text-zinc-300 px-4 py-2 rounded-xl font-bold text-sm cursor-not-allowed">خلص حالياً ⛔</button>
+                        <button disabled className="w-full bg-zinc-700 text-zinc-300 font-bold py-2 rounded-xl cursor-not-allowed text-sm">خلص حالياً ⛔</button>
                       ) : quantity === 0 ? (
-                        <button onClick={() => handleOpenItemDetails(item)} className="bg-[#800020] text-white px-4 py-2 rounded-xl font-bold text-sm shadow hover:bg-[#990026] transition active:scale-[0.97]">
+                        <button onClick={() => handleOpenItemDetails(item)} className="w-full bg-[#800020] text-white font-bold py-2 rounded-xl hover:bg-[#990026] transition shadow active:scale-[0.97] text-sm">
                           أضف للسلة 🛒
                         </button>
                       ) : (
-                        <div className="flex items-center bg-[#12080A] border border-[#800020] rounded-xl px-2 py-1 gap-2">
+                        <div className="flex items-center justify-between bg-[#12080A] border border-[#800020] rounded-xl px-2 py-1">
                           <button onClick={() => {
                             const idx = cart.findIndex(i => i.name === item.name);
                             if (idx !== -1) { const nc = [...cart]; nc.splice(idx, 1); setCart(nc); }
-                          }} className="text-[#FFD700] font-black px-2 hover:text-white transition active:scale-90">-</button>
-                          <span className="font-black text-white">{quantity}</span>
-                          <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="text-[#FFD700] font-black px-2 hover:text-white transition active:scale-90">+</button>
+                          }} className="w-8 h-8 bg-[#800020] rounded-lg text-white font-black hover:bg-[#990026] transition active:scale-90">-</button>
+                          <span className="font-black text-[#FFD700]">{quantity}</span>
+                          <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="w-8 h-8 bg-[#800020] rounded-lg text-white font-black hover:bg-[#990026] transition active:scale-90">+</button>
                         </div>
                       )}
                     </div>
@@ -621,7 +617,7 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                   {cat.name}
                 </h3>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8 nkfx-stagger">
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 nkfx-stagger">
                   {catItems.map(item => {
                     const finalPrice = getDiscountedPrice(item.price, item.discount);
                     const cartItem = cart.find(i => i.name === item.name);
@@ -629,58 +625,51 @@ const MenuPage = ({ menuItems, categories, lang, handleOpenBox, handleOpenItemDe
                     const soldOut = item.available === false;
 
                     return (
-                      <div 
-                        key={item._id} 
-                        className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative pt-8 nkfx-rise ${soldOut ? 'opacity-60' : ''}`}
+                      <div
+                        key={item._id}
+                        className={`bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-hidden flex flex-col hover:border-[#800020] transition group shadow-xl relative nkfx-rise ${soldOut ? 'opacity-60' : ''}`}
                       >
-                        {soldOut && (
-                          <div className="absolute top-3 left-3 z-30 bg-red-600 text-white text-sm font-black px-3 py-1 rounded-full shadow-lg">⛔ غير متاح حالياً</div>
-                        )}
-                        {item.discount > 0 && (
-                          <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-r from-[#FFD700] via-[#FFE55C] to-[#FFD700] text-black text-center py-2 font-black text-base md:text-lg shadow-xl border-b-2 border-black/20 tracking-wider">
-                            🔥 خصم  {item.discount}%   🔥
-                          </div>
-                        )}
-                        <div onClick={() => { if (soldOut) return; item.type === 'box' ? handleOpenBox(item) : handleOpenItemDetails(item); }} className={`w-full h-48 object-cover bg-[#12080A] overflow-hidden ${soldOut ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                        <div onClick={() => { if (soldOut) return; item.type === 'box' ? handleOpenBox(item) : handleOpenItemDetails(item); }} className={`relative w-full aspect-[4/3] bg-[#12080A] overflow-hidden shrink-0 ${soldOut ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
                           <img src={item.image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta"} alt={item.name} loading="lazy" decoding="async" className={`w-full h-full object-cover group-hover:scale-105 transition duration-300 ${soldOut ? 'grayscale' : ''}`} />
+                          {soldOut && (
+                            <div className="absolute top-2 left-2 z-30 bg-red-600 text-white text-[11px] font-black px-2 py-0.5 rounded-full shadow-lg">⛔ غير متاح</div>
+                          )}
+                          {!soldOut && item.discount > 0 && (
+                            <div className="absolute top-2 right-2 z-20 bg-[#FFD700] text-black text-xs font-black px-2.5 py-1 rounded-full shadow-lg">خصم {item.discount}%</div>
+                          )}
                         </div>
-                        <div className="p-4 flex-1 flex flex-col bg-[#1C0D10]">
-                          <h3 className="text-xl font-bold mb-1 text-white">{item.name}</h3>
-                          <p className="text-xs text-zinc-400 mb-2 line-clamp-2">{item.description || "..."}</p>
-                          
-                          <div className="flex items-center gap-3 mb-4 mt-auto">
+                        <div className="p-2.5 sm:p-3 flex-1 flex flex-col bg-[#1C0D10] gap-1.5">
+                          <h3 className="text-[15px] font-extrabold leading-snug text-white">{item.name}</h3>
+                          {item.description && <p className="text-xs text-zinc-400 leading-relaxed line-clamp-2">{item.description}</p>}
+                          <div className="flex items-baseline gap-2 mt-auto">
                             {item.discount > 0 ? (
                               <>
-                                <span className="text-zinc-400 line-through text-base font-bold">{item.price} ج</span>
-                                <span className="text-[#FFD700] text-2xl font-black">{finalPrice} ج</span>
+                                <span className="text-zinc-400 line-through text-xs font-bold">{item.price} ج</span>
+                                <span className="text-[#FFD700] text-lg font-black">{finalPrice} ج</span>
                               </>
                             ) : (
-                              <span className="text-[#FFD700] text-2xl font-black">{item.price} ج</span>
+                              <span className="text-[#FFD700] text-lg font-black">{item.price} ج</span>
                             )}
                           </div>
-                          
                           {soldOut ? (
-                            <button disabled className="w-full bg-zinc-700 text-zinc-300 font-bold py-2.5 rounded-xl cursor-not-allowed">خلص حالياً ⛔</button>
+                            <button disabled className="w-full bg-zinc-700 text-zinc-300 font-bold py-2 rounded-xl cursor-not-allowed text-sm">خلص حالياً ⛔</button>
                           ) : item.type === 'box' ? (
-                            <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2.5 rounded-xl hover:bg-[#990026] transition shadow active:scale-[0.97]">
+                            <button onClick={() => handleOpenBox(item)} className="w-full bg-[#800020] text-white font-bold py-2 rounded-xl hover:bg-[#990026] transition shadow active:scale-[0.97] text-sm">
                               {t.customizeBox}
                             </button>
                           ) : (
                             quantity === 0 ? (
-                              <button onClick={() => handleOpenItemDetails(item)} className="w-full border-2 border-[#800020] text-[#FFD700] font-bold py-2.5 rounded-xl hover:bg-[#800020] hover:text-white transition shadow active:scale-[0.97]">
+                              <button onClick={() => handleOpenItemDetails(item)} className="w-full border-2 border-[#800020] text-[#FFD700] font-bold py-2 rounded-xl hover:bg-[#800020] hover:text-white transition shadow active:scale-[0.97] text-sm">
                                 {t.details} 🛒
                               </button>
                             ) : (
-                              <div className="flex items-center justify-between bg-[#12080A] border border-[#800020] rounded-xl px-3 py-2">
-                                <span className="text-xs text-[#FFD700] font-bold">الكمية:</span>
-                                <div className="flex items-center gap-3">
-                                  <button onClick={() => {
-                                    const idx = cart.findIndex(i => i.name === item.name);
-                                    if (idx !== -1) { const nc = [...cart]; nc.splice(idx, 1); setCart(nc); }
-                                  }} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white transition active:scale-90">-</button>
-                                  <span className="font-black text-white">{quantity}</span>
-                                  <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="w-7 h-7 bg-[#1C0D10] rounded-lg text-[#FFD700] font-black hover:bg-[#800020] hover:text-white transition active:scale-90">+</button>
-                                </div>
+                              <div className="flex items-center justify-between bg-[#12080A] border border-[#800020] rounded-xl px-2 py-1">
+                                <button onClick={() => {
+                                  const idx = cart.findIndex(i => i.name === item.name);
+                                  if (idx !== -1) { const nc = [...cart]; nc.splice(idx, 1); setCart(nc); }
+                                }} className="w-8 h-8 bg-[#800020] rounded-lg text-white font-black hover:bg-[#990026] transition active:scale-90">-</button>
+                                <span className="font-black text-[#FFD700]">{quantity}</span>
+                                <button onClick={() => setCart([...cart, { ...item, price: finalPrice }])} className="w-8 h-8 bg-[#800020] rounded-lg text-white font-black hover:bg-[#990026] transition active:scale-90">+</button>
                               </div>
                             )
                           )}
@@ -7025,5 +7014,5 @@ function App() {
     </div>
   );
 }
-//1234
+//123
 export default App;
