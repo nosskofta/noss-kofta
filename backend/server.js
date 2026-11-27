@@ -354,6 +354,8 @@ const orderSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   acceptedBy: { type: String },
   acceptedAt: { type: Date },
+  readyBy: { type: String },
+  readyAt: { type: Date },
   completedBy: { type: String },
   completedAt: { type: Date },
 
@@ -368,6 +370,12 @@ const orderSchema = new mongoose.Schema({
   discountAmount: { type: Number, default: 0 },
   discountType: { type: String, enum: ["percent", "amount"], default: "percent" },
   discountReason: { type: String, default: "" },
+  // الولاء وأكواد الخصم
+  promoCode: { type: String, default: "" },
+  loyaltyDiscount: { type: Number, default: 0 },
+  pointsRedeemed: { type: Number, default: 0 },
+  pointsEarned: { type: Number, default: 0 },
+  pointsCredited: { type: Boolean, default: false },
   orderNote: { type: String, default: "" },
   printedAt: { type: Date },
   printedBy: { type: String },
@@ -379,6 +387,12 @@ const orderSchema = new mongoose.Schema({
   driverName: { type: String },
   driverFeePaid: { type: Boolean, default: false },
   clientRef: { type: String },
+  // مصدر الإعلان (UTM): بييجي من الموقع مع الأوردر، وبيظهر على كارت الأوردر عند الكاشير
+  utmSource: { type: String, default: "" },
+  utmMedium: { type: String, default: "" },
+  utmCampaign: { type: String, default: "" },
+  utmContent: { type: String, default: "" },
+  utmTerm: { type: String, default: "" },
   // دفع مقسّم (كاش + انستا مثلًا): paymentMethod بيبقى "split" والتفاصيل هنا، ومجموعها لازم = إجمالي الأوردر
   paymentSplit: { type: [new mongoose.Schema({ method: String, amount: Number }, { _id: false })], default: undefined },
   // أوردر دليفري كاش خرج مع السواق ومستني النقدية: بيفضل في النشطة ومش بيتحسب مبيعات لحد ما الكاشير يستلم الفلوس
@@ -417,11 +431,30 @@ const customerSchema = new mongoose.Schema({
   verifiedAt: { type: Date },
   verifiedBy: { type: String, default: "" },
   orderCount: { type: Number, default: 0 },
+  // نقاط الولاء: كل 10 جنيه في أوردر مكتمل = نقطة، وكل 100 نقطة = خصم 10 جنيه
+  points: { type: Number, default: 0 },
   ordersCount: { type: Number, default: 0 },
   lastOrderAt: { type: Date },
   createdAt: { type: Date, default: Date.now }
 });
 const Customer = mongoose.model("Customer", customerSchema);
+
+// أكواد الخصم (الأدمن ينشئها من لوحة الإدارة)
+const promoCodeSchema = new mongoose.Schema({
+  code: { type: String, required: true, unique: true },
+  type: { type: String, enum: ["percent", "amount"], required: true },
+  value: { type: Number, required: true },
+  startDate: { type: Date, required: true },
+  endDate: { type: Date, required: true },
+  maxUses: { type: Number, default: null },
+  minOrder: { type: Number, default: 0 },
+  active: { type: Boolean, default: true },
+  usedCount: { type: Number, default: 0 },
+  totalDiscounted: { type: Number, default: 0 },
+  createdBy: { type: String, default: "" },
+  createdAt: { type: Date, default: Date.now }
+});
+const PromoCode = mongoose.model("PromoCode", promoCodeSchema);
 const chatMessageSchema = new mongoose.Schema({
   phone: { type: String, required: true, index: true },
   name: { type: String, default: "" },
@@ -581,12 +614,33 @@ const hitBucket = (key, windowMs) => {
   return bucket;
 };
 
+// عدّاد الـ 429 في الذاكرة (لكل endpoint) + سطر لوج واحد لكل 429: الوقت + الـ endpoint + الـ IP
+const rateLimit429Counts = new Map();
+const log429 = (req, limiter) => {
+  const key = `${req.method} ${req.path}`;
+  const total = (rateLimit429Counts.get(key) || 0) + 1;
+  rateLimit429Counts.set(key, total);
+  console.warn(`⛔ 429 [${limiter}] ${new Date().toISOString()} ${req.method} ${req.originalUrl || req.path} IP=${req.ip} (total ${total})`);
+};
+
+// قراءة المنيو العامة (من غير تسجيل دخول): شركات الموبايل في مصر بتشارك IP واحد بين عملاء كتير،
+// فالحد العام على الـ IP كان بيقفل المنيو على عملاء حقيقيين — الـ endpoints دي معفية من الحد العام.
+// (الدخول/الطلبات/الكشف ليهم حدودهم الخاصة زي ما هي)
+const PUBLIC_MENU_READ_PATHS = new Set(["/settings", "/zones", "/delivery-eta", "/categories", "/items", "/store-status"]);
+const isPublicMenuRead = (req) => req.method === "GET" && (
+  PUBLIC_MENU_READ_PATHS.has(req.path) ||
+  req.path.startsWith("/items/") ||
+  req.path.startsWith("/settings/image/")
+);
+
 // حد عام لكل الـ API: الزائر العادي 150 طلب في الدقيقة، والكاشير/الأدمن (معاه توكن) 900 (الكاشير بيعمل تحديث تلقائي كل كام ثانية)
 app.use("/api", (req, res, next) => {
   if (req.path === "/health" || req.method === "OPTIONS") return next();
+  if (isPublicMenuRead(req)) return next();
   const authed = !!req.headers.authorization;
   const bucket = hitBucket(`api:${req.ip}:${authed ? "a" : "p"}`, 60 * 1000);
   if (bucket.count > (authed ? 900 : 150)) {
+    log429(req, "api-global");
     res.set("Retry-After", "30");
     return res.status(429).json({ error: "طلبات كتير أوي في وقت قصير، استنى شوية وحاول تاني" });
   }
@@ -625,6 +679,7 @@ const MAX_LOGIN_FAILS_PER_IP = 30;
 const orderLimiter = (req, res, next) => {
   const bucket = hitBucket(`order:${req.ip}`, 10 * 60 * 1000);
   if (bucket.count > 15) {
+    log429(req, "order");
     return res.status(429).json({ error: "طلبات كتير في وقت قصير، حاول بعد شوية" });
   }
   next();
@@ -751,6 +806,7 @@ const chatSendLimiter = (req, res, next) => {
   const phone = normPhone(req.body?.phone || "");
   const bucket = hitBucket(`chat:${req.ip}:${phone}`, 60 * 1000);
   if (bucket.count > 10) {
+    log429(req, "chat");
     return res.status(429).json({ error: "بعتّ رسايل كتير أوي، استنى دقيقة وحاول تاني" });
   }
   next();
@@ -972,6 +1028,16 @@ app.get("/api/zones", async (req, res) => {
     res.json(await DeliveryZone.find());
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// عدد الأوردرات النشطة حالياً (قيد الانتظار/التحضير/جاهز) — رقم بس، من غير أي بيانات عملاء، عشان السلة تحسب وقت التوصيل المتوقع
+app.get("/api/delivery-eta", async (req, res) => {
+  try {
+    const activeOrders = await Order.countDocuments({ status: { $in: ["pending", "accepted", "ready"] } });
+    res.json({ activeOrders });
+  } catch (err) {
+    res.json({ activeOrders: 0 });
   }
 });
 
@@ -1382,6 +1448,105 @@ const sendTelegramAlert = async (message) => {
   }
 };
 
+
+// ---------- نقاط الولاء ----------
+// كل 10 جنيه في أوردر مكتمل = نقطة (على قيمة الأصناف بعد أي خصم ومن غير أجرة التوصيل).
+// النقاط للعملاء المسجلين بس (عندهم رقم سري)، وتتضاف مرة واحدة بس حتى لو الأوردر اتقفل مرتين.
+const creditLoyaltyForOrder = async (order) => {
+  try {
+    if (!order || order.status !== "completed") return;
+    const base = Math.max(0, (Number(order.itemsTotal) || 0) - (Number(order.discountAmount) || 0) - (Number(order.loyaltyDiscount) || 0));
+    const pts = Math.floor(base / 10);
+    if (pts <= 0) return;
+    const phone = normPhone(order.customerPhone);
+    if (!isEgMobile(phone)) return;
+    const customer = await Customer.findOne({ phone }).select("pinHash").lean();
+    if (!customer?.pinHash) return; // مش مسجل — مفيش نقاط
+    const claimed = await Order.findOneAndUpdate(
+      { _id: order._id, pointsCredited: { $ne: true } },
+      { $set: { pointsCredited: true, pointsEarned: pts } },
+      { new: true }
+    );
+    if (!claimed) return;
+    await Customer.updateOne({ phone }, { $inc: { points: pts } });
+  } catch (err) {
+    console.error("loyalty credit error:", err.message);
+  }
+};
+
+// ---------- أكواد الخصم ----------
+// التحقق من الكود على السيرفر: موجود، شغال، في تاريخه، لسه فيه استخدامات، والأوردر واصل للحد الأدنى،
+// ومفيش صنف في الأوردر عليه خصم منيو (خصم الـ30% الحالي) — الكود مبيتجمعش معاه.
+const validatePromoCode = async (codeRaw, itemsTotal, itemIds = []) => {
+  const code = String(codeRaw || "").trim().toUpperCase();
+  if (!code) return { error: "اكتب الكود الأول" };
+  const doc = await PromoCode.findOne({ code }).lean();
+  if (!doc) return { error: "الكود مش صحيح" };
+  if (!doc.active) return { error: "الكود ده موقوف" };
+  const now = new Date();
+  if (doc.startDate && now < new Date(doc.startDate)) return { error: "الكود لسه مبدأش" };
+  if (doc.endDate && now > new Date(doc.endDate)) return { error: "الكود انتهت صلاحيته" };
+  if (doc.maxUses != null && (doc.usedCount || 0) >= doc.maxUses) return { error: "الكود خلص عدد مرات استخدامه" };
+  if ((Number(itemsTotal) || 0) < (Number(doc.minOrder) || 0)) return { error: `الكود ده للأوردرات من ${Number(doc.minOrder) || 0} جنيه وطالع` };
+  const ids = [...new Set((itemIds || []).map(String).filter((id) => mongoose.Types.ObjectId.isValid(id)))];
+  if (ids.length) {
+    const hasMenuDiscount = await Item.exists({ _id: { $in: ids }, discount: { $gt: 0 } });
+    if (hasMenuDiscount) return { error: "الكود مش بيتجمع مع خصم المنيو الحالي" };
+  }
+  const total = Number(itemsTotal) || 0;
+  const discountAmount = doc.type === "amount" ? Math.min(Math.round(Number(doc.value) || 0), total) : Math.round(total * (Number(doc.value) || 0) / 100);
+  if (discountAmount <= 0) return { error: "الكود ده مش بيعمل خصم على الأوردر ده" };
+  return { ok: true, doc, discountAmount };
+};
+
+// خصومات أوردر الموقع (كود أو نقاط — خصم واحد بس): بيحجز استخدام الكود ويخصم النقاط قبل حفظ الأوردر،
+// ولو الحفظ فشل بيرجعهم. بيرجع حقول الخصم الجاهزة للأوردر أو { error }.
+const resolveWebDiscounts = async ({ promoCode, loyaltyBlocks, customerToken, customerPhone, itemsTotal, items }) => {
+  const blocks = Math.max(0, Math.floor(Number(loyaltyBlocks) || 0));
+  const hasPromo = !!String(promoCode || "").trim();
+  if (hasPromo && blocks > 0) return { error: "اختار خصم واحد بس: الكود أو النقاط" };
+  const itemIds = (items || []).map((it) => it.itemId).filter(Boolean);
+  let promoDoc = null, promoDiscount = 0, reservedPromo = null;
+  if (hasPromo) {
+    const v = await validatePromoCode(promoCode, itemsTotal, itemIds);
+    if (v.error) return { error: v.error };
+    promoDoc = v.doc; promoDiscount = v.discountAmount;
+    // حجز الاستخدام ذرياً: لو اتنين بعتوا الكود في نفس اللحظة، واحد بس اللي ياخد آخر استخدام
+    reservedPromo = await PromoCode.findOneAndUpdate(
+      { _id: promoDoc._id, active: true, $expr: { $or: [{ $eq: ["$maxUses", null] }, { $lt: ["$usedCount", "$maxUses"] }] } },
+      { $inc: { usedCount: 1, totalDiscounted: promoDiscount } },
+      { new: true }
+    );
+    if (!reservedPromo) return { error: "الكود خلص عدد مرات استخدامه" };
+  }
+  let loyaltyDiscount = 0, pointsRedeemed = 0;
+  if (blocks > 0) {
+    const payload = customerToken ? verifyToken(customerToken) : null;
+    const tokenPhone = payload?.role === "customer" && payload.phone ? normPhone(payload.phone) : "";
+    if (!tokenPhone || tokenPhone !== normPhone(customerPhone)) return { error: "عشان تستبدل النقاط لازم تكون داخل بحسابك من «طلباتي»" };
+    loyaltyDiscount = blocks * 10;
+    const maxDiscount = Math.max(0, (Number(itemsTotal) || 0) - promoDiscount);
+    if (loyaltyDiscount > maxDiscount || loyaltyDiscount <= 0) return { error: "عدد النقاط أكبر من قيمة الأوردر" };
+    pointsRedeemed = blocks * 100;
+    const cust = await Customer.findOneAndUpdate(
+      { phone: tokenPhone, pinHash: { $ne: "" }, points: { $gte: pointsRedeemed } },
+      { $inc: { points: -pointsRedeemed } },
+      { new: true }
+    );
+    if (!cust) return { error: "نقاطك مش كفاية" };
+  }
+  return {
+    discountType: promoDoc ? promoDoc.type : "percent",
+    discountPercent: promoDoc && promoDoc.type === "percent" ? Number(promoDoc.value) || 0 : 0,
+    discountAmount: promoDiscount,
+    discountReason: promoDoc ? `كود ${promoDoc.code}` : "",
+    promoCode: promoDoc ? promoDoc.code : "",
+    loyaltyDiscount, pointsRedeemed,
+    reservedPromo: reservedPromo ? { _id: reservedPromo._id, discountAmount: promoDiscount } : null,
+    redeemedPoints: pointsRedeemed
+  };
+};
+
 // نص تنبيه الخصم: الأوردر كامل (الأصناف والأسعار والإجمالي والدفع والكاشير والعميل)
 const discountAlertText = (o, cashierName) => {
   const lines = (o.items || []).map((it) => `• ${it.name} ×${it.quantity} — ${Number(it.price) || 0} ج`);
@@ -1390,6 +1555,8 @@ const discountAlertText = (o, cashierName) => {
     ...lines,
     `المجموع قبل الخصم: ${Number(o.itemsTotal) || 0} ج`,
     `الخصم: ${o.discountType === "amount" ? `${Number(o.discountAmount) || 0} ج` : `${Number(o.discountPercent) || 0}% (${Number(o.discountAmount) || 0} ج)`} — السبب: ${o.discountReason || "-"}`,
+    ...(o.promoCode ? [`كود الخصم: ${o.promoCode}`] : []),
+    ...(Number(o.loyaltyDiscount) > 0 ? [`خصم النقاط: ${Number(o.loyaltyDiscount)} ج (${Number(o.pointsRedeemed) || 0} نقطة)`] : []),
     `الإجمالي: ${Number(o.grandTotal) || 0} ج`,
     `الدفع: ${describePayment(o)}`,
     `الكاشير: ${cashierName}`,
@@ -1524,6 +1691,15 @@ const priceOrderItemsFromCatalog = async (rawItems, maxItems = 80, applyMenuDisc
   return { items: output };
 };
 
+// UTM بتاع مصدر الإعلان: بييجي من الموقع مع الأوردر (من الـ URL في أول زيارة)، وبيتخزن زي ما هو
+const pickUtm = (body = {}) => {
+  const pick = (v) => cleanText(v, 100) || "";
+  return {
+    utmSource: pick(body.utmSource), utmMedium: pick(body.utmMedium),
+    utmCampaign: pick(body.utmCampaign), utmContent: pick(body.utmContent), utmTerm: pick(body.utmTerm)
+  };
+};
+
 const buildOrderFromBody = async (body = {}, zone = null) => {
   const orderId = cleanText(body.orderId, 30);
   if (!/^[A-Za-z0-9-]{4,30}$/.test(orderId)) return { error: "رقم الأوردر غير صحيح" };
@@ -1567,6 +1743,7 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
     }
     const { order, error } = await buildOrderFromBody(body, zone);
     if (error) return res.status(400).json({ error });
+    Object.assign(order, pickUtm(body));
 
     // رقم سري اختياري: لو العميل عنده رقم سري مسجل لازم يطابق، ولو أول مرة وبيبعت رقم سري بيتسجل لحسابه
     const pinRaw = String(body.pin ?? "").trim();
@@ -1594,8 +1771,25 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
       }
     }
 
+    // خصم كود أو نقاط ولاء (أوردرات الموقع بس): التحقق على السيرفر، وخصم واحد بس في الأوردر
+    let reservedPromo = null, redeemedLoyalty = 0;
+    if (body.promoCode || Number(body.loyaltyBlocks) > 0) {
+      const res2 = await resolveWebDiscounts({ promoCode: body.promoCode, loyaltyBlocks: body.loyaltyBlocks, customerToken: body.customerToken, customerPhone: order.customerPhone, itemsTotal: order.itemsTotal, items: order.items });
+      if (res2.error) return res.status(400).json({ error: res2.error });
+      reservedPromo = res2.reservedPromo; redeemedLoyalty = res2.redeemedPoints || 0;
+      Object.assign(order, { discountType: res2.discountType, discountPercent: res2.discountPercent, discountAmount: res2.discountAmount, discountReason: res2.discountReason, promoCode: res2.promoCode || "", loyaltyDiscount: res2.loyaltyDiscount || 0, pointsRedeemed: res2.pointsRedeemed || 0 });
+      order.grandTotal = order.itemsTotal - (res2.discountAmount || 0) - (res2.loyaltyDiscount || 0) + (Number(order.deliveryFee) || 0);
+    }
     { const h = await phoneHistory(order.customerPhone); order.phoneStatus = h.status; order.phoneOrders = h.count; }
-    const saved = await new Order(order).save();
+    let saved;
+    try {
+      saved = await new Order(order).save();
+    } catch (err) {
+      if (reservedPromo) await PromoCode.updateOne({ _id: reservedPromo._id }, { $inc: { usedCount: -1, totalDiscounted: -(reservedPromo.discountAmount || 0) } }).catch(() => {});
+      if (redeemedLoyalty > 0) await Customer.updateOne({ phone: phoneNorm }, { $inc: { points: redeemedLoyalty } }).catch(() => {});
+      throw err;
+    }
+    if ((saved.discountAmount || 0) > 0 || (saved.loyaltyDiscount || 0) > 0) void sendTelegramAlert(discountAlertText(saved.toObject(), "الموقع"));
     await rememberUnverifiedCustomer(saved.toObject());
     if (pinIsNew) {
       // حفظ الرقم السري مشفراً (محاولتين عشان سباق الإنشاء مع upsertCustomer)
@@ -1633,7 +1827,7 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
 app.get("/api/customers/lookup", optionalAuth, async (req, res) => {
   try {
     const bucket = hitBucket(`lookup:${req.ip}`, 60 * 1000);
-    if (bucket.count > 10) return res.status(429).json({ error: "محاولات كتير، حاول بعد شوية" });
+    if (bucket.count > 10) { log429(req, "lookup"); return res.status(429).json({ error: "محاولات كتير، حاول بعد شوية" }); }
     const phone = normPhone(req.query.phone);
     const customer = (isEgMobile(phone) && !isFakeEgPhone(phone)) ? await Customer.findOne({ phone, verified: true }).lean() : null;
     // من غير تسجيل دخول: الاسم بس (فاضي لو الرقم مش مسجّل) — العنوان للكاشير المسجّل دخوله بس
@@ -1702,14 +1896,14 @@ app.get("/api/customers/me", requireCustomerAuth, async (req, res) => {
     const phoneVariants = [phone, `+2${phone}`, `20${phone.slice(1)}`];
     const orders = await Order.find({ customerPhone: { $in: phoneVariants } })
       .sort({ createdAt: -1 }).limit(20)
-      .select("orderId items itemsTotal deliveryFee grandTotal status orderType zoneName createdAt completedAt rating")
+      .select("orderId items itemsTotal deliveryFee grandTotal status orderType zoneName createdAt completedAt rating awaitingCash pointsEarned")
       .lean();
     res.json({
-      profile: { name: customer?.name || "", phone, address: customer?.address || "", zoneName: customer?.zoneName || "" },
+      profile: { name: customer?.name || "", phone, address: customer?.address || "", zoneName: customer?.zoneName || "", points: Number(customer?.points) || 0 },
       orders: orders.map((o) => ({
         orderId: o.orderId, items: o.items || [], itemsTotal: o.itemsTotal, deliveryFee: o.deliveryFee,
-        grandTotal: o.grandTotal, status: o.status, orderType: o.orderType, zoneName: o.zoneName,
-        createdAt: o.createdAt, completedAt: o.completedAt,
+        grandTotal: o.grandTotal, status: o.status, orderType: o.orderType, zoneName: o.zoneName, awaitingCash: !!o.awaitingCash,
+        createdAt: o.createdAt, completedAt: o.completedAt, pointsEarned: Number(o.pointsEarned) || 0,
         rating: o.rating?.stars ? { stars: o.rating.stars, comment: o.rating.comment || "" } : null
       }))
     });
@@ -1758,7 +1952,7 @@ app.post("/api/customers/:phone/reset-pin", requireAuth, async (req, res) => {
   }
 });
 
-// تقييم الأوردر — لازم يكون أوردر العميل نفسه ومكتمل. التقييم يتعدل (العميل يقدر يغيّر تقييمه)
+// تقييم الأوردر — لازم يكون أوردر العميل نفسه ومكتمل، ومرة واحدة بس (تقييم 3 أو أقل بيبعت تنبيه تليجرام لزياد)
 app.post("/api/orders/:id/rate", requireCustomerAuth, async (req, res) => {
   try {
     const query = mongoose.Types.ObjectId.isValid(req.params.id)
@@ -1776,8 +1970,10 @@ app.post("/api/orders/:id/rate", requireCustomerAuth, async (req, res) => {
     if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
       return res.status(400).json({ error: "اختار من نجمة لـ 5 نجوم" });
     }
+    if (order.rating?.stars) return res.status(409).json({ error: "قيّمت الأوردر ده قبل كده" });
     order.rating = { stars, comment: cleanText(req.body?.comment, 300), at: new Date() };
     await order.save();
+    if (stars <= 3) void sendTelegramAlert(`⭐ تقييم واطي — أوردر #${order.orderId}\nالنجوم: ${stars}/5${order.rating.comment ? `\nالتعليق: ${order.rating.comment}` : ""}`);
     res.json({ ok: true, rating: { stars: order.rating.stars, comment: order.rating.comment } });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1887,8 +2083,8 @@ app.get("/api/orders", requireAuth, async (req, res) => {
     const myShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).select("openedAt").lean();
     const since = myShift?.openedAt;
     const cashierFilter = since
-      ? { $or: [{ status: { $in: ["pending", "accepted"] } }, { createdAt: { $gte: since } }, { completedAt: { $gte: since } }, { cancelledAt: { $gte: since } }] }
-      : { status: { $in: ["pending", "accepted"] } };
+      ? { $or: [{ status: { $in: ["pending", "accepted", "ready"] } }, { createdAt: { $gte: since } }, { completedAt: { $gte: since } }, { cancelledAt: { $gte: since } }] }
+      : { status: { $in: ["pending", "accepted", "ready"] } };
     res.json(await Order.find(cashierFilter).sort({ createdAt: -1 }).limit(1000));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1898,7 +2094,8 @@ app.get("/api/orders", requireAuth, async (req, res) => {
 // الحالات المسموحة للكاشير: لقدام بس. الأدمن بس يرجّع للخلف.
 const FORWARD_STATUS = {
   pending: ["accepted", "completed", "cancelled"],
-  accepted: ["completed", "cancelled"],
+  accepted: ["ready", "completed", "cancelled"],
+  ready: ["completed", "cancelled"],
   completed: [],
   cancelled: []
 };
@@ -1906,7 +2103,7 @@ const FORWARD_STATUS = {
 app.put("/api/orders/:id", requireAuth, async (req, res) => {
   try {
     const { status } = req.body || {};
-    if (!status || !["pending", "accepted", "completed", "cancelled"].includes(status)) return res.status(400).json({ error: "حالة الأوردر غير صحيحة" });
+    if (!status || !["pending", "accepted", "ready", "completed", "cancelled"].includes(status)) return res.status(400).json({ error: "حالة الأوردر غير صحيحة" });
     const query = mongoose.Types.ObjectId.isValid(req.params.id) ? { $or: [{ _id: req.params.id }, { orderId: req.params.id }] } : { orderId: req.params.id };
     const order = await Order.findOne(query);
     if (!order) return res.status(404).json({ error: "الأوردر غير موجود" });
@@ -1922,6 +2119,31 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
     const update = { status };
     const unset = {};
     if (status === "accepted") { update.acceptedBy = req.user.name; update.acceptedAt = new Date(); }
+
+    if (status === "ready") {
+      // جاهز للاستلام (استلام/طلبات) أو خرج للتوصيل (دليفري مش كاش)
+      if (order.orderType === "delivery") {
+        const driverNameNow = cleanText(req.body.driverName, 40);
+        if (!driverNameNow) return res.status(400).json({ error: "اكتب اسم السواق قبل خروج الأوردر" });
+        update.driverName = driverNameNow;
+        if (order.source !== "pos" || !order.paymentMethod) {
+          const paymentMethod = WEBSITE_PAYMENTS.includes(req.body.paymentMethod) ? req.body.paymentMethod : null;
+          if (!paymentMethod) return res.status(400).json({ error: "اختار طريقة الدفع قبل تأكيد الخروج" });
+          update.paymentMethod = paymentMethod;
+        }
+        const cashNow = update.paymentMethod ? update.paymentMethod === "cash" : cashPartOf(order) > 0;
+        if (cashNow) {
+          // دليفري كاش: يخرج مع السواق ويفضل مستني النقدية (نفس سلوك الإنهاء القديم)
+          update.status = "accepted";
+          update.awaitingCash = true; update.driverOutAt = new Date();
+          if (!order.acceptedBy) { update.acceptedBy = req.user.name; update.acceptedAt = new Date(); }
+        } else {
+          update.readyAt = new Date(); update.readyBy = req.user.name;
+        }
+      } else {
+        update.readyAt = new Date(); update.readyBy = req.user.name;
+      }
+    }
 
     if (status === "completed") {
       if (req.user?.role !== "admin") {
@@ -1974,7 +2196,8 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
       update.awaitingCash = false;
     }
 
-    if (status !== "completed") { unset.completedAt = ""; unset.completedBy = ""; unset.driverName = ""; update.awaitingCash = false; }
+    if (status !== "completed") { unset.completedAt = ""; unset.completedBy = ""; if (status !== "ready") unset.driverName = ""; if (update.awaitingCash !== true) update.awaitingCash = false; }
+    if (status !== "ready" && status !== "completed") { unset.readyAt = ""; unset.readyBy = ""; }
     if (status !== "cancelled") { unset.cancelReason = ""; unset.cancelledBy = ""; unset.cancelledAt = ""; }
 
     const op = { $set: update };
@@ -1983,6 +2206,8 @@ app.put("/api/orders/:id", requireAuth, async (req, res) => {
     // الشرط على الحالة القديمة عشان لو دوسين في نفس اللحظة ما يتسجلوش مرتين
     const updatedOrder = await Order.findOneAndUpdate({ _id: order._id, status: order.status }, op, { new: true });
     if (!updatedOrder) return res.status(409).json({ error: "الأوردر اتغيّر قبل كده، حدّث الصفحة" });
+    // الأوردر اتقفل: نضيف نقاط الولاء مرة واحدة (لو العميل مسجل)
+    if (updatedOrder.status === "completed") void creditLoyaltyForOrder(updatedOrder);
     // أوردر توصيل مدفوع مش كاش: العميل دفع للمطعم، والسواق بياخد أجرته كاش من الدرج
     if (status === "completed" && updatedOrder.status === "completed" && updatedOrder.orderType === "delivery" && updatedOrder.paymentMethod && cashPartOf(updatedOrder) <= 0
         && !updatedOrder.driverFeePaid && (Number(updatedOrder.deliveryFee) || 0) > 0) {
@@ -2199,6 +2424,8 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
       discountReason = discountAmount > 0 ? cleanText(body.discountReason ?? order.discountReason, 200) : "";
       if (discountAmount > 0 && discountReason.length < 2) return res.status(400).json({ error: "سبب الخصم إجباري" });
     }
+    // أوردر عليه كود خصم: مينفعش نضيف خصم يدوي فوقه (خصم واحد بس في الأوردر)
+    if (order.promoCode && discountAmount > 0) return res.status(400).json({ error: "الأوردر ده عليه كود خصم، مينفعش تضيف خصم يدوي فوقه" });
     const grandTotal = itemsTotal - discountAmount + (Number(order.deliveryFee) || 0);
 
     if (paymentMethod === "split") {
@@ -2233,6 +2460,8 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
       { new: true }
     );
     if (!updated) return res.status(409).json({ error: "الأوردر اتغيّر قبل كده، حدّث الصفحة" });
+    // الأوردر اتقفل من التعديل: نضيف نقاط الولاء مرة واحدة (لو العميل مسجل)
+    if (updated.status === "completed") void creditLoyaltyForOrder(updated);
     if (closesNow && !updated.driverFeePaid && (Number(updated.deliveryFee) || 0) > 0) {
       const fee = Number(updated.deliveryFee) || 0;
       const feeShift = await Shift.findOneAndUpdate(
@@ -2858,6 +3087,111 @@ app.get("/api/reports/day", requireAuth, async (req, res) => {
 });
 
 // داش بورد اليوم (للأدمن فقط): كل أوردرات اليوم كله، مش وردية معينة
+
+// ---------- تقرير ساعات الذروة (للأدمن) ----------
+// عدد الأوردرات لكل ساعة (0–23) ولكل يوم في الأسبوع في آخر 7 أو 30 يوم — تجميعات بس، مفيش بيانات عملاء
+app.get("/api/admin/reports/peak-hours", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const days = Number(req.query.days) === 30 ? 30 : 7;
+    const toKey = businessDayKey(new Date());
+    const fromKey = addDaysKey(toKey, -(days - 1));
+    const { from } = dayWindow(fromKey);
+    const orders = await Order.find({ createdAt: { $gt: from, $lte: new Date() }, status: { $ne: "cancelled" } }).select("createdAt").lean();
+    const byHour = Array(24).fill(0);
+    const byWeekday = Array(7).fill(0); // 0 = السبت
+    for (const o of orders) {
+      const { y, m, d, h } = cairoYMDH(new Date(o.createdAt));
+      byHour[h] = (byHour[h] || 0) + 1;
+      const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = الأحد
+      byWeekday[(wd + 1) % 7] += 1;
+    }
+    const busiestHour = byHour.indexOf(Math.max(...byHour));
+    const busiestDay = byWeekday.indexOf(Math.max(...byWeekday));
+    res.json({ days, from, total: orders.length, byHour, byWeekday,
+      weekdayLabels: ["السبت", "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة"],
+      busiestHour, busiestDay });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------- التقرير اليومي على تليجرام (3 الفجر) ----------
+// بيتبعت من Railway Cron Job — يا بتوكن أدمن، يا بهيدر x-cron-token يساوي DAILY_REPORT_TOKEN
+const requireAdminOrCron = (req, res, next) => {
+  const cronToken = process.env.DAILY_REPORT_TOKEN || "";
+  if (cronToken && req.headers["x-cron-token"] === cronToken) return next();
+  return requireAuth(req, res, () => requireAdmin(req, res, next));
+};
+app.post("/api/reports/daily", requireAdminOrCron, async (req, res) => {
+  try {
+    const key = businessDayKey(new Date());
+    const { from, to } = dayWindow(key);
+    const report = await buildReport(from, to);
+    let topItem = null;
+    for (const cat of report.categories || []) for (const it of cat.items || []) {
+      if (!topItem || (Number(it.qty) || 0) > (Number(topItem.qty) || 0)) topItem = { name: it.name, qty: Number(it.qty) || 0 };
+    }
+    const msg = [
+      `📊 تقرير يوم ${key} — نص كفتة`,
+      `المبيعات: ${Number(report.total) || 0} ج`,
+      `عدد الأوردرات: ${Number(report.count) || 0}`,
+      `أكتر صنف: ${topItem ? `${topItem.name} (${topItem.qty})` : "-"}`,
+      `الملغي: ${Number(report.cancelled) || 0}`
+    ].join("\n");
+    let telegramSent = false;
+    if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) { await sendTelegramAlert(msg); telegramSent = true; }
+    res.json({ ok: true, day: key, sales: Number(report.total) || 0, orders: Number(report.count) || 0, topItem, cancelled: Number(report.cancelled) || 0, telegramSent });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------- أكواد الخصم (إدارة الأدمن) ----------
+app.get("/api/admin/promo-codes", requireAuth, requireAdmin, async (req, res) => {
+  try { res.json(await PromoCode.find({}).sort({ createdAt: -1 }).lean()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.post("/api/admin/promo-codes", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const code = String(b.code || "").trim().toUpperCase();
+    if (!/^[A-Z0-9]{2,20}$/.test(code)) return res.status(400).json({ error: "الكود لازم يكون حروف وأرقام (2-20) من غير مسافات" });
+    const type = b.type === "amount" ? "amount" : "percent";
+    const value = Math.round(Number(b.value) || 0);
+    if (value <= 0 || (type === "percent" && value > 100)) return res.status(400).json({ error: "قيمة الخصم مش صحيحة" });
+    const startDate = new Date(b.startDate), endDate = new Date(b.endDate);
+    if (isNaN(startDate) || isNaN(endDate) || endDate < startDate) return res.status(400).json({ error: "تواريخ الكود مش صحيحة" });
+    const maxUses = b.maxUses === "" || b.maxUses == null ? null : Math.max(1, Math.round(Number(b.maxUses) || 0));
+    const minOrder = Math.max(0, Math.round(Number(b.minOrder) || 0));
+    const doc = await new PromoCode({ code, type, value, startDate, endDate, maxUses, minOrder, createdBy: req.user.name }).save();
+    res.status(201).json(doc);
+  } catch (err) {
+    if (err?.code === 11000) return res.status(409).json({ error: "الكود ده موجود قبل كده" });
+    res.status(500).json({ error: err.message });
+  }
+});
+app.patch("/api/admin/promo-codes/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const doc = await PromoCode.findByIdAndUpdate(req.params.id, { $set: { active: req.body?.active !== false } }, { new: true });
+    if (!doc) return res.status(404).json({ error: "الكود مش موجود" });
+    res.json(doc);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.delete("/api/admin/promo-codes/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const doc = await PromoCode.findByIdAndDelete(req.params.id);
+    if (!doc) return res.status(404).json({ error: "الكود مش موجود" });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// التحقق من الكود في السلة — عام، بس بيرجع الخصم بس (مفيش بيانات عملاء)، ومحدود 10 محاولات في الدقيقة
+app.post("/api/promo-codes/validate", async (req, res) => {
+  try {
+    const bucket = hitBucket(`promo:${req.ip}`, 60 * 1000);
+    if (bucket.count > 10) { log429(req, "promo-validate"); return res.status(429).json({ error: "محاولات كتير، استنى دقيقة وحاول تاني" }); }
+    const v = await validatePromoCode(req.body?.code, req.body?.itemsTotal, req.body?.itemIds);
+    if (v.error) return res.status(400).json({ error: v.error });
+    res.json({ ok: true, code: v.doc.code, type: v.doc.type, value: v.doc.value, discountAmount: v.discountAmount });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get("/api/reports/dashboard", requireAuth, requireAdmin, async (req, res) => {
   try {
     const now = new Date();
