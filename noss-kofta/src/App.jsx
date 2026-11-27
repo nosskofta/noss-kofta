@@ -978,12 +978,12 @@ const PeakHoursPanel = ({ adminFetch }) => {
   };
   useEffect(() => { load(days); }, []);
   const maxHour = data ? Math.max(1, ...data.byHour) : 1;
-  const sendDaily = async () => {
+  const sendDaily = async (full = false) => {
     setDailyMsg('... جاري الإرسال');
     try {
-      const r = await adminFetch('/api/reports/daily', { method: 'POST' });
+      const r = await adminFetch('/api/reports/daily', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(full ? { full: true } : {}) });
       const j = await r.json().catch(() => ({}));
-      setDailyMsg(r.ok ? `✅ اتبعت تقرير يوم ${j.day || ''} (تليجرام: ${j.telegramSent ? 'وصل' : 'متظبطش — اتأكد من إعدادات التليجرام'})` : `❌ ${j.error || 'فشل الإرسال'}`);
+      setDailyMsg(r.ok ? `✅ اتبعت تقرير يوم ${j.day || ''}${full ? ' (الكامل)' : ''} (تليجرام: ${j.telegramSent ? 'وصل' : 'متظبطش — اتأكد من إعدادات التليجرام'})` : `❌ ${j.error || 'فشل الإرسال'}`);
     } catch { setDailyMsg('❌ تعذر الإرسال'); }
   };
   return (
@@ -993,33 +993,38 @@ const PeakHoursPanel = ({ adminFetch }) => {
         {[7, 30].map((d) => (
           <button key={d} type="button" onClick={() => { setDays(d); load(d); }} className={`px-4 py-2 rounded-xl text-sm font-bold ${days === d ? 'bg-[#800020] text-white' : 'bg-[#12080A] text-zinc-300 border border-[#3A1218]'}`}>آخر {d} يوم</button>
         ))}
-        <button type="button" onClick={sendDaily} className="px-4 py-2 rounded-xl text-sm font-bold bg-[#25D366] text-black mr-auto">📩 ابعت تقرير النهارده دلوقتي</button>
+        <button type="button" onClick={() => load(days)} className="px-4 py-2 rounded-xl text-sm font-bold bg-[#800020] text-white">🔄 تحديث</button>
+        <button type="button" onClick={() => sendDaily(false)} className="px-4 py-2 rounded-xl text-sm font-bold bg-[#25D366] text-black mr-auto">📩 ابعت تقرير النهارده دلوقتي</button>
+        <button type="button" onClick={() => sendDaily(true)} className="px-4 py-2 rounded-xl text-sm font-bold bg-[#25D366]/15 text-[#25D366] border border-[#25D366]">📩 ابعت التقرير الكامل</button>
       </div>
       {dailyMsg && <p className="text-xs font-bold text-zinc-300 mb-3">{dailyMsg}</p>}
       {err && <p className="text-sm text-red-400 font-bold">{err}</p>}
       {busy && !data && <p className="text-sm text-zinc-400">... جاري التحميل</p>}
       {data && (
-        <div>
-          <p className="text-sm text-zinc-300 mb-2">إجمالي الأوردرات: <b className="text-white">{data.total}</b> · أعلى ساعة: <b className="text-[#FFD700]">{data.busiestHour}:00</b> · أعلى يوم: <b className="text-[#FFD700]">{data.weekdayLabels[data.busiestDay]}</b></p>
-          <div className="flex items-end gap-1 h-28 mb-1" dir="ltr">
+        <>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="bg-[#12080A] rounded-2xl p-4"><p className="text-zinc-400 text-xs">🔥 أعلى ساعة</p><p className="text-[#FFD700] text-xl font-black mt-1">{String(data.busiestHour).padStart(2, '0')}:00 — {data.byHour[data.busiestHour]} أوردر</p></div>
+            <div className="bg-[#12080A] rounded-2xl p-4"><p className="text-zinc-400 text-xs">📅 أعلى يوم</p><p className="text-[#FFD700] text-xl font-black mt-1">{data.weekdayLabels[data.busiestDay]} — {data.byWeekday[data.busiestDay]} أوردر</p></div>
+          </div>
+          <p className="text-xs text-zinc-500 mb-3">إجمالي الأوردرات في الفترة: {data.total} أوردر (من غير الملغي)</p>
+          <div className="space-y-1 mb-4">
             {data.byHour.map((c, h) => (
-              <div key={h} className="flex-1 flex flex-col items-center justify-end h-full">
-                <span className="text-[9px] text-zinc-400">{c > 0 ? c : ''}</span>
-                <div className="w-full bg-[#FFD700] rounded-t" style={{ height: `${Math.max(c > 0 ? 4 : 0, (c / maxHour) * 80)}%` }} title={`${h}:00 — ${c}`} />
+              <div key={h} className="flex items-center gap-2 text-xs">
+                <span className="w-10 text-zinc-400 font-bold" dir="ltr">{String(h).padStart(2, '0')}:00</span>
+                <div className="flex-1 bg-[#12080A] rounded h-4 overflow-hidden"><div className="bg-[#FFD700] h-4 rounded" style={{ width: `${Math.round((c / maxHour) * 100)}%` }} /></div>
+                <span className="w-8 text-white font-bold">{c}</span>
               </div>
             ))}
           </div>
-          <div className="flex gap-1" dir="ltr">{data.byHour.map((_, h) => (<span key={h} className="flex-1 text-center text-[9px] text-zinc-500">{h}</span>))}</div>
-          <div className="mt-4 space-y-1">
-            {data.weekdayLabels.map((label, i) => (
-              <div key={label} className="flex items-center gap-2 text-sm">
-                <span className="w-20 text-zinc-300 font-bold">{label}</span>
-                <div className="flex-1 bg-[#12080A] rounded h-4 overflow-hidden"><div className="bg-[#800020] h-4" style={{ width: `${data.total ? Math.round((data.byWeekday[i] / Math.max(1, ...data.byWeekday)) * 100) : 0}%` }} /></div>
-                <span className="w-8 text-left font-bold text-white">{data.byWeekday[i]}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+          <table className="w-full text-sm">
+            <thead><tr className="text-zinc-400 text-xs border-b border-[#3A1218]"><th className="p-2 text-right">اليوم</th><th className="p-2">عدد الأوردرات</th></tr></thead>
+            <tbody>
+              {data.weekdayLabels.map((label, i) => (
+                <tr key={label} className="border-b border-[#3A1218]/60 text-center"><td className="p-2 text-right font-bold">{label}</td><td className="p-2 font-black text-[#FFD700]">{data.byWeekday[i]}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );
@@ -1084,6 +1089,138 @@ const PromoCodesPanel = ({ adminFetch }) => {
         </div>
       )}
       <p className="text-[11px] text-zinc-500 mt-3">الكود مش بيتجمع مع خصم المنيو الحالي ولا مع خصم النقاط — خصم واحد بس في الأوردر.</p>
+    </div>
+  );
+};
+
+// ================= جدول أسعار طلبات (للأدمن) =================
+const TalabatPricesEditor = ({ menuItems, categories, adminFetch, fetchItems }) => {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState({});
+  const [pct, setPct] = useState('20');
+  const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const baseKey = (it) => `b|${it._id}`;
+  const optKey = (it, kind, gi, oi) => `o|${it._id}|${kind}|${gi}|${oi}`;
+  const groupsOf = (it) => {
+    if (Array.isArray(it.modifierGroups) && it.modifierGroups.length > 0) return it.modifierGroups.map((g, gi) => ({ kind: 'm', gi, name: g.name, options: g.options || [] }));
+    const out = [];
+    if (it.sizes?.length > 0) out.push({ kind: 's', gi: 0, name: 'الأحجام', options: it.sizes });
+    if (it.addons?.length > 0) out.push({ kind: 'a', gi: 0, name: 'الإضافات', options: it.addons });
+    return out;
+  };
+  const saved = (v) => (Number(v) > 0 ? String(v) : '');
+  const val = (key, savedValue) => (key in draft ? draft[key] : saved(savedValue));
+  const setVal = (key, v) => setDraft(d => ({ ...d, [key]: String(v).replace(/[^\d.]/g, '') }));
+
+  const fillEmpty = () => {
+    const f = 1 + (Number(pct) || 0) / 100;
+    const next = { ...draft };
+    menuItems.forEach(it => {
+      if (Number(it.price) > 0 && !(Number(it.talabatPrice) > 0) && !(baseKey(it) in next)) next[baseKey(it)] = String(Math.round(it.price * f));
+      groupsOf(it).forEach(g => g.options.forEach((o, oi) => {
+        const k = optKey(it, g.kind, g.gi, oi);
+        if (Number(o.price) > 0 && !(Number(o.talabatPrice) > 0) && !(k in next)) next[k] = String(Math.round(o.price * f));
+      }));
+    });
+    setDraft(next);
+  };
+
+  const dirtyCount = Object.keys(draft).length;
+  const saveAll = async () => {
+    setBusy(true); setMsg('');
+    try {
+      const payload = menuItems.map(it => {
+        const entry = { _id: it._id, options: [] };
+        let touched = false;
+        if (baseKey(it) in draft) { entry.talabatPrice = draft[baseKey(it)]; touched = true; }
+        groupsOf(it).forEach(g => g.options.forEach((o, oi) => {
+          const k = optKey(it, g.kind, g.gi, oi);
+          if (k in draft) { entry.options.push({ kind: g.kind, gi: g.gi, oi, talabatPrice: draft[k] }); touched = true; }
+        }));
+        return touched ? entry : null;
+      }).filter(Boolean);
+      const res = await adminFetch('/api/items/talabat-prices', { method: 'PUT', body: JSON.stringify({ items: payload }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'تعذر الحفظ');
+      setDraft({}); await fetchItems(); setMsg(`✅ اتحفظ (${data.updated} صنف)`);
+    } catch (e) { if (e.message !== 'unauthorized') setMsg(`❌ ${e.message}`); }
+    setBusy(false);
+  };
+
+  const inp = 'bg-[#12080A] border border-[#3A1218] rounded-lg px-2 py-1.5 text-white text-sm w-24 text-center';
+  const q = search.trim().toLowerCase();
+  const cats = [...categories].sort((a, b) => (a.order || 0) - (b.order || 0));
+
+  return (
+    <div className="bg-[#1C0D10] p-6 rounded-[2.5rem] border border-[#800020]/40 mb-8 shadow-2xl">
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between text-right">
+        <h3 className="text-xl font-black text-[#FFD700]">🛍️ أسعار طلبات (الأصناف والإضافات)</h3>
+        <span className="text-zinc-400">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="mt-4 space-y-4">
+          <p className="text-sm text-zinc-400 leading-6">اكتب سعر طلبات قدام كل صنف أو إضافة. اللي تسيبه فاضي هيتحسب بسعر المطعم. الكاشير بيختار نوع الأوردر "طلبات" والأسعار دي تظهر لوحدها.</p>
+          <div className="flex flex-wrap gap-2 items-center bg-[#12080A] border border-[#3A1218] rounded-2xl p-3">
+            <span className="text-sm text-zinc-300 font-bold">تعبئة سريعة:</span>
+            <span className="text-sm text-zinc-400">املأ الفاضي بزيادة</span>
+            <input value={pct} onChange={(e) => setPct(e.target.value.replace(/[^\d.]/g, ''))} className={inp + ' !w-16'} dir="ltr" />
+            <span className="text-sm text-zinc-400">%</span>
+            <button type="button" onClick={fillEmpty} className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-1.5 rounded-lg text-sm font-bold">املأ</button>
+            <span className="text-xs text-zinc-500">(بعد كده عدّل الأسعار اللي مش على النسبة دي)</span>
+          </div>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="🔍 دوّر على صنف" className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm" />
+
+          <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-1">
+            {cats.map(cat => {
+              const list = menuItems.filter(it => it.category === cat.name && (!q || it.name.toLowerCase().includes(q)));
+              if (list.length === 0) return null;
+              return (
+                <div key={cat._id}>
+                  <h4 className="font-black text-white mb-2">{cat.name}</h4>
+                  <div className="space-y-2">
+                    {list.map(it => {
+                      const groups = groupsOf(it);
+                      return (
+                        <div key={it._id} className="bg-[#12080A] border border-[#3A1218] rounded-xl p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold text-white text-sm flex-1">{it.name}</span>
+                            <span className="text-xs text-zinc-500 whitespace-nowrap">المطعم: {it.price} ج</span>
+                            <input value={val(baseKey(it), it.talabatPrice)} onChange={(e) => setVal(baseKey(it), e.target.value)} placeholder={it.price > 0 ? 'طلبات' : '—'} disabled={!(Number(it.price) > 0)} className={inp + (baseKey(it) in draft ? ' !border-[#FFD700]' : '')} dir="ltr" inputMode="decimal" />
+                          </div>
+                          {groups.map(g => (
+                            <div key={`${g.kind}${g.gi}`} className="mt-2 mr-4">
+                              <p className="text-[11px] text-zinc-500 font-bold mb-1">{g.name}</p>
+                              {g.options.map((o, oi) => {
+                                const k = optKey(it, g.kind, g.gi, oi);
+                                return (
+                                  <div key={oi} className="flex items-center justify-between gap-3 py-1 border-t border-[#3A1218]/60">
+                                    <span className="text-xs text-zinc-300 flex-1">{o.name}</span>
+                                    <span className="text-xs text-zinc-500 whitespace-nowrap">المطعم: {Number(o.price) || 0} ج</span>
+                                    <input value={val(k, o.talabatPrice)} onChange={(e) => setVal(k, e.target.value)} placeholder="طلبات" className={inp + (k in draft ? ' !border-[#FFD700]' : '')} dir="ltr" inputMode="decimal" />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={saveAll} disabled={busy || dirtyCount === 0} className={`px-6 py-3 rounded-xl font-black ${busy || dirtyCount === 0 ? 'bg-zinc-700 text-zinc-400' : 'bg-green-600 hover:bg-green-700 text-white'}`}>{busy ? '...' : `💾 حفظ أسعار طلبات${dirtyCount ? ` (${dirtyCount})` : ''}`}</button>
+            {dirtyCount > 0 && <button type="button" onClick={() => setDraft({})} className="text-sm text-zinc-400 underline">تراجع</button>}
+            {msg && <span className="text-sm font-bold">{msg}</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1285,6 +1422,7 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
   const [editId, setEditId] = useState(null);
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
+  const [cost, setCost] = useState('');
   const [discount, setDiscount] = useState(''); 
   const [image, setImage] = useState('');
   const [description, setDescription] = useState('');
@@ -1404,6 +1542,7 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
     const itemData = {
       name,
       price: Number(price),
+      cost: Number(cost) || 0,
       discount: Number(discount) || 0,
       image: image || "https://via.placeholder.com/400x300/222/FFD700?text=Noss+Kofta",
       description,
@@ -1444,6 +1583,7 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
     setEditId(item._id);
     setName(item.name);
     setPrice(item.price);
+    setCost(item.cost || '');
     setDiscount(item.discount || '');
     setImage(item.image);
     setDescription(item.description || '');
@@ -1459,7 +1599,7 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
 
   const resetForm = () => {
     setEditId(null);
-    setName(''); setPrice(''); setDiscount(''); setImage(''); setDescription(''); setMaxItems(''); setType('normal');
+    setName(''); setPrice(''); setCost(''); setDiscount(''); setImage(''); setDescription(''); setMaxItems(''); setType('normal');
     setIsOffer(false);
     setAddonsList([]);
     setBoxItemsList([]);
@@ -1490,6 +1630,7 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
         <h2 className="text-3xl font-bold text-[#FFD700]">⚙️ لوحة الإدارة</h2>
         <div className="flex items-center gap-4">
           <Link className="text-zinc-400 hover:text-white underline" to="/cashier">شاشة الكاشير</Link>
+          <Link className="text-zinc-400 hover:text-white underline" to="/reports">📈 تقارير الحملات</Link>
           <Link className="text-zinc-400 hover:text-white underline" to="/menu">{t.menu}</Link>
           <button type="button" onClick={onLogout} className="bg-zinc-700 hover:bg-zinc-600 px-4 py-2 rounded-xl text-sm font-bold text-white">🚪 خروج</button>
         </div>
@@ -1499,6 +1640,9 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
 
       <PeakHoursPanel adminFetch={adminFetch} />
       <PromoCodesPanel adminFetch={adminFetch} />
+      <MarginReportPanel adminFetch={adminFetch} />
+      <AuditLogSection adminFetch={adminFetch} />
+      <BackupPanel adminFetch={adminFetch} />
 
       <div className="bg-[#1C0D10] p-6 rounded-2xl border border-[#800020]/60 mb-8 shadow-xl">
         <h3 className="text-xl font-bold text-[#FFD700] mb-4">🚚 إدارة مناطق التوصيل وأسعارها</h3>
@@ -1631,6 +1775,8 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
         </div>
       </div>
     
+      <TalabatPricesEditor menuItems={menuItems} categories={categories} adminFetch={adminFetch} fetchItems={fetchItems} />
+
       <form onSubmit={handleSaveItem} className="bg-[#1C0D10] p-6 rounded-2xl border border-[#3A1218] mb-8 grid grid-cols-1 md:grid-cols-2 gap-4 shadow-xl">
         <h3 className="md:col-span-2 text-xl font-bold text-[#FFD700] mb-2">{t.itemManage}</h3>
         <div>
@@ -1640,6 +1786,10 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
         <div>
           <label className="block text-sm mb-2 text-zinc-300">Price *</label>
           <input type="number" required value={price} onChange={(e) => setPrice(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="Price" />
+        </div>
+        <div>
+          <label className="block text-sm mb-2 text-zinc-300">التكلفة (ج) — عشان تقرير هامش الربح</label>
+          <input type="number" min="0" value={cost} onChange={(e) => setCost(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white" placeholder="مثال: 80 (فاضي = مش متحددة)" />
         </div>
         <div>
           <label className="block text-sm mb-2 text-[#FFD700]">نسبة الخصم % (اختياري)</label>
@@ -1877,6 +2027,324 @@ const AdminPanel = ({ menuItems, categories, siteSettings, lang, fetchItems, fet
 };
 
 // بوابة لوحة الإدارة: لازم دخول بحساب الأدمن (الباسورد بيتراجع في السيرفر مش في الموقع)
+
+// ---------- تقرير هامش الربح (للأدمن) ----------
+// الربح بيتحسب على التكلفة الحالية للصنف (التكلفة مش بتتخزن في الأوردر)
+const MarginReportPanel = ({ adminFetch }) => {
+  const [days, setDays] = useState(7);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const load = async (d) => {
+    setLoading(true); setErr('');
+    try {
+      const r = await adminFetch(`/api/admin/reports/margin?days=${d}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'تعذر تحميل التقرير');
+      setRows(j.rows || []);
+    } catch (e) { if (e.message !== 'unauthorized') setErr(e.message); }
+    setLoading(false);
+  };
+  useEffect(() => { load(days); }, [days]);
+  return (
+    <div className="bg-[#1C0D10] p-6 rounded-2xl border border-[#800020]/60 mb-8 shadow-xl">
+      <h3 className="text-xl font-bold text-[#FFD700] mb-1">📈 هامش الربح</h3>
+      <p className="text-xs text-zinc-500 mb-4">الربح بيتحسب على التكلفة الحالية للصنف (التكلفة مش بتتخزن في الأوردر). الأصناف اللي من غير تكلفة بتظهر "—".</p>
+      <div className="flex gap-2 mb-4">
+        {[7, 30].map((d) => (
+          <button key={d} type="button" onClick={() => { setDays(d); load(d); }} className={`px-4 py-2 rounded-xl text-sm font-bold ${days === d ? 'bg-[#800020] text-white' : 'bg-[#12080A] text-zinc-300 border border-[#3A1218]'}`}>آخر {d} يوم</button>
+        ))}
+      </div>
+      {err && <p className="text-sm text-red-400 font-bold">{err}</p>}
+      {loading && <p className="text-sm text-zinc-400">... جاري التحميل</p>}
+      {!loading && rows.length === 0 && !err && <p className="text-sm text-zinc-500">مفيش مبيعات في الفترة دي.</p>}
+      {rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[560px]">
+            <thead><tr className="text-zinc-400 text-xs border-b border-[#3A1218]"><th className="p-2 text-right">الصنف</th><th className="p-2">الكمية</th><th className="p-2">الإيراد</th><th className="p-2">التكلفة</th><th className="p-2">الربح</th><th className="p-2">الهامش</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.name} className="border-b border-[#3A1218]/60 text-center">
+                  <td className="p-2 text-right font-bold">{r.name}</td>
+                  <td className="p-2">{r.qty}</td>
+                  <td className="p-2 font-black text-[#FFD700]">{Math.round(r.revenue)} ج</td>
+                  <td className="p-2">{r.cost == null ? '—' : `${Math.round(r.cost)} ج`}</td>
+                  <td className="p-2 font-black text-green-400">{r.profit == null ? '—' : `${Math.round(r.profit)} ج`}</td>
+                  <td className="p-2 font-bold">{r.margin == null ? '—' : `${r.margin}%`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ---------- سجل عمليات الأدمن ----------
+const AuditLogSection = ({ adminFetch }) => {
+  const [logs, setLogs] = useState([]);
+  const [filter, setFilter] = useState('');
+  const [loading, setLoading] = useState(false);
+  const load = async (f = filter) => {
+    setLoading(true);
+    try {
+      const q = f ? `?action=${encodeURIComponent(f)}` : '';
+      const r = await adminFetch(`/api/admin/audit-log${q}`);
+      const j = await r.json();
+      if (Array.isArray(j)) setLogs(j);
+    } catch {}
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+  return (
+    <div className="bg-[#1C0D10] p-6 rounded-2xl border border-[#800020]/60 mb-8 shadow-xl">
+      <h3 className="text-xl font-bold text-[#FFD700] mb-4">📜 سجل العمليات</h3>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {['', 'تعديل سعر', 'تعديل صنف', 'تعديل أسعار طلبات', 'مسح أوردر'].map((a) => (
+          <button key={a || 'all'} type="button" onClick={() => { setFilter(a); load(a); }} className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${filter === a ? 'bg-[#800020] text-white border-[#FFD700]' : 'bg-[#12080A] text-zinc-300 border-[#3A1218]'}`}>{a || 'الكل'}</button>
+        ))}
+        <button type="button" onClick={() => load()} className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#12080A] text-zinc-300 border border-[#3A1218]">🔄 تحديث</button>
+      </div>
+      {loading && <p className="text-sm text-zinc-400">... جاري التحميل</p>}
+      {logs.length === 0 && !loading && <p className="text-sm text-zinc-500">لسه مفيش عمليات مسجلة.</p>}
+      {logs.length > 0 && (
+        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+          <table className="w-full text-sm min-w-[560px]">
+            <thead><tr className="text-zinc-400 text-xs border-b border-[#3A1218]"><th className="p-2 text-right">الوقت</th><th className="p-2 text-right">مين</th><th className="p-2 text-right">العملية</th><th className="p-2 text-right">التفاصيل</th></tr></thead>
+            <tbody>
+              {logs.map((l) => (
+                <tr key={l._id} className="border-b border-[#3A1218]/60">
+                  <td className="p-2 text-zinc-400 text-xs whitespace-nowrap">{new Date(l.at).toLocaleString('ar-EG')}</td>
+                  <td className="p-2 font-bold">{l.by || '-'}</td>
+                  <td className="p-2"><span className="font-bold text-[#FFD700]">{l.action}</span>{l.entityName ? <span className="text-zinc-300"> — {l.entityName}</span> : ''}</td>
+                  <td className="p-2 text-zinc-300 text-xs">{l.details || ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ---------- النسخة الاحتياطية ----------
+// التليجرام هو النسخة المحفوظة برّه السيرفر (تلقائي يومي + عند الطلب)،
+// والكمبيوتر نسخة يدوية بينزّلها الأدمن. السيرفر نفسه مبيحتفظش بنسخة.
+const BackupPanel = ({ adminFetch }) => {
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const sendBackup = async () => {
+    setBusy(true); setMsg('... جاري عمل النسخة');
+    try {
+      const r = await adminFetch('/api/admin/backup', { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setMsg(`❌ ${j.error || 'فشل عمل النسخة'}`); return; }
+      const cols = Object.entries(j.collections || {}).map(([k, v]) => `${k}: ${v}`).join(' • ');
+      const kb = Math.round((Number(j.bytes) || 0) / 1024);
+      setMsg(`✅ اتعملت نسخة يوم ${j.day || ''} (${kb} KB — ${cols}) (تليجرام: ${j.telegramSent ? 'وصل' : 'متظبطش — اتأكد من إعدادات التليجرام'})`);
+    } catch { setMsg('❌ تعذر الاتصال بالسيرفر'); }
+    finally { setBusy(false); }
+  };
+  const downloadBackup = async () => {
+    setBusy(true); setMsg('... جاري تجهيز الملف');
+    try {
+      const r = await adminFetch('/api/admin/backup/download');
+      if (!r.ok) { const j = await r.json().catch(() => ({})); setMsg(`❌ ${j.error || 'فشل التحميل'}`); return; }
+      const blob = await r.blob();
+      const cd = r.headers.get('Content-Disposition') || '';
+      const m = /filename="([^"]+)"/.exec(cd);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = m ? m[1] : `backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setMsg('✅ اتنزّلت النسخة على الكمبيوتر');
+    } catch { setMsg('❌ تعذر التحميل'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="bg-[#1C0D10] p-6 rounded-2xl border border-[#800020]/60 mb-8 shadow-xl">
+      <h3 className="text-xl font-bold text-[#FFD700] mb-1">💾 النسخة الاحتياطية</h3>
+      <p className="text-xs text-zinc-500 mb-4">نسخة التليجرام بتتبعت تلقائي كل يوم وبتتحفظ برّه السيرفر. نسخة الكمبيوتر بتنزّلها بنفسك من هنا.</p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={sendBackup} disabled={busy} className="px-4 py-2 rounded-xl text-sm font-bold bg-[#25D366] text-black disabled:opacity-60">💾 نسخة احتياطية دلوقتي</button>
+        <button type="button" onClick={downloadBackup} disabled={busy} className="px-4 py-2 rounded-xl text-sm font-bold bg-[#800020] text-white disabled:opacity-60">⬇️ نزّل نسخة على الكمبيوتر</button>
+      </div>
+      {msg && <p className="text-xs font-bold text-zinc-300 mt-3">{msg}</p>}
+    </div>
+  );
+};
+
+
+// مفتاح التاريخ YYYY-MM-DD (تقويمي) — لصفحة تقارير الحملات
+const dateKeyOf = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+
+const CampaignReportsPage = () => {
+  const [session, setSession] = useState(readSession);
+  const logout = () => { clearSession(); setSession(null); };
+  if (!session?.token || session.user?.role !== 'admin') {
+    return <StaffLogin title="🔒 تقارير الحملات (أدمن)" requireAdmin onLogin={(data) => { saveSession(data); setSession(data); }} />;
+  }
+  return <CampaignReports token={session.token} onLogout={logout} />;
+};
+
+const CampaignReports = ({ token, onLogout }) => {
+  const today = new Date();
+  const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 6); return dateKeyOf(d); });
+  const [to, setTo] = useState(dateKeyOf(today));
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const [campName, setCampName] = useState('');
+  const [adName, setAdName] = useState('');
+  const [copied, setCopied] = useState('');
+  const authFetch = (path, options = {}) => authRequest(token, path, options, onLogout);
+
+  const load = async () => {
+    setLoading(true); setErr('');
+    try {
+      const [fy, fm, fd] = from.split('-').map(Number), [ty, tm, td] = to.split('-').map(Number);
+      const f = new Date(fy, fm - 1, fd), t = new Date(ty, tm - 1, td + 1);
+      const res = await authFetch(`/api/reports/campaigns?from=${encodeURIComponent(f.toISOString())}&to=${encodeURIComponent(t.toISOString())}&fromKey=${from}&toKey=${to}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'تعذر تحميل التقرير');
+      setRows(data.rows || []);
+    } catch (e) { if (e.message !== 'unauthorized') setErr(e.message); }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, [from, to]);
+
+  const preset = (days) => { const d = new Date(); d.setDate(d.getDate() - (days - 1)); setFrom(dateKeyOf(d)); setTo(dateKeyOf(new Date())); };
+  const thisMonth = () => { const d = new Date(); setFrom(dateKeyOf(new Date(d.getFullYear(), d.getMonth(), 1))); setTo(dateKeyOf(d)); };
+
+  const saveSpend = async (r, value) => {
+    const amount = Number(String(value).replace(/[^\d.]/g, '')) || 0;
+    if (amount === (r.spend || 0)) return;
+    try {
+      await authFetch('/api/ad-spend', { method: 'PUT', body: JSON.stringify({ campaign: r.campaign, content: r.content, from, to, amount }) });
+      load();
+    } catch (e) {}
+  };
+
+  const totals = rows.reduce((a, r) => ({ orders: a.orders + r.orders, sales: a.sales + r.sales, spend: a.spend + (r.spend || 0), cancelled: a.cancelled + r.cancelled }), { orders: 0, sales: 0, spend: 0, cancelled: 0 });
+  const fmt = (n) => Math.round(n).toLocaleString('en-US');
+  const cac = (r) => (r.spend > 0 && r.orders > 0 ? Math.round(r.spend / r.orders) : null);
+  const roas = (r) => (r.spend > 0 ? (r.sales / r.spend).toFixed(1) : null);
+  const label = (v, d) => v || d;
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const enc = (v) => encodeURIComponent(v.trim());
+  const oneLink = campName.trim() ? `${origin}/?utm_source=facebook&utm_medium=paid&utm_campaign=${enc(campName)}${adName.trim() ? `&utm_content=${enc(adName)}` : ''}` : '';
+  const metaParams = 'utm_source=facebook&utm_medium=paid&utm_campaign={{campaign.name}}&utm_content={{ad.name}}';
+  const copy = async (text, id) => { try { await navigator.clipboard.writeText(text); setCopied(id); setTimeout(() => setCopied(''), 1800); } catch (e) { window.prompt('انسخ الرابط:', text); } };
+
+  const exportCsv = () => {
+    const head = ['الحملة', 'الإعلان', 'أوردرات', 'ملغي', 'مبيعات', 'متوسط الأوردر', 'التكلفة', 'تكلفة الأوردر', 'ROAS'];
+    const lines = rows.map(r => [label(r.campaign, 'مباشر / بدون حملة'), r.content, r.orders, r.cancelled, Math.round(r.sales), r.orders ? Math.round(r.sales / r.orders) : 0, r.spend || 0, cac(r) ?? '', roas(r) ?? '']);
+    const csv = '﻿' + [head, ...lines].map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); a.download = `campaigns-${from}_${to}.csv`; a.click();
+  };
+
+  const inp = 'bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm';
+  const chip = 'px-3 py-2 rounded-xl text-xs font-black border border-[#3A1218] bg-[#1C0D10] text-zinc-300 hover:border-[#800020]';
+
+  return (
+    <div dir="rtl" className="min-h-screen bg-[#12080A] text-white p-4 md:p-8">
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl md:text-3xl font-black text-[#FFD700]">📈 تقرير الحملات الإعلانية</h1>
+          <div className="flex gap-2">
+            <button onClick={exportCsv} className={chip}>⬇️ تصدير Excel</button>
+            <button onClick={onLogout} className={chip}>🚪 خروج</button>
+          </div>
+        </div>
+
+        <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-4 space-y-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            <button onClick={() => preset(1)} className={chip}>اليوم</button>
+            <button onClick={() => preset(7)} className={chip}>آخر 7 أيام</button>
+            <button onClick={() => preset(30)} className={chip}>آخر 30 يوم</button>
+            <button onClick={thisMonth} className={chip}>الشهر ده</button>
+            <span className="text-zinc-500 text-xs mx-1">أو</span>
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={inp} />
+            <span className="text-zinc-500">←</span>
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={inp} />
+            <button onClick={load} className="bg-[#800020] px-4 py-2 rounded-xl text-sm font-black">{loading ? '...' : '🔄 تحديث'}</button>
+          </div>
+          {err && <p className="text-red-400 text-sm">{err}</p>}
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[['أوردرات الموقع', fmt(totals.orders)], ['المبيعات', `${fmt(totals.sales)} ج`], ['تكلفة الإعلانات', `${fmt(totals.spend)} ج`], ['تكلفة الأوردر (المتوسط)', totals.spend > 0 && totals.orders > 0 ? `${fmt(totals.spend / totals.orders)} ج` : '—']].map(([k, v]) => (
+            <div key={k} className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-4">
+              <p className="text-zinc-400 text-xs">{k}</p>
+              <p className="text-[#FFD700] text-2xl font-black mt-1">{v}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl overflow-x-auto">
+          <table className="w-full text-sm min-w-[820px]">
+            <thead>
+              <tr className="text-zinc-400 text-xs border-b border-[#3A1218]">
+                <th className="p-3 text-right">الحملة</th><th className="p-3 text-right">الإعلان</th><th className="p-3">أوردرات</th><th className="p-3">ملغي</th>
+                <th className="p-3">المبيعات</th><th className="p-3">متوسط الأوردر</th><th className="p-3">تكلفة الإعلان (اكتبها)</th><th className="p-3">تكلفة الأوردر</th><th className="p-3">ROAS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && <tr><td colSpan="9" className="p-8 text-center text-zinc-500">{loading ? 'جاري التحميل...' : 'مفيش أوردرات في الفترة دي'}</td></tr>}
+              {rows.map((r, i) => (
+                <tr key={`${r.campaign}|${r.content}|${i}`} className="border-b border-[#3A1218]/60 text-center">
+                  <td className="p-3 text-right font-bold">{label(r.campaign, <span className="text-zinc-400">مباشر / بدون حملة</span>)}</td>
+                  <td className="p-3 text-right text-zinc-300">{r.content || '—'}</td>
+                  <td className="p-3 font-black">{r.orders}</td>
+                  <td className="p-3 text-zinc-500">{r.cancelled || ''}</td>
+                  <td className="p-3 text-[#FFD700] font-black">{fmt(r.sales)} ج</td>
+                  <td className="p-3">{r.orders ? `${fmt(r.sales / r.orders)} ج` : '—'}</td>
+                  <td className="p-3">
+                    {(r.campaign || r.content) ? (
+                      <input defaultValue={r.spend || ''} key={`${from}${to}${r.spend}`} onBlur={(e) => saveSpend(r, e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }} inputMode="decimal" placeholder="0" className={inp + ' w-24 text-center'} dir="ltr" />
+                    ) : <span className="text-zinc-600">—</span>}
+                  </td>
+                  <td className="p-3 font-black text-green-400">{cac(r) ? `${cac(r)} ج` : '—'}</td>
+                  <td className="p-3">{roas(r) ? `${roas(r)}x` : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-zinc-500 text-xs leading-6">• التقرير بيحسب أوردرات الموقع بس (مش أوردرات الكاشير)، والملغي مش داخل في المبيعات. • "مباشر / بدون حملة" = عميل جه من غير رابط إعلان. • اكتب تكلفة كل إعلان من Meta للفترة المختارة، والتكلفة بتتحفظ للفترة دي بالظبط. • قارن "أوردرات" هنا بعدد الـ Purchases في Meta: لو Meta أكتر، يبقى فيه أوردرات متنسبة لإعلانات مش واصلة للموقع.</p>
+
+        <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-4 space-y-4">
+          <h2 className="font-black text-lg text-white">🔗 روابط الإعلانات (UTM)</h2>
+          <div>
+            <p className="text-sm text-zinc-300 font-bold mb-1">الطريقة الأسهل: مرة واحدة لكل الإعلانات</p>
+            <p className="text-xs text-zinc-500 mb-2">في Meta داخل الإعلان: Website URL = <span dir="ltr">{origin}</span>، وفي خانة <b>URL parameters</b> الصق السطر ده. Meta بتملّي اسم الحملة والإعلان لوحدها.</p>
+            <div className="flex gap-2">
+              <input readOnly value={metaParams} className={inp + ' flex-1 text-xs'} dir="ltr" />
+              <button onClick={() => copy(metaParams, 'meta')} className="bg-[#800020] px-4 rounded-xl text-sm font-black shrink-0">{copied === 'meta' ? '✅ اتنسخ' : 'نسخ'}</button>
+            </div>
+          </div>
+          <div>
+            <p className="text-sm text-zinc-300 font-bold mb-2">أو اعمل رابط لإعلان معيّن</p>
+            <div className="grid md:grid-cols-2 gap-2">
+              <input value={campName} onChange={(e) => setCampName(e.target.value)} placeholder="اسم الحملة (مثال: عرض الجمعة)" className={inp} />
+              <input value={adName} onChange={(e) => setAdName(e.target.value)} placeholder="اسم الإعلان (اختياري، مثال: فيديو 1)" className={inp} />
+            </div>
+            {oneLink && (
+              <div className="flex gap-2 mt-2">
+                <input readOnly value={oneLink} className={inp + ' flex-1 text-xs'} dir="ltr" />
+                <button onClick={() => copy(oneLink, 'one')} className="bg-[#800020] px-4 rounded-xl text-sm font-black shrink-0">{copied === 'one' ? '✅ اتنسخ' : 'نسخ'}</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AdminDashboard = (props) => {
   const [session, setSession] = useState(readSession);
 
@@ -1909,7 +2377,7 @@ const orderStage = (o) => {
   if (o.status === 'cancelled') return { done: 0, current: -1, cancelled: true };
   if (o.status === 'completed') return { done: 4, current: -1 };
   if (o.status === 'ready') return { done: 2, current: 2 };
-  if (o.status === 'accepted') return o.awaitingCash ? { done: 2, current: 2 } : { done: 1, current: 1 };
+  if (o.status === 'accepted') return (o.awaitingCash || o.outForDeliveryAt) ? { done: 2, current: 2 } : { done: 1, current: 1 };
   return { done: 0, current: 0 };
 };
 const orderStatusText = (o) => {
@@ -1934,8 +2402,38 @@ const OrderTracker = ({ order }) => {
           </div>
         ))}
       </div>
+      {order.orderType === 'delivery' && Number(order.etaMinutes) > 0 && order.status !== 'completed' && <p className="text-sm text-[#FFD700] font-black text-center mt-3">🕐 هيوصلك خلال {Number(order.etaMinutes)} دقيقة</p>}
       {order.status === 'pending' && <p className="text-xs text-zinc-400 text-center mt-2">تم استلام طلبك، مستني تأكيد المطعم…</p>}
       {order.status === 'completed' && <p className="text-xs text-green-400 font-bold text-center mt-2">✅ طلبك اتسلم — بالهنا والشفا!</p>}
+    </div>
+  );
+};
+
+// تحكم الكاشير في وقت توصيل الأوردر (دليفري بس): الرقم اللي يتكتب هنا بيظهر للعميل في التتبع
+const OrderEtaEditor = ({ order, autoEta, authFetch, onSaved }) => {
+  const [minutes, setMinutes] = useState(order.etaMinutes ? String(order.etaMinutes) : (autoEta ? String(autoEta) : ''));
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const save = async () => {
+    const n = Number(minutes);
+    if (!Number.isInteger(n) || n < 5 || n > 180) { setMsg('اكتب عدد دقايق من 5 لـ 180'); return; }
+    setSaving(true); setMsg('');
+    try {
+      const r = await authFetch(`/api/orders/${order._id || order.orderId}/eta`, { method: 'PUT', body: JSON.stringify({ etaMinutes: n }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setMsg(d.error || 'تعذر الحفظ'); return; }
+      setMsg('✅ اتحفظ');
+      if (onSaved) onSaved();
+    } catch { setMsg('تعذر الاتصال بالسيرفر'); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div className="bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 mb-4 flex flex-wrap items-center gap-2">
+      <label className="text-xs font-bold text-zinc-300">🕐 وقت التوصيل (دقيقة):</label>
+      <input type="number" min="5" max="180" value={minutes} onChange={(e) => { setMinutes(e.target.value); setMsg(''); }} className="w-20 bg-[#0A0407] border border-[#3A1218] rounded-lg px-2 py-1 text-white text-sm text-center" dir="ltr" />
+      <button type="button" onClick={save} disabled={saving} className="bg-[#800020] hover:bg-[#990026] disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-xs font-black">💾 حفظ الوقت</button>
+      {order.etaSetBy && <span className="text-[11px] text-zinc-400">آخر تعديل: {order.etaSetBy}</span>}
+      {msg && <span className="text-[11px] font-bold text-[#FFD700]">{msg}</span>}
     </div>
   );
 };
@@ -2308,7 +2806,32 @@ const deliveryEtaText = (activeOrders) => {
   return `${eta}–${Math.min(90, eta + 15)} دقيقة`;
 };
 
-const CartPage = ({ cart, setCart, lang, storeStatus }) => {
+
+// اقتراحات إضافات في السلة: المشروبات الأول، ولو مفيش مشروبات بيقترح أرخص أصناف مش موجودة في السلة
+const CartSuggestions = ({ cart, menuItems = [], setCart }) => {
+  const inCart = new Set((cart || []).map((c) => String(c._id)));
+  const drinkRe = /مشروب|عصير|مياه|drink|beverage|juice/i;
+  const available = (menuItems || []).filter((it) => it.available !== false && !inCart.has(String(it._id)));
+  const drinks = available.filter((it) => drinkRe.test(String(it.category || '')));
+  const picks = (drinks.length > 0 ? drinks : [...available].sort((a, b) => (Number(a.price) || 0) - (Number(b.price) || 0))).slice(0, 3);
+  if (picks.length === 0 || (cart || []).length === 0) return null;
+  return (
+    <div className="mt-4 pt-4 border-t border-[#3A1218]">
+      <p className="font-bold text-[#FFD700] mb-2">كمّل طلبك؟ 🥤</p>
+      <div className="space-y-2">
+        {picks.map((it) => (
+          <div key={it._id} className="flex items-center justify-between gap-2 bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2">
+            <span className="text-sm text-white font-bold">{it.name}</span>
+            <span className="text-xs text-[#FFD700] font-bold whitespace-nowrap">{getDiscountedPrice(it.price, it.discount)} ج</span>
+            <button type="button" onClick={() => setCart((prev) => [...prev, { ...it, price: getDiscountedPrice(it.price, it.discount) }])} className="bg-[#800020] hover:bg-[#990026] text-white px-3 py-1.5 rounded-lg text-xs font-black whitespace-nowrap">➕ ضيف</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const CartPage = ({ cart, setCart, lang, storeStatus, menuItems = [] }) => {
   const storeClosed = !!storeStatus && storeStatus.isOpen === false;
   const t = translations[lang];
   const location = useLocation();
@@ -2332,6 +2855,8 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
+  const [savedAddresses, setSavedAddresses] = useState([]);
+  const [addressLabel, setAddressLabel] = useState('بيت');
 
   const [placedOrderId, setPlacedOrderId] = useState(null);
   const [phoneInfo, setPhoneInfo] = useState(null);
@@ -2378,6 +2903,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
         setCustomerName((prev) => (prev.trim() ? prev : (p.name || '')));
         setCustomerPhone((prev) => (prev.trim() ? prev : (p.phone || '')));
         setCustomerAddress((prev) => (prev.trim() ? prev : (p.address || '')));
+        if (Array.isArray(p.addresses)) setSavedAddresses(p.addresses);
         if (p.zoneName) setSavedZoneName(p.zoneName);
         setCustomerPoints(Number(p.points) || 0);
       })
@@ -2428,6 +2954,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
         autofilledRef.current.name = p.name || '';
         if (orderType === 'delivery') {
           setCustomerAddress(p.address || '');
+          if (Array.isArray(p.addresses)) setSavedAddresses(p.addresses);
           autofilledRef.current.address = p.address || '';
           const z = p.zoneName ? deliveryZones.find(x => x.name === p.zoneName) : null;
           if (z) setSelectedZone(z);
@@ -2557,6 +3084,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
       pin: customerPin || undefined,
       orderType,
       customerAddress: orderType === 'delivery' ? customerAddress : 'استلام من الفرع',
+      addressLabel: orderType === 'delivery' ? addressLabel : undefined,
       zoneName: orderType === 'delivery' && selectedZone ? selectedZone.name : 'استلام من الفرع',
       deliveryFee: orderType === 'delivery' ? deliveryFee : 0,
       items: groupedCart.map(({ _id, name, price, quantity, _mods, notes }) => ({ itemId: _id, name, price, quantity, modifiers: _mods || [], notes: notes || '' })),
@@ -2603,7 +3131,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
     message += `📦 *نوع الاستلام:* ${orderType === 'delivery' ? 'توصيل دليفري 🛵' : 'استلام من الفرع 🏪'}\n`;
     
     if (orderType === 'delivery') {
-      message += `📍 *العنوان:* ${customerAddress}\n`;
+      message += `📍 *العنوان (${addressLabel}):* ${customerAddress}\n`;
       if (selectedZone) {
         message += `🚚 *منطقة التوصيل:* ${selectedZone.name} (${selectedZone.fee} ج)\n`;
       }
@@ -2762,6 +3290,7 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
             <span className="text-lg font-bold">{t.total}</span>
             <span className="text-2xl font-black text-[#FFD700]">{finalTotal} جنيه</span>
           </div>
+          <CartSuggestions cart={cart} menuItems={menuItems} setCart={setCart} />
         </div>
 
         <div className="bg-[#1C0D10] rounded-2xl p-6 border border-[#3A1218] flex flex-col justify-between shadow-xl nkfx-rise">
@@ -2828,6 +3357,19 @@ const CartPage = ({ cart, setCart, lang, storeStatus }) => {
 
               <div>
                 <label className="block text-xs text-zinc-300 mb-1">العنوان بالتفصيل *</label>
+                {savedAddresses.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {savedAddresses.map((a, i) => (
+                      <button key={i} type="button" onClick={() => { setCustomerAddress(a.address || ''); setAddressLabel(a.label || 'بيت'); autofilledRef.current.address = a.address || ''; }} className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${customerAddress === a.address ? 'bg-[#800020] text-white border-[#FFD700]' : 'bg-[#12080A] text-zinc-300 border-[#3A1218]'}`}>{a.label === 'شغل' ? '💼 شغل' : '🏠 بيت'} — {String(a.address || '').slice(0, 30)}{String(a.address || '').length > 30 ? '…' : ''}</button>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2 mb-2 items-center">
+                  <span className="text-xs text-zinc-400">نوع العنوان:</span>
+                  {['بيت', 'شغل'].map((l) => (
+                    <button key={l} type="button" onClick={() => setAddressLabel(l)} className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${addressLabel === l ? 'bg-[#800020] text-white border-[#FFD700]' : 'bg-[#12080A] text-zinc-300 border-[#3A1218]'}`}>{l === 'بيت' ? '🏠 بيت' : '💼 شغل'}</button>
+                  ))}
+                </div>
                 <textarea rows="2" placeholder="الشارع، رقم العمارة، الدور..." value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="w-full bg-[#12080A] border border-[#3A1218] rounded-xl p-3 text-white text-sm" />
               </div>
             </>
@@ -3372,6 +3914,146 @@ const DayReportCard = ({ authFetch, isAdmin, requestPrint, card, inp }) => {
   );
 };
 
+// ===== QR Code (byte mode, versions 1-10, ECC L/M) — مكتوب من الصفر، من غير أي مكتبة خارجية =====
+const qrEncode = (text, eccName = 'M') => {
+  const ECC = { L: { fmt: 1, i: 0 }, M: { fmt: 0, i: 1 } }[eccName] || { fmt: 0, i: 1 };
+  const ECC_PER_BLOCK = [[-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18], [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26]][ECC.i];
+  const NUM_BLOCKS = [[-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4], [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5]][ECC.i];
+  const bytes = Array.from(new TextEncoder().encode(String(text)));
+  const rawModules = (v) => {
+    let r = (16 * v + 128) * v + 64;
+    if (v >= 2) { const n = Math.floor(v / 7) + 2; r -= (25 * n - 10) * n - 55; if (v >= 7) r -= 36; }
+    return r;
+  };
+  const dataCap = (v) => Math.floor(rawModules(v) / 8) - ECC_PER_BLOCK[v] * NUM_BLOCKS[v];
+  let ver = 0;
+  for (let v = 1; v <= 10; v++) { const need = 4 + (v < 10 ? 8 : 16) + bytes.length * 8; if (Math.ceil(need / 8) <= dataCap(v)) { ver = v; break; } }
+  if (!ver) return null;
+
+  // ---- بيانات البتات ----
+  const bits = [];
+  const put = (val, len) => { for (let i = len - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+  put(4, 4); put(bytes.length, ver < 10 ? 8 : 16); bytes.forEach(b => put(b, 8));
+  const capBits = dataCap(ver) * 8;
+  put(0, Math.min(4, capBits - bits.length));
+  while (bits.length % 8) bits.push(0);
+  for (let pad = 0xEC; bits.length < capBits; pad ^= 0xEC ^ 0x11) put(pad, 8);
+  const data = [];
+  for (let i = 0; i < bits.length; i += 8) { let b = 0; for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j]; data.push(b); }
+
+  // ---- Reed-Solomon ----
+  const exp = new Array(512), log = new Array(256);
+  for (let i = 0, x = 1; i < 255; i++) { exp[i] = x; log[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11D; }
+  for (let i = 255; i < 512; i++) exp[i] = exp[i - 255];
+  const gmul = (a, b) => (a && b ? exp[log[a] + log[b]] : 0);
+  const rsGen = (deg) => { let g = [1]; for (let i = 0; i < deg; i++) { const n = new Array(g.length + 1).fill(0); for (let j = 0; j < g.length; j++) { n[j] ^= g[j]; n[j + 1] ^= gmul(g[j], exp[i]); } g = n; } return g; };
+  const rsRem = (d, deg) => { const g = rsGen(deg); const r = new Array(deg).fill(0); for (const b of d) { const f = b ^ r.shift(); r.push(0); for (let i = 0; i < deg; i++) r[i] ^= gmul(g[i + 1], f); } return r; };
+
+  const nb = NUM_BLOCKS[ver], eccLen = ECC_PER_BLOCK[ver];
+  const rawCw = Math.floor(rawModules(ver) / 8);
+  const shortBlocks = nb - (rawCw % nb), shortLen = Math.floor(rawCw / nb);
+  const blocks = []; let k = 0;
+  for (let i = 0; i < nb; i++) {
+    const len = shortLen - eccLen + (i < shortBlocks ? 0 : 1);
+    const d = data.slice(k, k + len); k += len;
+    blocks.push({ d, e: rsRem(d, eccLen) });
+  }
+  const all = [];
+  for (let i = 0; i <= shortLen - eccLen; i++) blocks.forEach(b => { if (i < b.d.length) all.push(b.d[i]); });
+  for (let i = 0; i < eccLen; i++) blocks.forEach(b => all.push(b.e[i]));
+
+  // ---- المصفوفة ----
+  const size = ver * 4 + 17;
+  const mod = Array.from({ length: size }, () => new Array(size).fill(false));
+  const fn = Array.from({ length: size }, () => new Array(size).fill(false));
+  const setF = (x, y, dark) => { if (x >= 0 && x < size && y >= 0 && y < size) { mod[y][x] = dark; fn[y][x] = true; } };
+  for (let i = 0; i < size; i++) { setF(6, i, i % 2 === 0); setF(i, 6, i % 2 === 0); }
+  const finder = (cx, cy) => { for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const d = Math.max(Math.abs(dx), Math.abs(dy)); setF(cx + dx, cy + dy, d !== 2 && d !== 4); } };
+  finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+  if (ver > 1) {
+    const n = Math.floor(ver / 7) + 2;
+    const step = Math.ceil((ver * 4 + 4) / (n * 2 - 2)) * 2;
+    const pos = [6]; for (let p = size - 7; pos.length < n; p -= step) pos.splice(1, 0, p);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      if ((i === 0 && j === 0) || (i === 0 && j === n - 1) || (i === n - 1 && j === 0)) continue;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) setF(pos[i] + dx, pos[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }
+  }
+  const drawFormat = (mask) => {
+    const d = (ECC.fmt << 3) | mask; let r = d;
+    for (let i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537);
+    const f = ((d << 10) | r) ^ 0x5412;
+    const bit = (i) => ((f >>> i) & 1) !== 0;
+    for (let i = 0; i <= 5; i++) setF(8, i, bit(i));
+    setF(8, 7, bit(6)); setF(8, 8, bit(7)); setF(7, 8, bit(8));
+    for (let i = 9; i < 15; i++) setF(14 - i, 8, bit(i));
+    for (let i = 0; i < 8; i++) setF(size - 1 - i, 8, bit(i));
+    for (let i = 8; i < 15; i++) setF(8, size - 15 + i, bit(i));
+    setF(8, size - 8, true);
+  };
+  drawFormat(0);
+  if (ver >= 7) {
+    let r = ver; for (let i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1F25);
+    const v = (ver << 12) | r;
+    for (let i = 0; i < 18; i++) { const dark = ((v >>> i) & 1) !== 0; const a = size - 11 + (i % 3), b = Math.floor(i / 3); setF(a, b, dark); setF(b, a, dark); }
+  }
+  // ---- توزيع البتات ----
+  let bi = 0;
+  for (let right = size - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) {
+      const x = right - j, upward = ((right + 1) & 2) === 0, y = upward ? size - 1 - vert : vert;
+      if (!fn[y][x] && bi < all.length * 8) { mod[y][x] = ((all[bi >>> 3] >>> (7 - (bi & 7))) & 1) !== 0; bi++; }
+    }
+  }
+  const maskFn = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x, y) => x % 3 === 0, (x, y) => (x + y) % 3 === 0,
+    (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => ((x * y) % 2) + ((x * y) % 3) === 0,
+    (x, y) => (((x * y) % 2) + ((x * y) % 3)) % 2 === 0, (x, y) => (((x + y) % 2) + ((x * y) % 3)) % 2 === 0];
+  const applyMask = (m) => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fn[y][x] && maskFn[m](x, y)) mod[y][x] = !mod[y][x]; };
+  const penalty = () => {
+    let p = 0;
+    for (let pass = 0; pass < 2; pass++) for (let a = 0; a < size; a++) {
+      let run = 1;
+      for (let b = 1; b < size; b++) {
+        const cur = pass ? mod[b][a] : mod[a][b], prev = pass ? mod[b - 1][a] : mod[a][b - 1];
+        if (cur === prev) { run++; if (run === 5) p += 3; else if (run > 5) p++; } else run = 1;
+      }
+    }
+    for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) { const c = mod[y][x]; if (c === mod[y][x + 1] && c === mod[y + 1][x] && c === mod[y + 1][x + 1]) p += 3; }
+    let dark = 0; for (const row of mod) for (const c of row) if (c) dark++;
+    p += Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size)) * 10;
+    return p;
+  };
+  let best = 0, bestP = Infinity;
+  for (let m = 0; m < 8; m++) { applyMask(m); drawFormat(m); const p = penalty(); if (p < bestP) { bestP = p; best = m; } applyMask(m); }
+  applyMask(best); drawFormat(best);
+  return mod;
+};
+
+// تحويل رابط/إحداثيات اللوكيشن لرابط مباشر يفتح Google Maps
+const orderMapUrl = (order) => {
+  const direct = String(order?.locationUrl || '').trim();
+  if (direct && /^https?:\/\//i.test(direct)) return direct;
+  const lat = Number(order?.location?.lat), lng = Number(order?.location?.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return `https://www.google.com/maps?q=${lat},${lng}`;
+  return '';
+};
+
+// رسم الـ QR كـ SVG (بيتطبع بوضوح على الرول الحراري)
+const QrSvg = ({ value, mm = 38 }) => {
+  const m = useMemo(() => { try { return qrEncode(value, 'M') || qrEncode(value, 'L'); } catch (e) { return null; } }, [value]);
+  if (!m) return null;
+  const n = m.length;
+  let d = '';
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (m[y][x]) d += `M${x + 4} ${y + 4}h1v1h-1z`;
+  return (
+    <svg viewBox={`0 0 ${n + 8} ${n + 8}`} width={`${mm}mm`} height={`${mm}mm`} shapeRendering="crispEdges" style={{ display: 'block', margin: '0 auto', width: `${mm}mm`, height: `${mm}mm` }}>
+      <rect width={n + 8} height={n + 8} fill="#fff" />
+      <path d={d} fill="#000" />
+    </svg>
+  );
+};
+
 const Receipt80 = ({ order, type, cashierName }) => {
   if (!order) return null;
   const items = order.items || [];
@@ -3383,6 +4065,7 @@ const Receipt80 = ({ order, type, cashierName }) => {
   const dateText = dt.toLocaleDateString('ar-EG');
   const timeText = dt.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
   const isDelivery = order.orderType === 'delivery';
+  const mapUrl = orderMapUrl(order);
 
   return createPortal(
     <div id="receipt-print" dir="rtl">
@@ -3472,6 +4155,12 @@ const Receipt80 = ({ order, type, cashierName }) => {
           {isDelivery && order.zoneName && <div>المنطقة: {order.zoneName}</div>}
           {isDelivery && order.customerAddress && <div>العنوان: {order.customerAddress}</div>}
           {isDelivery && order.driverName && <div>السواق: {order.driverName}</div>}
+          {isDelivery && mapUrl && (
+            <div className="rc-center" style={{ margin: '6px 0' }}>
+              <QrSvg value={mapUrl} mm={38} />
+              <div className="rc-small">📍 امسح الكود لفتح موقع العميل</div>
+            </div>
+          )}
           <div className="rc-line" />
           <table>
             <thead><tr><th>الصنف</th><th style={{ textAlign: 'center' }}>كمية</th><th className="rc-num">السعر</th></tr></thead>
@@ -4830,6 +5519,13 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
   const [rangeRep, setRangeRep] = useState(null);
   const [rangeBusy, setRangeBusy] = useState(false);
 
+  // عهد السواقين (زي بحبح): الأرصدة + تسوية + مسح القديم
+  const [driverBalances, setDriverBalances] = useState([]);
+  const [settleDriver, setSettleDriver] = useState('');
+  const [settleAmount, setSettleAmount] = useState('');
+  const [settleBusy, setSettleBusy] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
+
   const inp = 'w-full bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm';
   const card = 'bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5';
   const pays = rep?.payments || {};
@@ -4905,6 +5601,43 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
       if (!r.ok) alert(d.error || 'حصل خطأ'); else setRangeRep(d);
     } catch (e) {}
     setRangeBusy(false);
+  };
+
+  const loadDriverBalances = async () => {
+    try {
+      const r = await authFetch('/api/shifts/driver-balances');
+      const d = await r.json().catch(() => []);
+      if (Array.isArray(d)) setDriverBalances(d);
+    } catch {}
+  };
+  useEffect(() => { loadDriverBalances(); }, []);
+
+  const submitDriverSettlement = async () => {
+    if (settleBusy) return;
+    const driverName = settleDriver.trim();
+    const amount = Number(settleAmount);
+    if (!driverName) return alert('اكتب اسم السواق');
+    if (!(amount > 0)) return alert('اكتب مبلغ التسوية');
+    setSettleBusy(true);
+    try {
+      const r = await authFetch('/api/shifts/driver-settlement', { method: 'POST', body: JSON.stringify({ driverName, amount }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) alert(d.error || 'حصل خطأ');
+      else { setSettleAmount(''); await refreshShift(); await loadDriverBalances(); alert(`تم تسجيل تسوية ${money(amount)} للسواق ${driverName}`); }
+    } catch (e) {}
+    setSettleBusy(false);
+  };
+
+  const clearOldDrivers = async () => {
+    if (clearBusy) return;
+    if (!window.confirm('هتمسح كل عهد السواقين القديمة (قبل النهارده) من الشاشة دي؟ ده مش بيغيّر حساب الدرج، وماينفعش ترجعها.')) return;
+    setClearBusy(true);
+    try {
+      const r = await authFetch('/api/shifts/clear-old-driver-balances', { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) alert(d.error || 'حصل خطأ'); else { await refreshShift(); await loadDriverBalances(); alert(`تم مسح العهد القديمة (${d.cleared} سواق)`); }
+    } catch (e) {}
+    setClearBusy(false);
   };
 
   const kpi = (label, value, extra = '') => (
@@ -5054,6 +5787,30 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
                   <div className="flex justify-between text-sm pt-1"><span className="text-zinc-300 font-bold">المفروض يرجعلك</span><span className="font-black text-[#FFD700]">{money(rep.awaitingTotal)}</span></div>
                 </div>
               )}
+
+              {/* عهد السواقين: فلوس معاهم من أوردرات الدليفري + تسوية */}
+              <div className="bg-[#1C0D10] border border-[#3A1218] rounded-2xl p-5 space-y-3">
+                <h4 className="font-black text-[#FFD700] text-lg">🛵 عهد السواقين (فلوس معاهم)</h4>
+                {driverBalances.length === 0 ? (
+                  <p className="text-sm text-zinc-500">مفيش عهد مستحقة على السواقين دلوقتي.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {driverBalances.map((b) => (
+                      <div key={b.driverName} className="flex justify-between items-center text-sm py-1.5 border-b border-[#3A1218] last:border-0">
+                        <span className="text-white font-bold">{b.driverName} <span className="text-zinc-500 font-normal">({b.orders} أوردر)</span></span>
+                        <span className="font-black text-orange-300">{money(b.balance)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <input value={settleDriver} onChange={(e) => setSettleDriver(e.target.value)} placeholder="اسم السواق" className="flex-1 min-w-[140px] bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm" />
+                  <input value={settleAmount} onChange={(e) => setSettleAmount(e.target.value.replace(/[^\d.]/g, ''))} placeholder="المبلغ" inputMode="decimal" className="w-28 bg-[#12080A] border border-[#3A1218] rounded-xl px-3 py-2 text-white text-sm" dir="ltr" />
+                  <button type="button" onClick={submitDriverSettlement} disabled={settleBusy} className="bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white px-4 py-2 rounded-xl text-sm font-black">✅ تسوية عهدة</button>
+                  {isAdmin && <button type="button" onClick={clearOldDrivers} disabled={clearBusy} className="bg-zinc-700 hover:bg-zinc-600 disabled:opacity-60 text-white px-4 py-2 rounded-xl text-sm font-bold">🧹 مسح العهد القديمة</button>}
+                </div>
+                <p className="text-[11px] text-zinc-500">التسوية بتتسجل حركة "داخل" في الوردية المفتوحة وبتتخصم من عهدة السواق. مسح القديم بيخفي العهد اللي قبل النهارده من الشاشة بس.</p>
+              </div>
 
               {/* تفاصيل إضافية (مطوية عشان الصفحة تفضل بسيطة) */}
               <details className={card}>
@@ -6441,6 +7198,11 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
     driverBusyRef.current = true;
     setDriverModal(null);
     try {
+      // دليفري كاش: الأوردر يخرج مع السواق (زي بحبح) بدل ما يتقفل — بيفضل مستني النقدية
+      if (ord.orderType === 'delivery' && (ord.paymentMethod ? cashPartOf(ord) > 0 : extra.paymentMethod === 'cash')) {
+        await updateOrderStatus(`${ord._id || ord.orderId}/out-for-delivery`, null, { driverName: extra.driverName, paymentMethod: extra.paymentMethod });
+        return;
+      }
       if (driverModalTarget === 'ready') { await updateOrderStatus(ord._id || ord.orderId, 'ready', extra); }
       else { await doFinish(ord, extra); }
     } finally { driverBusyRef.current = false; }
@@ -6593,7 +7355,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
         <div className="flex justify-between items-center mb-3 border-b border-[#3A1218] pb-2">
           <span className="font-black text-[#FFD700] text-lg">#{ord.orderId}</span>
           <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${ord.status === 'cancelled' ? 'bg-zinc-700 text-zinc-300' : ord.status === 'completed' ? 'bg-green-500/20 text-green-400' : ord.awaitingCash ? 'bg-orange-500/20 text-orange-300' : ord.status === 'ready' ? 'bg-blue-500/20 text-blue-300' : ord.status === 'accepted' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
-            {ord.status === 'cancelled' && ord.cancelledAfterPrint ? '⚠️ ملغي بعد الطباعة' : ord.status === 'cancelled' ? 'ملغي ✖' : ord.status === 'completed' ? 'مكتمل ✅' : ord.awaitingCash ? '🛵 مع السواق — مستني النقدية' : ord.status === 'ready' ? (ord.orderType === 'pickup' ? 'جاهز للاستلام ✅' : '🛵 خرج للتوصيل') : ord.status === 'accepted' ? 'قيد التحضير 👨‍🍳' : 'جديد 🔔'}
+            {ord.status === 'cancelled' && ord.cancelledAfterPrint ? '⚠️ ملغي بعد الطباعة' : ord.status === 'cancelled' ? 'ملغي ✖' : ord.status === 'completed' ? 'مكتمل ✅' : (ord.awaitingCash || ord.outForDeliveryAt) ? '🛵 مع السواق — مستني النقدية' : ord.status === 'ready' ? (ord.orderType === 'pickup' ? 'جاهز للاستلام ✅' : '🛵 خرج للتوصيل') : ord.status === 'accepted' ? 'قيد التحضير 👨‍🍳' : 'جديد 🔔'}
           </span>
         </div>
 
@@ -6606,7 +7368,15 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
           {ord.orderNote && <p className="bg-[#FFD700]/10 border border-[#FFD700]/40 rounded-lg px-2 py-1">📝 <strong className="text-[#FFD700]">{ord.orderNote}</strong></p>}
           {ord.driverName && <p>🛵 <span className="text-zinc-300 text-xs">السواق: {ord.driverName}</span></p>}
           {ord.status === 'cancelled' && <p>✖ <span className="text-red-400 text-xs">سبب الإلغاء: {ord.cancelReason} ({ord.cancelledBy})</span></p>}
-          {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.customerAddress}</span></p>}
+          {ord.orderType === 'delivery' && <p>📍 <span className="text-zinc-400 text-xs">{ord.addressLabel ? `${ord.addressLabel === 'بيت' ? '🏠 بيت' : ord.addressLabel === 'شغل' ? '💼 شغل' : `🏷️ ${ord.addressLabel}`} — ` : ''}{ord.customerAddress}</span></p>}
+          {ord.orderType === 'delivery' && orderMapUrl(ord) && (
+            <div className="mt-3 mb-3 rounded-xl border border-zinc-700 bg-white p-3 text-center">
+              <p className="text-black font-bold text-xs mb-2">📍 QR موقع العميل — امسحه لفتح Google Maps</p>
+              <div className="flex justify-center"><QrSvg value={orderMapUrl(ord)} mm={42} /></div>
+              <a href={orderMapUrl(ord)} target="_blank" rel="noreferrer" className="mt-2 inline-block text-blue-700 underline text-xs">فتح الموقع على الخريطة</a>
+            </div>
+          )}
+          {ord.orderType === 'delivery' && !orderMapUrl(ord) && <p className="text-amber-400 text-xs">⚠️ العميل لم يرسل موقعًا؛ لن يظهر QR إلا بعد إضافة رابط الموقع.</p>}
           {ord.orderType === 'delivery' && ord.customerPhone && ord.customerPhone !== '-' && ord.phoneStatus !== 'verified' && ord.phoneStatus !== 'known' && <p className="bg-orange-500/15 border border-orange-500/50 text-orange-300 rounded-lg px-2 py-1 text-xs font-bold">🆕 رقم غير موثّق — اتصل بالعميل، وبعد التأكيد اضغط زر توثيق الرقم</p>}
           {(ord.phoneStatus === 'verified' || ord.phoneStatus === 'known') && <p className="text-green-400 text-xs font-bold">✅ رقم موثّق ({ord.phoneOrders || 0} أوردر مكتمل)</p>}
           {ord.createdAt && <p>🕒 <span className="text-zinc-400 text-xs">{new Date(ord.createdAt).toLocaleString('ar-EG')}</span></p>}
@@ -6631,6 +7401,9 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
       </div>
 
       <div>
+        {ord.orderType === 'delivery' && ord.status !== 'cancelled' && ord.status !== 'completed' && (
+          <OrderEtaEditor key={`${ord._id || ord.orderId}:${ord.etaMinutes || ''}:${ord.etaSetAt || ''}`} order={ord} autoEta={deliveryEtaMinutes(activeOrders.length)} authFetch={authFetch} onSaved={fetchOrders} />
+        )}
         <div className="flex justify-between items-center pt-3 border-t border-[#3A1218] mb-4 text-sm font-bold">
           <span>الإجمالي:</span>
           <span className="text-[#FFD700] text-lg font-black">{ord.grandTotal} ج</span>
@@ -7519,8 +8292,9 @@ function App() {
           <Route path="/secret-admin-dashboard" element={<AdminDashboard menuItems={menuItems} categories={categories} siteSettings={siteSettings} lang={lang} fetchItems={fetchItems} fetchCategories={fetchCategories} fetchSettings={fetchSettings} />} />
           <Route path="/cashier" element={<CashierDashboard />} />
           <Route path="/accountant" element={<AccountantPage />} />
+          <Route path="/reports" element={<CampaignReportsPage />} />
           <Route path="/pos" element={<CashierDashboard initialTab="pos" />} />
-          <Route path="/cart" element={<CartPage cart={cart} setCart={setCart} lang={lang} storeStatus={storeStatus} />} />
+          <Route path="/cart" element={<CartPage cart={cart} setCart={setCart} lang={lang} storeStatus={storeStatus} menuItems={menuItems} />} />
           <Route path="/my-orders" element={<MyOrdersPage cart={cart} setCart={setCart} />} />
         </Routes>
       </div>

@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import zlib from 'zlib';
 import { promisify } from 'util';
 import './reset-once.js';
+import { backupHandler, backupDownloadHandler } from './backup.js';
 
 dotenv.config();
 
@@ -89,6 +90,8 @@ const Category = mongoose.model("Category", categorySchema);
 const itemSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
+  talabatPrice: { type: Number },
+  cost: { type: Number, default: 0 },
   discount: { type: Number, default: 0, min: 0, max: 100 },
   image: { type: String },
   description: { type: String },
@@ -102,9 +105,9 @@ const itemSchema = new mongoose.Schema({
   code: { type: Number }, // رمز الصنف للمحاسب (نص كفتة 1..300، ثابت ومش بيتغير)
 
   // النظام القديم (متروك عشان الأصناف القديمة تفضل شغالة)
-  addons: [{ name: String, price: Number }],
+  addons: [{ name: String, price: Number, talabatPrice: Number }],
   boxItems: [{ name: String }],
-  sizes: [{ name: String, price: Number }],
+  sizes: [{ name: String, price: Number, talabatPrice: Number }],
 
   // النظام الجديد: مجموعات التعديلات
   modifierGroups: [
@@ -112,7 +115,7 @@ const itemSchema = new mongoose.Schema({
       name: String,
       min: Number,
       max: Number,
-      options: [{ name: String, price: Number }]
+      options: [{ name: String, price: Number, talabatPrice: Number }]
     }
   ]
 });
@@ -404,7 +407,19 @@ const orderSchema = new mongoose.Schema({
   cancelledBy: { type: String },
   cancelledAt: { type: Date },
   // تقييم العميل للأوردر (نجوم + تعليق) — بيتسجل من حساب العميل بس وبعد اكتمال الأوردر
-  rating: { type: new mongoose.Schema({ stars: Number, comment: String, at: Date }, { _id: false }), default: undefined }
+  rating: { type: new mongoose.Schema({ stars: Number, comment: String, at: Date }, { _id: false }), default: undefined },
+  // وقت التوصيل اللي حدده الكاشير (بالدقايق) — بيظهر للعميل في التتبع بدل التقدير التلقائي
+  etaMinutes: { type: Number },
+  etaSetBy: { type: String },
+  etaSetAt: { type: Date },
+  // خروج الأوردر مع السواق (زي بحبح): وقت الخروج ومين خرّجه — العميل بيشوف "خرج للتوصيل" في التتبع
+  outForDeliveryAt: { type: Date },
+  outForDeliveryBy: { type: String },
+  // رابط/إحداثيات موقع العميل (عشان الـ QR على الإيصال وكارت الأوردر)
+  locationUrl: { type: String, default: "" },
+  location: { lat: Number, lng: Number },
+  // عنوان التوصيل المختار: بيت / شغل
+  addressLabel: { type: String, default: "" }
 });
 orderSchema.index({ clientRef: 1 }, { sparse: true });
 // فهارس سرّعت البحث في الأوردرات (من غيرها كل طلب بيقلّب كل الأوردرات ويبطّأ كل ما الداتا تكبر)
@@ -420,6 +435,8 @@ const customerSchema = new mongoose.Schema({
   phone: { type: String, required: true, unique: true },
   name: { type: String, default: "" },
   address: { type: String, default: "" },
+  // عناوين محفوظة (بيت/شغل/...) — العنوان الواحد القديم بيفضل زي ما هو (الافتراضي/آخر عنوان)
+  addresses: [{ label: String, address: String }],
   zoneName: { type: String, default: "" },
   // الرقم السري لحساب العميل (مشفر بـ scrypt زي باسوردات الكاشير — عمره ما يتخزن نص صريح)
   pinHash: { type: String, default: "" },
@@ -466,6 +483,32 @@ const chatMessageSchema = new mongoose.Schema({
 });
 chatMessageSchema.index({ phone: 1, createdAt: 1 });
 const ChatMessage = mongoose.model("ChatMessage", chatMessageSchema);
+
+// تكلفة الإعلانات (بيدخلها الأدمن لكل حملة/إعلان وفترة) عشان نحسب تكلفة الأوردر — زي بحبح
+const adSpendSchema = new mongoose.Schema({
+  campaign: { type: String, default: "" }, content: { type: String, default: "" },
+  from: { type: String, required: true }, to: { type: String, required: true },
+  amount: { type: Number, default: 0 }, updatedBy: String
+}, { timestamps: true });
+adSpendSchema.index({ campaign: 1, content: 1, from: 1, to: 1 }, { unique: true });
+const AdSpend = mongoose.model("AdSpend", adSpendSchema);
+
+// سجل عمليات الأدمن: مين عدّل سعر أو مسح أوردر أو عدّل صنف ومتى
+const auditLogSchema = new mongoose.Schema({
+  action: { type: String, required: true },
+  entity: { type: String, default: "" },
+  entityId: { type: String, default: "" },
+  entityName: { type: String, default: "" },
+  details: { type: String, default: "" },
+  by: { type: String, default: "" },
+  at: { type: Date, default: Date.now }
+});
+auditLogSchema.index({ at: -1 });
+const AuditLog = mongoose.model("AuditLog", auditLogSchema);
+const logAudit = async (action, entity, entityId, entityName, details, by) => {
+  try { await AuditLog.create({ action, entity, entityId, entityName, details, by }); }
+  catch (e) { console.error("audit log error:", e.message); }
+};
 
 // عدّاد أرقام أوردرات الكاشير
 const counterSchema = new mongoose.Schema({
@@ -1193,8 +1236,67 @@ app.put("/api/items/bulk-discount", requireAuth, requireAdmin, async (req, res) 
   }
 });
 
+// حفظ أسعار طلبات لأكتر من صنف مرة واحدة (من جدول "أسعار طلبات" في لوحة الأدمن) — زي بحبح
+app.put("/api/items/talabat-prices", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const list = Array.isArray(req.body?.items) ? req.body.items.slice(0, 500) : [];
+    const ids = list.map((x) => String(x?._id || "")).filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const docs = await Item.find({ _id: { $in: ids } }).lean();
+    const byId = new Map(docs.map((d) => [String(d._id), d]));
+    const ops = [];
+    const touched = [];
+    const setOrUnset = (path, value, set, unset) => {
+      const n = Math.round(Number(value) * 100) / 100;
+      if (Number.isFinite(n) && n > 0) set[path] = n; else unset[path] = "";
+    };
+    for (const entry of list) {
+      const doc = byId.get(String(entry?._id));
+      if (!doc) continue;
+      const set = {}, unset = {};
+      let changedOpts = 0;
+      const oldBase = Number(doc.talabatPrice) || 0;
+      if (entry.talabatPrice !== undefined) setOrUnset("talabatPrice", entry.talabatPrice, set, unset);
+      for (const o of Array.isArray(entry.options) ? entry.options : []) {
+        const gi = Number(o?.gi), oi = Number(o?.oi);
+        if (!Number.isInteger(oi) || oi < 0) continue;
+        if (o.kind === "m") {
+          if (!Number.isInteger(gi) || !doc.modifierGroups?.[gi]?.options?.[oi]) continue;
+          const oldV = Number(doc.modifierGroups[gi].options[oi].talabatPrice) || 0;
+          const newV = Math.round(Number(o.talabatPrice) * 100) / 100;
+          if ((Number.isFinite(newV) && newV > 0 ? newV : 0) !== oldV) changedOpts += 1;
+          setOrUnset(`modifierGroups.${gi}.options.${oi}.talabatPrice`, o.talabatPrice, set, unset);
+        } else if (o.kind === "s" || o.kind === "a") {
+          const arr = o.kind === "s" ? doc.sizes : doc.addons;
+          if (!arr?.[oi]) continue;
+          const oldV = Number(arr[oi].talabatPrice) || 0;
+          const newV = Math.round(Number(o.talabatPrice) * 100) / 100;
+          if ((Number.isFinite(newV) && newV > 0 ? newV : 0) !== oldV) changedOpts += 1;
+          setOrUnset(`${o.kind === "s" ? "sizes" : "addons"}.${oi}.talabatPrice`, o.talabatPrice, set, unset);
+        }
+      }
+      const update = {};
+      if (Object.keys(set).length) update.$set = set;
+      if (Object.keys(unset).length) update.$unset = unset;
+      if (Object.keys(update).length) {
+        ops.push({ updateOne: { filter: { _id: doc._id }, update } });
+        const newBase = set["talabatPrice"] !== undefined ? set["talabatPrice"] : (unset["talabatPrice"] !== undefined ? 0 : oldBase);
+        if (newBase !== oldBase || changedOpts > 0) touched.push({ doc, newBase, oldBase, changedOpts });
+      }
+    }
+    if (ops.length) await Item.bulkWrite(ops);
+    for (const t of touched) {
+      const det = `سعر طلبات: ${t.oldBase || "—"} ← ${t.newBase || "—"} ج${t.changedOpts ? ` • ${t.changedOpts} اختيار اتغيّر` : ""}`;
+      await logAudit("تعديل أسعار طلبات", "item", String(t.doc._id), t.doc.name, det, req.user.name);
+    }
+    res.json({ ok: true, updated: ops.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.put("/api/items/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
+    const before = await Item.findById(req.params.id).lean();
     const updateData = { ...req.body };
     delete updateData._id;
     delete updateData.code; // رمز الصنف ثابت ومش بيتغير من التعديل
@@ -1204,9 +1306,22 @@ app.put("/api/items/:id", requireAuth, requireAdmin, async (req, res) => {
     else delete updateData.price;
     if (req.body.discount !== undefined) updateData.discount = Number(req.body.discount) || 0;
     else delete updateData.discount;
+    if (req.body.cost !== undefined) updateData.cost = Math.max(0, Number(req.body.cost) || 0);
+    else delete updateData.cost;
 
     const updated = await Item.findByIdAndUpdate(req.params.id, { $set: updateData }, { new: true, runValidators: true });
     if (!updated) return res.status(404).json({ error: "الصنف غير موجود" });
+    // سجل العمليات: تغيير السعر بيتسجل لوحده، وأي تعديل تاني على الصنف بيتسجل لوحده
+    if (before) {
+      const oldPrice = Number(before.price) || 0, newPrice = Number(updated.price) || 0;
+      if (oldPrice !== newPrice) await logAudit("تعديل سعر", "item", String(updated._id), updated.name, `السعر: ${oldPrice} ← ${newPrice} ج`, req.user.name);
+      const changes = [];
+      if (String(before.name || "") !== String(updated.name || "")) changes.push(`الاسم: ${before.name || "-"} ← ${updated.name || "-"}`);
+      if (String(before.category || "") !== String(updated.category || "")) changes.push(`القسم: ${before.category || "-"} ← ${updated.category || "-"}`);
+      if (Number(before.discount) !== Number(updated.discount)) changes.push(`الخصم: ${Number(before.discount) || 0}% ← ${Number(updated.discount) || 0}%`);
+      if (Number(before.cost) !== Number(updated.cost)) changes.push(`التكلفة: ${Number(before.cost) || 0} ← ${Number(updated.cost) || 0} ج`);
+      if (changes.length) await logAudit("تعديل صنف", "item", String(updated._id), updated.name, changes.join(" • "), req.user.name);
+    }
     res.json(presentItem(updated));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1271,7 +1386,7 @@ const isFakeEgPhone = (p) => {
   return /^(\d)\1+$/.test(tail) || /(\d)\1{6,}/.test(n) || "01234567890123456789".includes(tail)
     || "98765432109876543210".includes(tail) || /^(\d{2})\1{3}$/.test(tail) || /^(\d{4})\1$/.test(tail);
 };
-const upsertCustomer = async ({ phone, name, address, zoneName }) => {
+const upsertCustomer = async ({ phone, name, address, zoneName, addressLabel }) => {
   try {
     const p = normPhone(phone);
     if (!/^\d{8,15}$/.test(p)) return;
@@ -1283,6 +1398,16 @@ const upsertCustomer = async ({ phone, name, address, zoneName }) => {
     const z = cleanText(zoneName, 80);
     if (z && z !== "استلام من الفرع" && z !== "طلبات") set.zoneName = z;
     await Customer.findOneAndUpdate({ phone: p }, { $set: set, $inc: { ordersCount: 1 }, $setOnInsert: { phone: p } }, { upsert: true });
+    // العناوين المحفوظة: نضيف العنوان الجديد (أو نحدّث تسميته) من غير ما نمسح القديم
+    if (a && a !== "استلام من الفرع" && a !== "طلبات" && a !== "-") {
+      const label = cleanText(addressLabel, 20) || "بيت";
+      const cust = await Customer.findOne({ phone: p }).select("addresses").lean();
+      const list = Array.isArray(cust?.addresses) ? [...cust.addresses] : [];
+      const idx = list.findIndex((x) => String(x?.address || "").trim() === a);
+      if (idx >= 0) list[idx] = { label, address: a };
+      else list.unshift({ label, address: a });
+      await Customer.updateOne({ phone: p }, { $set: { addresses: list.slice(0, 10) } });
+    }
   } catch (err) {
     if (err?.code !== 11000) console.error("upsertCustomer error:", err.message);
   }
@@ -1577,8 +1702,10 @@ const groupsForItem = (item) => {
 const discountedComponentPrice = (price, discount) => Math.round((Number(price) || 0) * (1 - (Number(discount) || 0) / 100));
 
 // السعر لا يُؤخذ من المتصفح؛ يُعاد بناؤه من الصنف والاختيارات المحفوظة في MongoDB.
-const priceOrderItemsFromCatalog = async (rawItems, maxItems = 80, applyMenuDiscount = true) => {
+const priceOrderItemsFromCatalog = async (rawItems, maxItems = 80, applyMenuDiscount = true, channel = "") => {
   if (!Array.isArray(rawItems)) return { error: "الأوردر فاضي" };
+  // أوردرات طلبات ليها أسعار خاصة (talabatPrice)، ولو صنف/اختيار ملوش سعر طلبات بنستخدم سعر المطعم
+  const channelPrice = (obj) => (channel === "talabat" && Number(obj?.talabatPrice) > 0 ? Number(obj.talabatPrice) : Number(obj?.price) || 0);
   const limited = rawItems.slice(0, maxItems);
   if (limited.length === 0) return { error: "الأوردر فاضي" };
 
@@ -1616,7 +1743,7 @@ const priceOrderItemsFromCatalog = async (rawItems, maxItems = 80, applyMenuDisc
       if (boxMax === 0 && boxTotal === 0) return { error: `اختار محتويات ${item.name}` };
       const boxDiscount = applyMenuDiscount ? (Number(item.discount) || 0) : 0;
       output.push({
-        itemId: String(item._id), name: item.name, price: discountedComponentPrice(item.price, boxDiscount),
+        itemId: String(item._id), name: item.name, price: discountedComponentPrice(channelPrice(item), boxDiscount),
         quantity: Math.round(clampNumber(raw?.quantity, 1, 99)), modifiers: picks, notes: cleanText(raw?.notes, 300)
       });
       continue;
@@ -1665,14 +1792,14 @@ const priceOrderItemsFromCatalog = async (rawItems, maxItems = 80, applyMenuDisc
     // الأصناف القديمة (أحجام/إضافات): سعر الحجم هو السعر الأساسي، والإضافة بتتحسب من غير خصم
     const legacyMode = !(Array.isArray(item.modifierGroups) && item.modifierGroups.length > 0);
     const legacySized = legacyMode && Array.isArray(item.sizes) && item.sizes.length > 0;
-    let unitPrice = !legacySized && Number(item.price) > 0 ? discountedComponentPrice(item.price, discount) : 0;
+    let unitPrice = !legacySized && channelPrice(item) > 0 ? discountedComponentPrice(channelPrice(item), discount) : 0;
     const modifiers = [];
     for (let gi = 0; gi < groups.length; gi += 1) {
       const group = groups[gi];
       for (const oi of selectionsByGroup[gi]) {
         const option = (group.options || [])[oi];
         if (!option) continue;
-        const optionPrice = legacyMode && group.name === "الإضافات الاختيارية" ? Math.round(Number(option.price) || 0) : discountedComponentPrice(option.price, discount);
+        const optionPrice = legacyMode && group.name === "الإضافات الاختيارية" ? Math.round(channelPrice(option) || 0) : discountedComponentPrice(channelPrice(option), discount);
         unitPrice += optionPrice;
         modifiers.push(`${group.name}: ${option.name}${optionPrice > 0 ? ` (+${optionPrice} ج)` : ""}`);
       }
@@ -1700,6 +1827,14 @@ const pickUtm = (body = {}) => {
   };
 };
 
+// رابط موقع العميل (لازم يبقى لينك http/https) وإحداثياته — عشان الـ QR
+const cleanLocationUrl = (v) => { const s2 = String(v || "").trim().slice(0, 500); return /^https?:\/\//i.test(s2) ? s2 : ""; };
+const cleanLocation = (v) => {
+  const lat = Number(v?.lat), lng = Number(v?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return undefined;
+  return { lat, lng };
+};
+
 const buildOrderFromBody = async (body = {}, zone = null) => {
   const orderId = cleanText(body.orderId, 30);
   if (!/^[A-Za-z0-9-]{4,30}$/.test(orderId)) return { error: "رقم الأوردر غير صحيح" };
@@ -1725,6 +1860,9 @@ const buildOrderFromBody = async (body = {}, zone = null) => {
     order: {
       orderId, customerName, customerPhone, orderType,
       customerAddress: orderType === "delivery" ? cleanText(body.customerAddress, 300) : "استلام من الفرع",
+      addressLabel: orderType === "delivery" ? cleanText(body.addressLabel, 20) : "",
+      locationUrl: orderType === "delivery" ? cleanLocationUrl(body.locationUrl) : "",
+      ...(orderType === "delivery" && cleanLocation(body.location) ? { location: cleanLocation(body.location) } : {}),
       zoneName: orderType === "delivery" ? zone.name : "استلام من الفرع",
       deliveryFee, items, itemsTotal, grandTotal: itemsTotal + deliveryFee, status: "pending", source: "web"
     }
@@ -1804,7 +1942,7 @@ app.post("/api/orders", orderLimiter, async (req, res) => {
       }
       customerToken = signCustomerToken(phoneNorm);
     }
-    void upsertCustomer({ phone: saved.customerPhone, name: saved.customerName, address: saved.orderType === "delivery" ? saved.customerAddress : "", zoneName: saved.orderType === "delivery" ? saved.zoneName : "" });
+    void upsertCustomer({ phone: saved.customerPhone, name: saved.customerName, address: saved.orderType === "delivery" ? saved.customerAddress : "", zoneName: saved.orderType === "delivery" ? saved.zoneName : "", addressLabel: saved.addressLabel });
     console.log(`✅ New website order saved: #${saved.orderId}`);
     res.status(201).json({
       ok: true,
@@ -1881,7 +2019,7 @@ app.post("/api/customers/login", async (req, res) => {
     clearCustomerLoginFails(req, phone);
     res.json({
       token: signCustomerToken(phone),
-      profile: { name: customer.name || "", phone, address: customer.address || "", zoneName: customer.zoneName || "" }
+      profile: { name: customer.name || "", phone, address: customer.address || "", addresses: Array.isArray(customer.addresses) ? customer.addresses : [], zoneName: customer.zoneName || "" }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1896,14 +2034,15 @@ app.get("/api/customers/me", requireCustomerAuth, async (req, res) => {
     const phoneVariants = [phone, `+2${phone}`, `20${phone.slice(1)}`];
     const orders = await Order.find({ customerPhone: { $in: phoneVariants } })
       .sort({ createdAt: -1 }).limit(20)
-      .select("orderId items itemsTotal deliveryFee grandTotal status orderType zoneName createdAt completedAt rating awaitingCash pointsEarned")
+      .select("orderId items itemsTotal deliveryFee grandTotal status orderType zoneName createdAt completedAt rating awaitingCash pointsEarned etaMinutes etaSetBy etaSetAt outForDeliveryAt")
       .lean();
     res.json({
-      profile: { name: customer?.name || "", phone, address: customer?.address || "", zoneName: customer?.zoneName || "", points: Number(customer?.points) || 0 },
+      profile: { name: customer?.name || "", phone, address: customer?.address || "", addresses: Array.isArray(customer?.addresses) ? customer.addresses : [], zoneName: customer?.zoneName || "", points: Number(customer?.points) || 0 },
       orders: orders.map((o) => ({
         orderId: o.orderId, items: o.items || [], itemsTotal: o.itemsTotal, deliveryFee: o.deliveryFee,
         grandTotal: o.grandTotal, status: o.status, orderType: o.orderType, zoneName: o.zoneName, awaitingCash: !!o.awaitingCash,
         createdAt: o.createdAt, completedAt: o.completedAt, pointsEarned: Number(o.pointsEarned) || 0,
+        etaMinutes: o.etaMinutes || null, etaSetBy: o.etaSetBy || "", etaSetAt: o.etaSetAt || null, outForDeliveryAt: o.outForDeliveryAt || null,
         rating: o.rating?.stars ? { stars: o.rating.stars, comment: o.rating.comment || "" } : null
       }))
     });
@@ -2100,6 +2239,57 @@ const FORWARD_STATUS = {
   cancelled: []
 };
 
+// وقت التوصيل اللي حدده الكاشير للأوردر (بالدقايق) — للكاشير/الأدمن بس، وبيظهر للعميل في التتبع
+// السواق خرج بالأوردر (كاش): الأوردر يفضل مفتوح في النشطة لحد ما الكاشير يدوس "استلمت النقدية" — زي بحبح
+app.put("/api/orders/:id/out-for-delivery", requireAuth, async (req, res) => {
+  try {
+    const query = mongoose.Types.ObjectId.isValid(req.params.id) ? { $or: [{ _id: req.params.id }, { orderId: req.params.id }] } : { orderId: req.params.id };
+    const order = await Order.findOne(query);
+    if (!order) return res.status(404).json({ error: "الأوردر غير موجود" });
+    if (order.orderType !== "delivery") return res.status(400).json({ error: "ده مش أوردر دليفري" });
+    if (!["pending", "accepted", "preparing"].includes(order.status)) return res.status(400).json({ error: "الأوردر خلص أو اتلغى" });
+    if (order.outForDeliveryAt) return res.json(order);
+    if (req.user?.role !== "admin") {
+      const cashierShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).select("_id").lean();
+      if (!cashierShift) return res.status(400).json({ error: "افتح ورديتك قبل خروج الأوردر" });
+    }
+    const driverName = cleanText(req.body?.driverName, 40);
+    if (!driverName) return res.status(400).json({ error: "اكتب اسم السواق قبل خروج الأوردر" });
+    const set = { ...(order.status === "pending" ? { status: "accepted" } : {}), driverName, outForDeliveryAt: new Date(), outForDeliveryBy: req.user.name, awaitingCash: true, driverOutAt: new Date() };
+    if (order.status === "pending") { set.acceptedBy = req.user.name; set.acceptedAt = new Date(); }
+    if (!order.paymentMethod) {
+      if (req.body?.paymentMethod !== "cash") return res.status(400).json({ error: "اختار طريقة الدفع قبل خروج الأوردر" });
+      set.paymentMethod = "cash";
+    } else if (cashPartOf(order) <= 0) {
+      return res.status(400).json({ error: "الأوردر ده مدفوع مش كاش، سلّمه عادي" });
+    }
+    const updated = await Order.findOneAndUpdate({ _id: order._id, status: order.status, outForDeliveryAt: { $exists: false } }, { $set: set }, { new: true });
+    if (!updated) return res.status(409).json({ error: "الأوردر اتغيّر قبل كده، حدّث الصفحة" });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/orders/:id/eta", requireAuth, async (req, res) => {
+  try {
+    const etaMinutes = Number(req.body?.etaMinutes);
+    if (!Number.isInteger(etaMinutes) || etaMinutes < 5 || etaMinutes > 180) {
+      return res.status(400).json({ error: "وقت التوصيل لازم يكون عدد دقايق من 5 لـ 180" });
+    }
+    const query = mongoose.Types.ObjectId.isValid(req.params.id) ? { $or: [{ _id: req.params.id }, { orderId: req.params.id }] } : { orderId: req.params.id };
+    const order = await Order.findOne(query);
+    if (!order) return res.status(404).json({ error: "الأوردر غير موجود" });
+    order.etaMinutes = etaMinutes;
+    order.etaSetBy = req.user?.name || "";
+    order.etaSetAt = new Date();
+    await order.save();
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.put("/api/orders/:id", requireAuth, async (req, res) => {
   try {
     const { status } = req.body || {};
@@ -2274,7 +2464,7 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
       if (duplicate) return res.status(409).json({ error: "رقم أوردر طلبات ده متسجل قبل كده" });
     }
 
-    const priced = await priceOrderItemsFromCatalog(body.items, 80, false);
+    const priced = await priceOrderItemsFromCatalog(body.items, 80, false, orderType);
     if (priced.error) return res.status(400).json({ error: priced.error });
     const items = priced.items;
 
@@ -2402,7 +2592,7 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
       }
       let pricedNew = [];
       if (toPrice.length) {
-        const priced = await priceOrderItemsFromCatalog(toPrice, 80, false);
+        const priced = await priceOrderItemsFromCatalog(toPrice, 80, false, order.orderType);
         if (priced.error) return res.status(400).json({ error: priced.error });
         pricedNew = priced.items;
       }
@@ -2434,6 +2624,9 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
       if (v.error) return res.status(400).json({ error: body.paymentSplit === undefined && Math.abs(grandTotal - order.grandTotal) > 0.009 ? "إجمالي الأوردر اتغيّر. قسّم الدفع من جديد (زرار 💳 الدفع)" : v.error });
       paymentSplit = v.split;
     }
+    // الأوردر مع السواق: مينفعش يتغيّر الكاش فيه (زي بحبح) — إلا لو الدفع اتغيّر كله لغير الكاش، فالأوردر بيتقفل دلوقتي
+    const newCash = cashPartOf({ paymentMethod, paymentSplit, grandTotal });
+    if (order.outForDeliveryAt && Math.abs(newCash - cashPartOf(order)) > 0.009 && newCash > 0) return res.status(400).json({ error: "الأوردر مع السواق، مينفعش تغيّر الكاش فيه دلوقتي" });
 
     const sig = (list) => JSON.stringify((list || []).map((it) => [String(it.itemId || ""), it.name, Number(it.price) || 0, Number(it.quantity) || 0, it.modifiers || [], it.notes || ""]));
     const itemsChanged = sig(items) !== sig(order.items);
@@ -2504,7 +2697,9 @@ app.post("/api/orders/:id/printed", requireAuth, async (req, res) => {
 
 app.delete("/api/orders/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
+    const order = await Order.findById(req.params.id).lean();
     await Order.findByIdAndDelete(req.params.id);
+    if (order) await logAudit("مسح أوردر", "order", String(order._id), `#${order.orderId}`, `الإجمالي: ${Number(order.grandTotal) || 0} ج • العميل: ${order.customerName || "-"} • الحالة: ${order.status}`, req.user.name);
     res.json({ message: "تم مسح الأوردر" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2591,6 +2786,47 @@ const categoriesOfAcc = (acc) => {
   return [...catMap.values()]
     .map((c) => ({ name: c.name, qty: c.qty, total: c.total, items: [...c.items.values()].sort((a, b) => b.qty - a.qty) }))
     .sort((a, b) => b.total - a.total);
+};
+
+// عهد السواقين (زي بحبح): الكاش اللي حصّله كل سواق من أوردرات الدليفري المكتملة ناقص أجرة التوصيل، ناقص التسويات اللي اتسجلت
+const getDriverBalances = async () => {
+  const cfg = await Settings.findOne().select("driverBalancesFrom").lean();
+  const from = cfg?.driverBalancesFrom ? new Date(cfg.driverBalancesFrom) : null;
+  const [driverOrders, shiftDocs] = await Promise.all([
+    Order.find({ status: "completed", orderType: "delivery", driverName: { $type: "string", $ne: "" }, ...(from ? { completedAt: { $gte: from } } : {}) })
+      .select("driverName grandTotal deliveryFee paymentMethod paymentSplit")
+      .lean(),
+    Shift.find({}).select("movements").lean()
+  ]);
+  const balances = new Map();
+  for (const order of driverOrders) {
+    const name = cleanText(order.driverName, 40);
+    if (!name) continue;
+    const row = balances.get(name) || { driverName: name, due: 0, orders: 0, settled: 0 };
+    // السواق بيحصّل الجزء الكاش بس (الفاتورة كلها لو كاش، أو الجزء الكاش في الدفع المقسّم)، وبيخلّي أجرة التوصيل لنفسه
+    const cashCollected = cashPartOf(order);
+    if (cashCollected <= 0) continue;
+    row.due += Math.max(0, cashCollected - (Number(order.deliveryFee) || 0));
+    row.orders += 1;
+    balances.set(name, row);
+  }
+  for (const shift of shiftDocs) {
+    for (const movement of shift.movements || []) {
+      if (movement.category !== "driver_settlement" || !movement.driverName) continue;
+      if (from && new Date(movement.at) < from) continue;
+      const name = cleanText(movement.driverName, 40);
+      const row = balances.get(name) || { driverName: name, due: 0, orders: 0, settled: 0 };
+      row.settled += Number(movement.amount) || 0;
+      balances.set(name, row);
+    }
+  }
+  return [...balances.values()]
+    .map((row) => {
+      const balance = Math.max(0, row.due - row.settled);
+      return { ...row, balance: Number(balance.toFixed(2)) };
+    })
+    .filter((row) => row.balance > 0.009)
+    .sort((a, b) => b.balance - a.balance);
 };
 
 const buildReport = async (from, to, shift = null) => {
@@ -2929,6 +3165,58 @@ app.post("/api/shifts/movement", requireAuth, async (req, res) => {
   }
 });
 
+// عهد السواقين (زي بحبح): تسوية + مسح القديم + عرض الأرصدة
+app.get("/api/shifts/driver-balances", requireAuth, async (req, res) => {
+  try { res.json(await getDriverBalances()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// مسح العهد القديمة: أي أوردر أو تسوية قبل بداية اليوم الحالي (6 الصبح) مش بيتحسب في "فلوس مع السواقين" (الأدمن فقط)
+app.post("/api/shifts/clear-old-driver-balances", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const [y, m, d] = businessDayKey(new Date()).split("-").map(Number);
+    let start = null;
+    for (const off of [3, 2]) {
+      const cand = new Date(Date.UTC(y, m - 1, d, DAY_START_HOUR) - off * 3600000);
+      const c = cairoYMDH(cand);
+      if (c.h === DAY_START_HOUR && c.d === d) { start = cand; break; }
+    }
+    if (!start) start = new Date(Date.UTC(y, m - 1, d, DAY_START_HOUR) - 2 * 3600000);
+    const before = await getDriverBalances();
+    let s = await Settings.findOne();
+    if (!s) s = new Settings({});
+    s.driverBalancesFrom = start;
+    await s.save();
+    listCache.settings = null;
+    const amount = before.reduce((sum, r) => sum + r.balance, 0);
+    void sendTelegramAlert(`🧹 مسح العهد القديمة للسواقين\nبواسطة: ${req.user.name}\nعدد السواقين: ${before.length}\nإجمالي اللي اتمسح: ${amount} ج.م`);
+    res.json({ ok: true, from: start, cleared: before.length, amount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/shifts/driver-settlement", requireAuth, async (req, res) => {
+  try {
+    const driverName = cleanText(req.body?.driverName, 40);
+    const amount = clampNumber(req.body?.amount, 0, 10000000);
+    if (!driverName) return res.status(400).json({ error: "اكتب اسم السواق" });
+    if (amount <= 0) return res.status(400).json({ error: "اكتب مبلغ تسوية صحيح" });
+    const shift = await Shift.findOne({ status: "open", openedBy: req.user.name });
+    if (!shift) return res.status(400).json({ error: "مفيش وردية مفتوحة لحسابك" });
+    const balances = await getDriverBalances();
+    const row = balances.find((item) => item.driverName === driverName);
+    const balance = row?.balance || 0;
+    if (amount > balance + 0.009) return res.status(400).json({ error: `المبلغ أكبر من عهدة السواق المتبقية (${balance} ج.م)` });
+    shift.movements.push({ type: "in", category: "driver_settlement", driverName, amount, reason: `تسوية عهدة السواق: ${driverName}`, by: req.user.name, at: new Date() });
+    await shift.save();
+    void sendTelegramAlert(`✅ تسوية عهدة سواق\nالسواق: ${driverName}\nالمبلغ: ${amount} ج.م\nبواسطة: ${req.user.name}`);
+    res.json({ ok: true, driverName, amount, balance: Math.round((balance - amount) * 100) / 100 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/shifts/close", requireAuth, async (req, res) => {
   try {
     const shift = await Shift.findOne({ status: "open", openedBy: req.user.name });
@@ -3113,6 +3401,49 @@ app.get("/api/admin/reports/peak-hours", requireAuth, requireAdmin, async (req, 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// تقرير الحملات: أوردرات الموقع مجمّعة بالحملة/الإعلان + تكلفة الإعلان (للأدمن) — زي بحبح
+app.get("/api/reports/campaigns", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const from = new Date(String(req.query.from)), to = new Date(String(req.query.to));
+    if (isNaN(from) || isNaN(to) || to <= from || to - from > 400 * 86400000) return res.status(400).json({ error: "الفترة غير صحيحة" });
+    const fromKey = cleanText(req.query.fromKey, 10), toKey = cleanText(req.query.toKey, 10);
+    const orders = await Order.find({ source: { $ne: "pos" }, createdAt: { $gte: from, $lt: to } })
+      .select("status grandTotal itemsTotal utmCampaign utmContent utmSource utmMedium").lean();
+    const spends = await AdSpend.find({ from: fromKey, to: toKey }).lean();
+    const spendMap = new Map(spends.map((x) => [`${x.campaign}\u0001${x.content}`, x.amount]));
+    const rows = new Map();
+    const row = (campaign, content, source, medium) => {
+      const key = `${campaign}\u0001${content}`;
+      if (!rows.has(key)) rows.set(key, { campaign, content, source, medium, orders: 0, cancelled: 0, sales: 0, itemsTotal: 0, spend: spendMap.get(key) || 0 });
+      return rows.get(key);
+    };
+    for (const o of orders) {
+      const r = row(o.utmCampaign || "", o.utmContent || "", o.utmSource || "", o.utmMedium || "");
+      if (o.status === "cancelled") { r.cancelled += 1; continue; }
+      r.orders += 1; r.sales += Number(o.grandTotal) || 0; r.itemsTotal += Number(o.itemsTotal) || 0;
+    }
+    // نضيف الحملات اللي ليها تكلفة بس من غير أوردرات
+    for (const x of spends) row(x.campaign, x.content, "", "");
+    res.json({ rows: Array.from(rows.values()).sort((a, b) => b.sales - a.sales) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/ad-spend", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const key = { campaign: cleanText(b.campaign, 150), content: cleanText(b.content, 150), from: cleanText(b.from, 10), to: cleanText(b.to, 10) };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key.from) || !/^\d{4}-\d{2}-\d{2}$/.test(key.to)) return res.status(400).json({ error: "الفترة غير صحيحة" });
+    const amount = clampNumber(b.amount, 0, 100000000);
+    if (amount <= 0) await AdSpend.deleteOne(key);
+    else await AdSpend.updateOne(key, { $set: { amount, updatedBy: req.user.name } }, { upsert: true });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---------- التقرير اليومي على تليجرام (3 الفجر) ----------
 // بيتبعت من Railway Cron Job — يا بتوكن أدمن، يا بهيدر x-cron-token يساوي DAILY_REPORT_TOKEN
 const requireAdminOrCron = (req, res, next) => {
@@ -3129,18 +3460,97 @@ app.post("/api/reports/daily", requireAdminOrCron, async (req, res) => {
     for (const cat of report.categories || []) for (const it of cat.items || []) {
       if (!topItem || (Number(it.qty) || 0) > (Number(topItem.qty) || 0)) topItem = { name: it.name, qty: Number(it.qty) || 0 };
     }
-    const msg = [
+    const full = req.body?.full === true || req.query?.full === "1";
+    let msg = [
       `📊 تقرير يوم ${key} — نص كفتة`,
       `المبيعات: ${Number(report.total) || 0} ج`,
       `عدد الأوردرات: ${Number(report.count) || 0}`,
       `أكتر صنف: ${topItem ? `${topItem.name} (${topItem.qty})` : "-"}`,
       `الملغي: ${Number(report.cancelled) || 0}`
     ].join("\n");
+    if (full) {
+      // النسخة الكاملة: تفصيل الدفع + أكتر 5 أصناف + الملغي بالمبلغ + السلف والمصروفات
+      const p = report.payments || {};
+      const top5 = [];
+      for (const cat of report.categories || []) for (const it of cat.items || []) top5.push(it);
+      top5.sort((a, b) => (Number(b.qty) || 0) - (Number(a.qty) || 0));
+      const topLines = top5.slice(0, 5).map((it, i) => `${i + 1}. ${it.name} ×${Number(it.qty) || 0}`).join("\n") || "-";
+      const shiftDocs = await Shift.find({ $or: [{ status: "open" }, { closedAt: { $gt: from } }] }).select("movements").lean();
+      let advancesTotal = 0, advancesCount = 0;
+      for (const sd of shiftDocs) for (const m of sd.movements || []) {
+        if (m.category === "advance" && m.at && new Date(m.at) > from && new Date(m.at) <= to) { advancesTotal += Number(m.amount) || 0; advancesCount += 1; }
+      }
+      msg = [
+        `📊 تقرير يوم ${key} — نص كفتة (كامل)`,
+        `المبيعات: ${Number(report.total) || 0} ج`,
+        `عدد الأوردرات: ${Number(report.count) || 0}`,
+        `الدفع: كاش ${Number(p.cash) || 0} ج • فيزا ${Number(p.visa) || 0} ج • انستا ${Number(p.instapay) || 0} ج • محفظة ${Number(p.wallet) || 0} ج`,
+        `طلبات (كاش): ${Number(report.talabatCash) || 0} ج`,
+        `أكتر 5 أصناف:\n${topLines}`,
+        `الملغي: ${Number(report.cancelled) || 0} أوردر (${Number(report.cancelledTotal) || 0} ج)`,
+        `السلف: ${advancesCount} (${advancesTotal} ج) • المصروفات: ${Number(report.expensesTotal) || 0} ج`
+      ].join("\n");
+    }
     let telegramSent = false;
     if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) { await sendTelegramAlert(msg); telegramSent = true; }
-    res.json({ ok: true, day: key, sales: Number(report.total) || 0, orders: Number(report.count) || 0, topItem, cancelled: Number(report.cancelled) || 0, telegramSent });
+    res.json({ ok: true, day: key, sales: Number(report.total) || 0, orders: Number(report.count) || 0, topItem, cancelled: Number(report.cancelled) || 0, telegramSent, full });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// سجل عمليات الأدمن (للأدمن فقط): ?limit= (افتراضي 100) و ?action= للفلترة
+app.get("/api/admin/audit-log", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+    const filter = {};
+    if (String(req.query.action || "").trim()) filter.action = String(req.query.action).trim();
+    res.json(await AuditLog.find(filter).sort({ at: -1 }).limit(limit).lean());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// تقرير هامش الربح لكل صنف (للأدمن): الربح بيتحسب على التكلفة الحالية للصنف (التكلفة مش بتتخزن في الأوردر)
+app.get("/api/admin/reports/margin", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const days = [7, 30].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
+    const toKey = businessDayKey(new Date());
+    const fromKey = addDaysKey(toKey, -(days - 1));
+    const { from } = dayWindow(fromKey);
+    const { to } = dayWindow(toKey);
+    const orders = await Order.find({ status: "completed", completedAt: { $gt: from, $lte: to } }).select("items").lean();
+    const catalog = await Item.find().select("name cost").lean();
+    const byName = new Map(catalog.map((i) => [String(i.name || "").trim(), i]));
+    const rows = new Map();
+    for (const o of orders) {
+      for (const it of o.items || []) {
+        const name = String(it.name || "").trim();
+        if (!name) continue;
+        const qty = Number(it.quantity) || 0;
+        const revenue = (Number(it.price) || 0) * qty;
+        const row = rows.get(name) || { name, qty: 0, revenue: 0, cost: null };
+        row.qty += qty;
+        row.revenue = Math.round((row.revenue + revenue) * 100) / 100;
+        const c = byName.get(name);
+        const unitCost = c ? (Number(c.cost) || 0) : 0;
+        if (unitCost > 0) row.cost = Math.round(((row.cost || 0) + unitCost * qty) * 100) / 100;
+        rows.set(name, row);
+      }
+    }
+    const out = [...rows.values()].map((r) => {
+      const profit = r.cost == null ? null : Math.round((r.revenue - r.cost) * 100) / 100;
+      const margin = profit == null || r.revenue <= 0 ? null : Math.round((profit / r.revenue) * 1000) / 10;
+      return { ...r, profit, margin };
+    }).sort((a, b) => b.revenue - a.revenue);
+    res.json({ days, from: fromKey, to: toKey, rows: out });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// النسخة الاحتياطية: التليجرام (تلقائي يومي + عند الطلب) والتحميل على الكمبيوتر (يدوي من الأدمن)
+// السيرفر نفسه مبيحتفظش بنسخة لأن ديسك Railway مش ثابت
+app.post("/api/admin/backup", requireAdminOrCron, backupHandler);
+app.get("/api/admin/backup/download", requireAuth, requireAdmin, backupDownloadHandler);
 
 // ---------- أكواد الخصم (إدارة الأدمن) ----------
 app.get("/api/admin/promo-codes", requireAuth, requireAdmin, async (req, res) => {
