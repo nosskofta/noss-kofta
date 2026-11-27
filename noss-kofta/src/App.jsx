@@ -1,6 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
+// ================= Service Worker — حفظ شكل صفحة الكاشير (app shell) عشان تفتح من غير نت =================
+// بيسجّل sw.js مرة واحدة عند تحميل الصفحة. لو التسجيل فشل (متصفح قديم أو الصفحة مش https/localhost)
+// التطبيق بيكمل شغال زي ما هو بالظبط — الأوفلاين والطابور والـ OF-001 زي ما هم.
+(function registerPosServiceWorker() {
+  try {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    if (!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') return;
+    const register = () => { try { navigator.serviceWorker.register('/sw.js').catch(() => {}); } catch {} };
+    if (document.readyState === 'complete') register();
+    else window.addEventListener('load', register);
+  } catch {}
+})();
+
 
 const API_BASE = 'https://noss-kofta-production-d57f.up.railway.app';
 const RESTAURANT_NAME = 'نص كفتة';
