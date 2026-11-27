@@ -390,6 +390,12 @@ const orderSchema = new mongoose.Schema({
   driverName: { type: String },
   driverFeePaid: { type: Boolean, default: false },
   clientRef: { type: String },
+  // أوفلاين: معرّف فريد من جهاز الكاشير (idempotent — الرفع مرتين مبيكررش الأوردر)
+  // + وقت الأوردر الأصلي وهو أوفلاين (عشان الوردية والتقارير تتحسب صح)
+  clientUuid: { type: String },
+  offlineCreatedAt: { type: Date },
+  promoPendingVerification: { type: Boolean, default: false },
+  promoInvalidReason: { type: String, default: "" },
   // مصدر الإعلان (UTM): بييجي من الموقع مع الأوردر، وبيظهر على كارت الأوردر عند الكاشير
   utmSource: { type: String, default: "" },
   utmMedium: { type: String, default: "" },
@@ -422,6 +428,7 @@ const orderSchema = new mongoose.Schema({
   addressLabel: { type: String, default: "" }
 });
 orderSchema.index({ clientRef: 1 }, { sparse: true });
+orderSchema.index({ clientUuid: 1 }, { unique: true, sparse: true });
 // فهارس سرّعت البحث في الأوردرات (من غيرها كل طلب بيقلّب كل الأوردرات ويبطّأ كل ما الداتا تكبر)
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
@@ -2446,6 +2453,12 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
       const dup = await Order.findOne({ clientRef });
       if (dup) return res.status(200).json(dup);
     }
+    // أوفلاين (clientUuid): نفس منع التكرار بالمعرّف الفريد من جهاز الكاشير
+    const clientUuid = cleanText(body.clientUuid, 60);
+    if (clientUuid) {
+      const dupUuid = await Order.findOne({ clientUuid });
+      if (dupUuid) return res.status(200).json({ ...dupUuid.toObject(), duplicate: true });
+    }
     const offlineAtRaw = body.offlineAt ? new Date(body.offlineAt) : null;
     const offlineAt = offlineAtRaw && !isNaN(offlineAtRaw) && offlineAtRaw >= new Date(openShift.openedAt) && offlineAtRaw <= new Date() ? offlineAtRaw : null;
 
@@ -2519,7 +2532,7 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
       talabatNo, discountType, discountPercent, discountAmount, discountReason, orderNote,
       ...(posPhone.status ? { phoneStatus: posPhone.status, phoneOrders: posPhone.count } : {}),
       createdBy: req.user.name, acceptedBy: req.user.name, acceptedAt: offlineAt || new Date(),
-      ...(clientRef ? { clientRef } : {}), ...(offlineAt ? { createdAt: offlineAt } : {})
+      ...(clientRef ? { clientRef } : {}), ...(clientUuid ? { clientUuid } : {}), ...(offlineAt ? { createdAt: offlineAt } : {})
     }).save();
 
     if (paymentSplit) {
@@ -2537,6 +2550,159 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
     res.status(201).json(saved);
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ error: "رقم الأوردر متكرر" });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ========================= أوفلاين: رفع أوردر اتسجل من غير نت =========================
+// POST /api/orders/offline-sync — نفس إنشاء أوردر الكاشير (POST /api/pos/orders) بالظبط،
+// بس بمعرّف فريد من جهاز الكاشير (clientUuid): لو الأوردر ده اترفع قبل كده بنرجّع
+// نفس الأوردر (duplicate:true) بدل ما نكرره. الوقت الأصلي (offlineCreatedAt) هو
+// createdAt، والأوردر بيتربط بالوردية اللي كانت مفتوحة وقتها (من shiftId اللي
+// اتبعت، أو الوردية اللي بتغطي الوقت ده، أو الوردية المفتوحة حالياً).
+// لو الوردية الأصلية اتقفلت قبل الرفع، الأوردر بيتسجل عليها برضه (من غير ما
+// نغيّر عداد إيصالاتها) عشان تقرير الوردية والتقارير تفضل صح ومفيش عدّ مرتين.
+app.post("/api/orders/offline-sync", requireAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const clientUuid = cleanText(body.clientUuid, 60);
+    if (!clientUuid) return res.status(400).json({ error: "clientUuid إجباري" });
+    const existing = await Order.findOne({ clientUuid });
+    if (existing) return res.status(200).json({ duplicate: true, order: existing, orderId: existing.orderId });
+    const clientRef = cleanText(body.clientRef, 60);
+    if (clientRef) {
+      const dupRef = await Order.findOne({ clientRef });
+      if (dupRef) return res.status(200).json({ duplicate: true, order: dupRef, orderId: dupRef.orderId });
+    }
+    const offlineAtRaw = body.offlineCreatedAt ? new Date(body.offlineCreatedAt) : (body.offlineAt ? new Date(body.offlineAt) : null);
+    const offlineAt = offlineAtRaw && !isNaN(offlineAtRaw) && offlineAtRaw <= new Date() ? offlineAtRaw : new Date();
+
+    // الوردية: اللي اتبعت id بتاعها، أو اللي بتغطي وقت الأوردر، أو المفتوحة حالياً
+    let targetShift = null;
+    const shiftIdRaw = String(body.shiftId || "");
+    if (shiftIdRaw && mongoose.Types.ObjectId.isValid(shiftIdRaw)) {
+      const s = await Shift.findById(shiftIdRaw).lean();
+      if (s && s.openedBy === req.user.name) targetShift = s;
+    }
+    if (!targetShift) {
+      targetShift = await Shift.findOne({
+        openedBy: req.user.name, openedAt: { $lte: offlineAt },
+        $or: [{ closedAt: null }, { closedAt: { $gte: offlineAt } }],
+      }).sort({ openedAt: -1 }).lean();
+    }
+    if (!targetShift) targetShift = await Shift.findOne({ status: "open", openedBy: req.user.name }).lean();
+    if (!targetShift) return res.status(400).json({ error: "افتح ورديتك الأول" });
+    const targetOpen = targetShift.status === "open";
+
+    const orderType = ["pickup", "delivery", "talabat"].includes(body.orderType) ? body.orderType : null;
+    if (!orderType) return res.status(400).json({ error: "نوع الأوردر غير صحيح" });
+    const wantsSplit = body.paymentMethod === "split";
+    const paymentMethod = wantsSplit ? "split" : (POS_PAYMENTS.includes(body.paymentMethod) ? body.paymentMethod : null);
+    if (!paymentMethod) return res.status(400).json({ error: "اختار طريقة الدفع" });
+    if (orderType === "talabat" && !["cash", "visa"].includes(paymentMethod)) return res.status(400).json({ error: "طلبات: كاش أو فيزا بس" });
+    const talabatNo = orderType === "talabat" ? cleanText(body.talabatNo, 30) : undefined;
+    if (orderType === "talabat" && !talabatNo) return res.status(400).json({ error: "اكتب رقم أوردر طلبات" });
+    if (orderType === "talabat") {
+      const duplicate = await Order.findOne({ orderType: "talabat", talabatNo }).select("_id").lean();
+      if (duplicate) return res.status(409).json({ error: "رقم أوردر طلبات ده متسجل قبل كده" });
+    }
+    const priced = await priceOrderItemsFromCatalog(body.items, 80, false, orderType);
+    if (priced.error) return res.status(400).json({ error: priced.error });
+    const items = priced.items;
+
+    const discountReason = cleanText(body.discountReason, 200);
+    const orderNote = cleanText(body.orderNote, 300);
+    const itemsTotal = items.reduce((sum, it) => sum + it.price * it.quantity, 0);
+    let { discountType, discountPercent, discountAmount } = parseOrderDiscount(body, itemsTotal);
+    if (discountAmount > 0 && discountReason.length < 2) return res.status(400).json({ error: "سبب الخصم إجباري" });
+
+    // كود خصم كان مستني التحقق (اتضرب أوفلاين من غير ما يتأكد): نتحقق منه دلوقتي،
+    // ولو لسه صالح نطبّقه ونحجز استخدامه؛ ولو مش صالح الأوردر يتسجل من غير خصم
+    // ويتعلّم promoPendingVerification + السبب، من غير ما نغيّر الإجمالي اللي شافه الكاشير.
+    let promoCode = "";
+    let promoPendingVerification = false;
+    let promoInvalidReason = "";
+    let promoApplied = 0;
+    const promoRaw = cleanText(body.promoCode, 30);
+    if (body.promoPendingVerification && promoRaw && discountAmount === 0) {
+      const itemIds = (body.items || []).map((it) => it.itemId).filter(Boolean);
+      const v = await validatePromoCode(promoRaw, itemsTotal, itemIds);
+      if (!v.error) {
+        const claimed = await PromoCode.findOneAndUpdate(
+          { _id: v.doc._id, active: true, $expr: { $or: [{ $eq: ["$maxUses", null] }, { $lt: ["$usedCount", "$maxUses"] }] } },
+          { $inc: { usedCount: 1, totalDiscounted: v.discountAmount } }, { new: true });
+        if (claimed) {
+          promoCode = v.doc.code; promoApplied = v.discountAmount;
+          discountType = v.doc.type; discountPercent = v.doc.type === "percent" ? Number(v.doc.value) || 0 : 0;
+          discountAmount = v.discountAmount; discountReason = `كود ${v.doc.code}`;
+        } else { promoCode = promoRaw; promoPendingVerification = true; promoInvalidReason = "الكود خلص عدد مرات استخدامه"; }
+      } else { promoCode = promoRaw; promoPendingVerification = true; promoInvalidReason = v.error; }
+    }
+
+    let customerName = cleanText(body.customerName, 80) || "-";
+    const rawPhone = cleanText(body.customerPhone, 20);
+    if (orderType === "delivery" && !rawPhone) return res.status(400).json({ error: "اكتب رقم تليفون العميل الأول (إجباري في الدليفري)" });
+    if (rawPhone && !isValidPhone(rawPhone)) return res.status(400).json({ error: "رقم التليفون غير صحيح. اتركه فاضي لو مش عايز تسجله" });
+    let customerPhone = rawPhone || "-";
+    let customerAddress = "استلام من الفرع";
+    let zoneName = "استلام من الفرع";
+    let deliveryFee = 0;
+    if (orderType === "delivery") {
+      customerAddress = cleanText(body.customerAddress, 300);
+      if (!customerAddress) return res.status(400).json({ error: "اكتب عنوان التوصيل" });
+      zoneName = cleanText(body.zoneName, 80) || "توصيل";
+      const zone = zoneName ? await DeliveryZone.findOne({ name: zoneName }).lean() : null;
+      deliveryFee = zone ? Number(zone.fee) || 0 : clampNumber(body.deliveryFee, 0, 500);
+    } else if (orderType === "talabat") {
+      customerName = cleanText(body.customerName, 80) || "طلبات"; customerAddress = "طلبات"; zoneName = "طلبات";
+    }
+    const grandTotal = itemsTotal - discountAmount + deliveryFee;
+    let paymentSplit = null;
+    if (wantsSplit) {
+      const v = validateSplit(body.paymentSplit, grandTotal, orderType, deliveryFee);
+      if (v.error) return res.status(400).json({ error: v.error });
+      paymentSplit = v.split;
+    }
+    let shiftReceiptNo;
+    if (targetOpen) {
+      const currentShift = await Shift.findOneAndUpdate(
+        { _id: targetShift._id, status: "open", openedBy: req.user.name },
+        { $inc: { receiptSeq: 1 } }, { new: true });
+      if (!currentShift) return res.status(409).json({ error: "الوردية اتقفلت، افتح وردية جديدة قبل تسجيل الأوردر" });
+      shiftReceiptNo = currentShift.receiptSeq;
+    } else {
+      const last = await Order.findOne({ shiftId: targetShift._id }).sort({ shiftReceiptNo: -1 }).select("shiftReceiptNo").lean();
+      shiftReceiptNo = (Number(last?.shiftReceiptNo) || 0) + 1;
+    }
+    const counter = await Counter.findOneAndUpdate({ key: "pos" }, { $inc: { seq: 1 } }, { new: true, upsert: true });
+    const orderId = `P${counter.seq}`;
+    const posPhone = orderType === "delivery" && isEgMobile(normPhone(customerPhone)) ? await phoneHistory(normPhone(customerPhone)) : {};
+    const phoneStatus = posPhone.status || (["unverified", "new", "verified"].includes(body.phoneStatus) ? body.phoneStatus : undefined);
+    const saved = await new Order({
+      orderId, shiftReceiptNo, shiftId: targetShift._id,
+      customerName, customerPhone, orderType, customerAddress, zoneName, deliveryFee,
+      items, itemsTotal, grandTotal, status: "accepted", source: "pos", paymentMethod, ...(paymentSplit ? { paymentSplit } : {}),
+      talabatNo, discountType, discountPercent, discountAmount, discountReason, orderNote,
+      ...(promoCode ? { promoCode } : {}), promoPendingVerification, promoInvalidReason,
+      ...(phoneStatus ? { phoneStatus, phoneOrders: posPhone.count } : {}),
+      createdBy: req.user.name, acceptedBy: req.user.name, acceptedAt: offlineAt,
+      clientUuid, ...(clientRef || clientUuid ? { clientRef: clientRef || clientUuid } : {}),
+      offlineCreatedAt: offlineAt, createdAt: offlineAt,
+    }).save();
+    if (paymentSplit) {
+      void sendTelegramAlert(`💳 دفع مقسّم - أوردر #${saved.orderId}\nالإجمالي: ${grandTotal} ج\nالتقسيم: ${describePayment(saved)}\nالكاشير: ${req.user.name}`);
+    }
+    console.log(`✅ Offline-sync order saved: #${saved.orderId} (clientUuid ${clientUuid}) by ${req.user.name}`);
+    await rememberUnverifiedCustomer(saved.toObject());
+    if (customerPhone !== "-") void upsertCustomer({ phone: customerPhone, name: customerName, address: orderType === "delivery" ? customerAddress : "", zoneName: orderType === "delivery" ? zoneName : "" });
+    if (discountAmount > 0) void sendTelegramAlert(discountAlertText(saved, req.user.name));
+    if (orderType === "talabat") {
+      void sendTelegramAlert(`🛍️ أوردر طلبات جديد #${saved.orderId}\nرقم طلبات: ${talabatNo}\nالقيمة: ${grandTotal} ج\nالدفع: ${paymentMethod === "cash" ? "كاش في الدرج" : "فيزا مستحقة عند طلبات"}\nسجله: ${req.user.name}`);
+    }
+    res.status(201).json({ ...saved.toObject(), offlineUploaded: true, tempNo: body.tempNo || undefined, promoApplied });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: "الأوردر ده اترفع قبل كده" });
     res.status(500).json({ error: err.message });
   }
 });

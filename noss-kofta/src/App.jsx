@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 
@@ -80,6 +80,173 @@ const isFakeEgPhone = (p) => {
   if (!isEgMobile(p)) return false;
   const tail = p.slice(3);
   return /^(\d)\1+$/.test(tail) || /(\d)\1{6,}/.test(p) || '01234567890123456789'.includes(tail) || '98765432109876543210'.includes(tail) || /^(\d{2})\1{3}$/.test(tail) || /^(\d{4})\1$/.test(tail);
+};
+
+
+// ================= وضع الأوفلاين (شاشة الكاشير / POS) =================
+// المنيو والأسعار والمناطق بيتخزنوا في المتصفح وبيتحدثوا كل ما النت موجود.
+// الأوردرات الأوفلاين بتتخزن في البرنامج المحلي على جهاز الكاشير (SQLite عبر
+// cashier-bridge على http://127.0.0.1:3791) فمبتضيعش لو المتصفح اتقفل أو اتمسح.
+// لو البرنامج مش شغال، الأوردر بيتحفظ في المتصفح بس وبيطلع تحذير واضح.
+const OFFLINE_SITE = 'noss';
+const BRIDGE_URL = 'http://127.0.0.1:3791';
+const OFFLINE_MENU_KEY = 'nossKoftaOfflineMenu';
+const OFFLINE_QUEUE_KEY = 'nossKoftaOfflineQueue';
+const OFFLINE_CUSTOMERS_KEY = 'nossKoftaOfflineCustomers';
+const OFFLINE_PROMOS_KEY = 'nossKoftaOfflinePromos';
+const OFFLINE_SHIFT_KEY = 'nossKoftaOfflineShift';
+const OFFLINE_SYNC_INTERVAL_MS = 60000; // إعادة محاولة الرفع كل 60 ثانية
+
+const offlineFormatTempNo = (n) => `OF-${String(n).padStart(3, '0')}`;
+const offlineDayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const offlineReadJson = (key, fallback) => { try { const v = JSON.parse(localStorage.getItem(key)); return v ?? fallback; } catch { return fallback; } };
+const offlineWriteJson = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+// كاش المنيو: بيتكتب مع كل تحميل ناجح والنت موجود، وبيتقرأ لما النت يفصل
+const readOfflineMenu = () => offlineReadJson(OFFLINE_MENU_KEY, null);
+const writeOfflineMenu = (menu) => { offlineWriteJson(OFFLINE_MENU_KEY, { ...menu, savedAt: new Date().toISOString() }); };
+// عملاء محفوظين محلياً (من عمليات بحث نجحت والنت موجود)
+const readOfflineCustomers = () => offlineReadJson(OFFLINE_CUSTOMERS_KEY, []);
+const cacheOfflineCustomer = (c) => {
+  if (!c?.phone) return;
+  const list = readOfflineCustomers().filter((x) => x.phone !== c.phone);
+  list.unshift({ phone: c.phone, name: c.name || '', address: c.address || '', zoneName: c.zoneName || '', locationUrl: c.locationUrl || '' });
+  offlineWriteJson(OFFLINE_CUSTOMERS_KEY, list.slice(0, 500));
+};
+const findOfflineCustomer = (phone) => readOfflineCustomers().find((x) => x.phone === phone) || null;
+// أكواد خصم اتأكد منها قبل كده والنت موجود (الكود + قيمة الأوردر اللي اتأكد عليها)
+const readOfflinePromos = () => offlineReadJson(OFFLINE_PROMOS_KEY, []);
+const cacheOfflinePromo = (entry) => {
+  const list = readOfflinePromos().filter((x) => x.code !== entry.code);
+  list.unshift(entry);
+  offlineWriteJson(OFFLINE_PROMOS_KEY, list.slice(0, 50));
+};
+const findOfflinePromo = (code, itemsTotal) => readOfflinePromos().find((x) => x.code === String(code || '').trim().toUpperCase() && Number(x.itemsTotal) === Number(itemsTotal)) || null;
+// الوردية المفتوحة وقت ضرب الأوردر (عشان الرفع يربطه بالوردية الصح حتى لو اتقفلت)
+const saveOfflineShift = (shift) => { if (shift?._id) offlineWriteJson(OFFLINE_SHIFT_KEY, { _id: shift._id, openedBy: shift.openedBy, openedAt: shift.openedAt }); };
+const readOfflineShift = () => offlineReadJson(OFFLINE_SHIFT_KEY, null);
+// طابور المتصفح (احتياطي بس لو البرنامج المحلي مش شغال)
+const readBrowserQueue = () => offlineReadJson(OFFLINE_QUEUE_KEY, []);
+const writeBrowserQueue = (q) => offlineWriteJson(OFFLINE_QUEUE_KEY, q);
+// رقم مؤقت احتياطي في المتصفح (نفس صيغة البرنامج: OF-001 من أول اليوم لكل مطعم)
+const browserNextTempNo = () => {
+  const day = offlineDayKey();
+  const key = `${OFFLINE_QUEUE_KEY}-counter`;
+  const cur = offlineReadJson(key, { day: '', last: 0 });
+  const next = (cur.day === day ? cur.last : 0) + 1;
+  offlineWriteJson(key, { day, last: next });
+  return offlineFormatTempNo(next);
+};
+// البرنامج المحلي (مهلة قصيرة عشان لو مش شغال منستناش)
+const bridgeFetch = async (path, options = {}) => {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 2000);
+  try {
+    return await fetch(`${BRIDGE_URL}${path}`, { ...options, signal: ctrl.signal, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+  } finally { clearTimeout(t); }
+};
+
+// محرك مزامنة الأوفلاين لشاشة الكاشير: بيحدد النت بنبضة خفيفة على السيرفر
+// (مش navigator.onLine بس)، وبيرفع الأوردرات المستنية بالترتيب (الأقدم الأول)
+// كل 60 ثانية لحد ما تترفع كلها.
+const useOfflineSync = (authFetch, shift, onUploaded) => {
+  const [online, setOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [syncing, setSyncing] = useState(false);
+  const [pending, setPending] = useState([]);
+  const [bridgeRunning, setBridgeRunning] = useState(true);
+  const [lastSyncError, setLastSyncError] = useState('');
+  const busyRef = useRef(false);
+  const authFetchRef = useRef(authFetch); authFetchRef.current = authFetch;
+  const shiftRef = useRef(shift); shiftRef.current = shift;
+  const onUploadedRef = useRef(onUploaded); onUploadedRef.current = onUploaded;
+
+  const refreshPending = useCallback(async () => {
+    let list = [];
+    try {
+      const r = await bridgeFetch(`/queue?site=${OFFLINE_SITE}`);
+      if (r.ok) { const d = await r.json(); list = d.orders || []; setBridgeRunning(true); }
+    } catch { setBridgeRunning(false); }
+    const browser = readBrowserQueue().filter((o) => o.status === 'queued' || o.status === 'failed');
+    const merged = [...list, ...browser];
+    setPending(merged);
+    return merged;
+  }, []);
+
+  // النت شغال فعلاً؟ navigator.onLine لوحده مش كفاية — لازم السيرفر يرد
+  const checkOnline = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) { setOnline(false); return false; }
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 4000);
+      const r = await fetch(`${API_BASE}/api/store-status`, { cache: 'no-store', signal: ctrl.signal });
+      clearTimeout(t);
+      const ok = r.ok; setOnline(ok); return ok;
+    } catch { setOnline(false); return false; }
+  }, []);
+
+  const uploadOne = useCallback(async (queued) => {
+    const payload = queued.payload || {};
+    const res = await authFetchRef.current('/api/orders/offline-sync', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, clientUuid: queued.clientUuid, tempNo: queued.tempNo, offlineCreatedAt: queued.createdAt, shiftId: payload.shiftId || shiftRef.current?._id || undefined }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'الرفع فشل');
+    const real = data.order || data;
+    return { real, realNo: real.orderId || data.orderId, duplicate: !!data.duplicate, promoApplied: data.promoApplied || 0 };
+  }, []);
+
+  const syncNow = useCallback(async () => {
+    if (busyRef.current) return;
+    const isOnline = await checkOnline();
+    if (!isOnline) { await refreshPending(); return; }
+    busyRef.current = true; setSyncing(true);
+    try {
+      const list = await refreshPending();
+      for (const q of list) {
+        try {
+          const { real, realNo } = await uploadOne(q);
+          try { await bridgeFetch(`/queue/${encodeURIComponent(q.clientUuid)}/uploaded`, { method: 'POST', body: JSON.stringify({ realOrderId: real._id || '', realOrderNo: realNo }) }); } catch {}
+          writeBrowserQueue(readBrowserQueue().filter((o) => o.clientUuid !== q.clientUuid));
+          if (onUploadedRef.current) onUploadedRef.current({ ...real, tempNo: q.tempNo });
+        } catch (e) {
+          setLastSyncError(e.message || 'الرفع فشل');
+          try { await bridgeFetch(`/queue/${encodeURIComponent(q.clientUuid)}/failed`, { method: 'POST', body: JSON.stringify({ error: String(e.message || 'upload failed') }) }); } catch {}
+          break; // الترتيب مهم: لو واحد فشل، وقّف وحاول تاني بعد 60 ثانية
+        }
+      }
+    } finally { busyRef.current = false; setSyncing(false); await refreshPending(); }
+  }, [checkOnline, refreshPending, uploadOne]);
+
+  useEffect(() => {
+    checkOnline();
+    refreshPending();
+    const onNet = () => { checkOnline().then((ok) => { if (ok) syncNow(); }); };
+    window.addEventListener('online', onNet);
+    window.addEventListener('offline', onNet);
+    const hb = setInterval(() => { checkOnline(); }, 15000);
+    const iv = setInterval(() => { syncNow(); }, OFFLINE_SYNC_INTERVAL_MS);
+    return () => { window.removeEventListener('online', onNet); window.removeEventListener('offline', onNet); clearInterval(hb); clearInterval(iv); };
+  }, [checkOnline, refreshPending, syncNow]);
+
+  // احفظ أوردر أوفلاين: في البرنامج المحلي الأول، ولو مش شغال في المتصفح مع تحذير
+  const queueOfflineOrder = useCallback(async (payload) => {
+    const clientUuid = (window.crypto?.randomUUID ? window.crypto.randomUUID() : `of-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
+    const createdAt = new Date().toISOString();
+    const queued = { clientUuid, site: OFFLINE_SITE, payload: { ...payload, clientRef: clientUuid }, status: 'queued', createdAt };
+    let tempNo = null; let inBridge = false; let bridgeWarn = false;
+    try {
+      const r = await bridgeFetch('/queue', { method: 'POST', body: JSON.stringify({ clientUuid, site: OFFLINE_SITE, payload: queued.payload, createdAt }) });
+      if (r.ok) { const d = await r.json(); tempNo = d.tempNo || d.order?.tempNo; inBridge = true; }
+    } catch { bridgeWarn = true; }
+    if (!tempNo) { tempNo = browserNextTempNo(); bridgeWarn = true; }
+    const finalQueued = { ...queued, tempNo };
+    if (!inBridge) writeBrowserQueue([...readBrowserQueue(), finalQueued]);
+    setBridgeRunning(!bridgeWarn);
+    await refreshPending();
+    return { ...finalQueued, bridgeWarn };
+  }, [refreshPending]);
+
+  return { online, syncing, pending, bridgeRunning, lastSyncError, checkOnline, syncNow, queueOfflineOrder, refreshPending };
 };
 
 // صوت تنبيه الشات عند العميل (بيشتغل بعد أول تفاعل مع الصفحة — قيد المتصفح)
@@ -6018,7 +6185,7 @@ const posGroupsOf = (item) => {
   return groups;
 };
 
-const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, editOrder, onEditFinished, onEditSaved }) => {
+const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, editOrder, onEditFinished, onEditSaved, shift, onOfflineUploaded }) => {
   const [items, setItems] = useState([]);
   const [cats, setCats] = useState([]);
   const [zones, setZones] = useState([]);
@@ -6056,6 +6223,19 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
   const [manualFee, setManualFee] = useState('');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
+  // ===== وضع الأوفلاين =====
+  const [menuFromCache, setMenuFromCache] = useState(false);
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [appliedPromo, setAppliedPromo] = useState(null);
+  const [promoMsg, setPromoMsg] = useState('');
+  const [promoPending, setPromoPending] = useState(false);
+  const [uploadedMap, setUploadedMap] = useState({});
+  const offline = useOfflineSync(authFetch, shift, (real) => {
+    if (real?.tempNo && real?.orderId) setUploadedMap((m) => ({ ...m, [real.tempNo]: real.orderId }));
+    if (onOfflineUploaded) onOfflineUploaded(real);
+  });
+  useEffect(() => { if (shift?._id) saveOfflineShift(shift); }, [shift?._id]);
+
   const stashRef = useRef(null);
   const lookedRef = useRef('');
   // رقم منع تكرار ثابت لنفس الأوردر: لو الإرسال فشل والكاشير حاولت تاني، السيرفر بيرجّع نفس الأوردر بدل ما يكرره
@@ -6096,6 +6276,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
         const d = await r.json().catch(() => ({}));
         if (d && d.found) {
           setCustLookup(d);
+          cacheOfflineCustomer({ phone: digits, name: d.name, address: d.address, zoneName: d.zoneName });
           // بنملّي الفراغات بس: لو الكاشير كتبت اسم/عنوان بإيدها منمسحهمش
           if (d.name) setCustName(prev => prev.trim() ? prev : d.name);
           if (orderType === 'delivery') {
@@ -6106,12 +6287,24 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
         } else {
           setCustLookup({ found: false });
         }
-      } catch (e) {}
+      } catch (e) {
+        // أوفلاين: دوّر في العملاء المحفوظين محلياً
+        const cached = findOfflineCustomer(digits);
+        if (cached) {
+          setCustLookup({ found: true, ...cached, offline: true });
+          if (cached.name) setCustName(prev => prev.trim() ? prev : cached.name);
+          if (orderType === 'delivery') {
+            if (cached.address) setAddress(prev => prev.trim() ? prev : cached.address);
+            const z = zones.find(x => x.name === cached.zoneName);
+            if (z) setZoneId(prev => prev || z._id);
+          }
+        }
+      }
     })();
   }, [custPhone]);
 
   const resetForm = () => {
-    setDiscount(0); setDiscountType('percent'); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setOrderType('pickup');
+    setDiscount(0); setDiscountType('percent'); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setOrderType('pickup'); clearPromoCode();
   };
   const cancelEdit = () => {
     setCart(stashRef.current || []); stashRef.current = null; resetForm();
@@ -6143,7 +6336,27 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
       if (Array.isArray(di)) setItems(di);
       if (Array.isArray(dc)) setCats(dc);
       if (Array.isArray(dz)) setZones(dz);
-    } catch (e) {}
+      // النت موجود: حدّث الكاش المحلي (متصفح + البرنامج المحلي) بالمنيو والأسعار والمناطق
+      if (Array.isArray(di) && di.length) {
+        const menu = { items: di, categories: Array.isArray(dc) ? dc : [], zones: Array.isArray(dz) ? dz : [] };
+        writeOfflineMenu(menu); setMenuFromCache(false);
+        bridgeFetch('/cache/menu', { method: 'POST', body: JSON.stringify({ site: OFFLINE_SITE, data: menu }) }).catch(() => {});
+      }
+    } catch (e) {
+      // النت فاصل: اشتغل من الكاش المحلي (المتصفح، ولو اتمسح من البرنامج المحلي)
+      const cached = readOfflineMenu();
+      const applyCache = (m) => {
+        if (!m) return false;
+        if (Array.isArray(m.items) && m.items.length) setItems(m.items);
+        if (Array.isArray(m.categories)) setCats(m.categories);
+        if (Array.isArray(m.zones)) setZones(m.zones);
+        setMenuFromCache(true); return true;
+      };
+      let ok = applyCache(cached);
+      if (!ok) {
+        try { const r = await bridgeFetch(`/cache/menu?site=${OFFLINE_SITE}`); if (r.ok) { const d = await r.json(); ok = applyCache(d.data); if (ok) writeOfflineMenu(d.data); } } catch {}
+      }
+    }
     setLoading(false);
   };
 
@@ -6294,9 +6507,50 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     const n = Number(String(v).replace(/[^\d.]/g, '')) || 0;
     setDiscount(discountType === 'amount' ? Math.max(0, Math.min(Math.round(n), itemsTotal)) : Math.max(0, Math.min(100, n)));
   };
+  // كود خصم في شاشة الكاشير: أونلاين بيتأكد من السيرفر وبيتحفظ في الكاش؛ أوفلاين
+  // بيتقبل بس لو اتأكد منه قبل كده على نفس المجموع، غير كده الأوردر بيتسجل من
+  // غير خصم وبيتعلّم إن الكود مستني التحقق بعد رجوع النت (والسيرفر يطبّقه لو صالح).
+  const applyPromoCode = async () => {
+    const code = promoCodeInput.trim().toUpperCase();
+    if (!code) return;
+    if (appliedPromo) return;
+    if (discount > 0) return setPromoMsg('فيه خصم يدوي — امسحه الأول عشان تطبّق الكود');
+    setPromoMsg('');
+    const onlineNow = await offline.checkOnline();
+    if (onlineNow) {
+      try {
+        const r = await fetch(`${API_BASE}/api/promo-codes/validate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, itemsTotal, itemIds: cart.map((l) => l._id) }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) return setPromoMsg(d.error || 'الكود مش صالح');
+        const amt = Number(d.discountAmount) || 0;
+        if (amt <= 0) return setPromoMsg('الكود ده مش بيعمل خصم على الأوردر ده');
+        cacheOfflinePromo({ code: d.code || code, discountAmount: amt, itemsTotal, validatedAt: new Date().toISOString() });
+        setAppliedPromo({ code: d.code || code, discountAmount: amt });
+        setDiscountType('amount'); setDiscount(amt); setDiscountReason(`كود ${d.code || code}`);
+        setPromoMsg(`✅ الكود اتطبّق: خصم ${amt} ج`);
+      } catch { setPromoMsg('تعذّر التحقق من الكود — اتأكد من النت'); }
+    } else {
+      const cached = findOfflinePromo(code, itemsTotal);
+      if (cached) {
+        setAppliedPromo({ code: cached.code, discountAmount: cached.discountAmount });
+        setDiscountType('amount'); setDiscount(cached.discountAmount); setDiscountReason(`كود ${cached.code}`);
+        setPromoMsg(`✅ الكود اتطبّق من النسخة المحفوظة: خصم ${cached.discountAmount} ج`);
+      } else {
+        setPromoPending(true);
+        setPromoMsg('⚠️ النت فاصل والكود ده مش متأكد منه قبل كده — الأوردر هيتسجل من غير خصم، ولو الكود صالح هيتطبّق لوحده بعد رجوع النت');
+      }
+    }
+  };
+  const clearPromoCode = () => {
+    const wasPromo = appliedPromo || promoPending;
+    setPromoCodeInput(''); setAppliedPromo(null); setPromoMsg(''); setPromoPending(false);
+    if (wasPromo && discountReason.startsWith('كود ')) { setDiscount(0); setDiscountType('percent'); setDiscountReason(''); }
+  };
+
 
   const submitEdit = async () => {
     if (busy) return;
+    if (!(await offline.checkOnline())) return alert('التعديل محتاج نت — استنى لما النت يرجع وحاول تاني');
     if (cart.length === 0) return alert('الأوردر لازم يفضل فيه صنف. لو عايز تلغيه استخدم زرار الإلغاء');
     if (discount > 0 && discountReason.trim().length < 2) return alert('اكتب سبب الخصم');
     if (pay === 'split') { const se = splitError(splitRows, total); if (se) return alert(se); }
@@ -6344,11 +6598,46 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
         ...(pay === 'split' ? { paymentSplit: splitRows.map(r => ({ method: r.method, amount: Number(r.amount) })) } : {}),
         orderType, paymentMethod: pay, talabatNo: talabatNo.trim(), discountType, discountPercent: discountType === 'percent' ? discount : 0, discountAmount: discountType === 'amount' ? discount : 0,
         discountReason: discountReason.trim(), orderNote: orderNote.trim(),
+        promoCode: appliedPromo ? appliedPromo.code : (promoPending ? promoCodeInput.trim().toUpperCase() : undefined),
+        promoPendingVerification: promoPending || undefined,
         customerName: custName.trim(), customerPhone: custPhone.trim(), customerAddress: address.trim(),
         zoneName: zone ? zone.name : (orderType === 'delivery' ? 'توصيل' : ''), deliveryFee: fee,
         offlineSnapshot: { items: cart.map(l => ({ name: l.name, quantity: l.qty, price: l.unit, modifiers: l.modifiersInfo, notes: l.notes })), itemsTotal, discountAmount, deliveryFee: fee, grandTotal: total },
         items: cart.map(l => ({ itemId: l._id, name: l.name, quantity: l.qty, selections: Array.isArray(l.modifierSelections) ? l.modifierSelections : undefined, modifiers: l.modifiersInfo, notes: l.notes }))
       };
+
+      // لو النت فاصل (حسب نبضة السيرفر مش navigator.onLine بس): سجّل الأوردر
+      // أوفلاين في البرنامج المحلي (أو المتصفح لو البرنامج مش شغال) واطبع الإيصال
+      // من البيانات المحلية برقم مؤقت OF-xxx — هيترفع لوحده لما النت يرجع.
+      const onlineNow = await offline.checkOnline();
+      if (!onlineNow) {
+        const phoneDigitsOff = normalizePhoneInput(custPhone);
+        const knownOff = phoneDigitsOff ? findOfflineCustomer(phoneDigitsOff) : null;
+        const queued = await offline.queueOfflineOrder({
+          ...payload,
+          offlineCreatedAt: new Date().toISOString(),
+          shiftId: shift?._id || undefined,
+          phoneStatus: orderType === 'delivery' && !custLookup?.found && !knownOff ? 'unverified' : undefined,
+        });
+        const localOrder = {
+          orderId: queued.tempNo, tempNo: queued.tempNo, clientUuid: queued.clientUuid,
+          source: 'pos', status: 'accepted', orderType, paymentMethod: pay,
+          ...(pay === 'split' ? { paymentSplit: splitRows.map((r) => ({ method: r.method, amount: Number(r.amount) })) } : {}),
+          talabatNo: talabatNo.trim(), discountType, discountPercent: discountType === 'percent' ? discount : 0,
+          discountAmount, discountReason: discountReason.trim(), orderNote: orderNote.trim(),
+          customerName: custName.trim(), customerPhone: custPhone.trim(), customerAddress: address.trim(),
+          zoneName: zone ? zone.name : (orderType === 'delivery' ? 'توصيل' : ''), deliveryFee: fee,
+          items: cart.map((l) => ({ itemId: l._id, name: l.name, price: l.unit, quantity: l.qty, modifiers: l.modifiersInfo, notes: l.notes })),
+          itemsTotal, grandTotal: total, createdAt: queued.createdAt, offline: true,
+          ...(payload.promoPendingVerification ? { promoPendingVerification: true, promoCode: payload.promoCode } : {}),
+        };
+        onCreated(localOrder);
+        setToast(`✅ اتسجل أوفلاين ${queued.tempNo} — هيترفع لوحده لما النت يرجع${queued.bridgeWarn ? ' ⚠️ البرنامج المحلي مش شغال، الأوردر محفوظ في المتصفح بس — شغّل start.bat' : ''}`);
+        setCart([]); setDiscount(0); setDiscountType('percent'); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setCustLookup(null); clientRefRef.current = { sig: '', ref: '' };
+        clearPromoCode();
+        setBusy(false);
+        return;
+      }
       const res = await authFetch('/api/pos/orders', { method: 'POST', body: JSON.stringify(payload) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -6393,6 +6682,34 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
         </div>
         <div className="flex-1 min-w-0 flex flex-col">
           <div className="flex gap-2 mb-3">
+
+          {/* حالة الأوفلاين — باينة للكاشير على طول في شاشة الـPOS */}
+          <div className="mb-3 space-y-2">
+            <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-black ${!offline.online ? 'bg-red-900/70 text-red-200' : offline.syncing ? 'bg-amber-900/70 text-amber-200' : offline.pending.length > 0 ? 'bg-amber-900/70 text-amber-200' : 'bg-green-900/60 text-green-200'}`}>
+              <span>{!offline.online ? '🔴 أوفلاين — الأوردرات بتتسجل محلياً' : offline.syncing ? '🔄 بيترفع...' : offline.pending.length > 0 ? `🟡 مستني الرفع: ${offline.pending.length} أوردر` : '🟢 متصل'}</span>
+              {offline.pending.length > 0 && offline.online && !offline.syncing && <button type="button" onClick={() => offline.syncNow()} className="underline">ارفع دلوقتي</button>}
+              {!offline.bridgeRunning && <span className="mr-auto text-[11px] font-bold">⚠️ البرنامج المحلي مش شغال</span>}
+            </div>
+            {!offline.bridgeRunning && <p className="text-[11px] text-red-300 font-bold">⚠️ البرنامج المحلي (cashier-bridge) مش شغال — الأوردرات الأوفلاين محفوظة في المتصفح بس. شغّل start.bat على كمبيوتر الكاشير.</p>}
+            {menuFromCache && <p className="text-[11px] text-amber-300 font-bold">📋 المنيو والأسعار من نسخة محفوظة (النت فاصل) — هتتحدث لوحدها لما النت يرجع.</p>}
+            {loading === false && items.length === 0 && <p className="text-[11px] text-red-300 font-bold">⚠️ مفيش منيو محفوظ على الجهاز ده — افتح النت مرة واحدة عشان المنيو والأسعار يتحفظوا.</p>}
+            {offline.pending.length > 0 && (
+              <div className="rounded-xl border border-amber-700/60 bg-black/30 p-2 space-y-1">
+                <p className="text-[11px] font-black text-amber-300">📥 أوردرات مستنية الرفع ({offline.pending.length})</p>
+                {offline.pending.map((q) => (
+                  <div key={q.clientUuid} className="flex justify-between gap-2 text-[11px] text-zinc-300">
+                    <span dir="ltr" className="font-black">{q.tempNo}</span>
+                    <span>{q.payload?.offlineSnapshot?.grandTotal ?? ''} ج</span>
+                    <span>{q.status === 'failed' ? '❌ فشل — هيتحاول تاني' : '⏳ مستني النت'}</span>
+                    {uploadedMap[q.tempNo] && <span className="text-green-400 font-bold">✅ اترفع #{uploadedMap[q.tempNo]}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {Object.keys(uploadedMap).length > 0 && offline.pending.length === 0 && (
+              <p className="text-[11px] text-green-400 font-bold">✅ آخر أوردرات اترفعت: {Object.entries(uploadedMap).slice(-3).map(([t, r]) => `${t} ← #${r}`).join('، ')}</p>
+            )}
+          </div>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="🔍 دوّر على صنف" className={inp} />
             <button type="button" onClick={load} className="bg-zinc-800 text-white px-4 rounded-xl text-sm font-bold shrink-0">🔄</button>
           </div>
@@ -6503,6 +6820,19 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
               </div>
             )}
           </div>
+          <div>
+            <span className="text-xs text-zinc-400 font-bold">🎟️ كود خصم (اختياري)</span>
+            <div className="flex gap-2 mt-1">
+              <input value={promoCodeInput} onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())} placeholder="اكتب الكود" className={inp} dir="ltr" disabled={!!appliedPromo} />
+              {appliedPromo ? (
+                <button type="button" onClick={clearPromoCode} className="bg-zinc-700 text-white px-3 rounded-xl text-xs font-bold shrink-0">إلغاء الكود</button>
+              ) : (
+                <button type="button" onClick={applyPromoCode} className="bg-zinc-700 text-white px-3 rounded-xl text-xs font-bold shrink-0">تطبيق الكود</button>
+              )}
+            </div>
+            {promoMsg && <p className="text-[11px] mt-1 font-bold text-amber-400">{promoMsg}</p>}
+          </div>
+
 
           <div>
             {!showOrderNote && !orderNote ? (
@@ -7269,6 +7599,15 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
     if (autoPrintRef.current) requestPrint(ord, 'kitchen');
     fetchOrders();
   };
+  // أوردر أوفلاين اترفع للسيرفر: حدّث القايمة والوردية، من غير ما نطبع تاني
+  // (الإيصال اتطبع وهو أوفلاين) — وعلّم الرقم الحقيقي إنه اتطبع عشان ميتطبعش مرتين.
+  const handleOfflineUploaded = (ord) => {
+    const printed = loadPrinted();
+    printed.add(ord._id || ord.orderId);
+    savePrinted();
+    fetchOrders(); refreshShift();
+  };
+
 
   const deleteOrder = async (id) => {
     if (!window.confirm('مسح الأوردر نهائياً؟')) return;
@@ -7379,6 +7718,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
           {ord.orderType === 'delivery' && !orderMapUrl(ord) && <p className="text-amber-400 text-xs">⚠️ العميل لم يرسل موقعًا؛ لن يظهر QR إلا بعد إضافة رابط الموقع.</p>}
           {ord.orderType === 'delivery' && ord.customerPhone && ord.customerPhone !== '-' && ord.phoneStatus !== 'verified' && ord.phoneStatus !== 'known' && <p className="bg-orange-500/15 border border-orange-500/50 text-orange-300 rounded-lg px-2 py-1 text-xs font-bold">🆕 رقم غير موثّق — اتصل بالعميل، وبعد التأكيد اضغط زر توثيق الرقم</p>}
           {(ord.phoneStatus === 'verified' || ord.phoneStatus === 'known') && <p className="text-green-400 text-xs font-bold">✅ رقم موثّق ({ord.phoneOrders || 0} أوردر مكتمل)</p>}
+          {ord.promoPendingVerification && <p className="bg-amber-500/15 border border-amber-500/50 text-amber-300 rounded-lg px-2 py-1 text-xs font-bold">🎟️ كود {ord.promoCode || ''} مستني التحقق{ord.promoInvalidReason ? ` — ${ord.promoInvalidReason}` : ' — الأوردر اتسجل من غير خصم'}</p>}
           {ord.createdAt && <p>🕒 <span className="text-zinc-400 text-xs">{new Date(ord.createdAt).toLocaleString('ar-EG')}</span></p>}
           {ord.acceptedBy && <p>✅ <span className="text-zinc-400 text-xs">قبله: {ord.acceptedBy}</span></p>}
           {ord.completedBy && <p>🏁 <span className="text-zinc-400 text-xs">أنهاه: {ord.completedBy}</span></p>}
@@ -7506,7 +7846,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
         {tabBtn('chat', `💬 رسايل العملاء${chatUnread > 0 ? ` (${chatUnread})` : ''}`)}
       </div>
 
-      {cashierTab === 'pos' && <PosScreen authFetch={authFetch} isAdmin={isAdmin} onCreated={(o) => { handlePosCreated(o); refreshShift(); }} shiftOpen={shiftOpen} onShiftOpened={refreshShift} editOrder={editingOrder} onEditFinished={() => setEditingOrder(null)} onEditSaved={handleOrderEdited} />}
+      {cashierTab === 'pos' && <PosScreen authFetch={authFetch} isAdmin={isAdmin} onCreated={(o) => { handlePosCreated(o); refreshShift(); }} shiftOpen={shiftOpen} onShiftOpened={refreshShift} shift={shiftData?.shift || null} onOfflineUploaded={handleOfflineUploaded} editOrder={editingOrder} onEditFinished={() => setEditingOrder(null)} onEditSaved={handleOrderEdited} />}
 
       {cashierTab === 'active' && (
         activeOrders.length === 0 ? (
