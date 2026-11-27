@@ -269,6 +269,9 @@ const getDiscountedPrice = (price, discountPercent) => {
   return Math.round(price * (1 - discountPercent / 100));
 };
 
+// نص الخصم على الأوردر: نسبة % (مع المبلغ) أو مبلغ ثابت بالجنيه — الأوردرات القديمة من غير نوع بتتعرض نسبة زي الأول
+const discountLabel = (o) => (o.discountType === 'amount' ? `${Number(o.discountAmount) || 0} ج` : `${Number(o.discountPercent) || 0}% (${Number(o.discountAmount) || 0} ج)`);
+
 // ================= مواعيد الطلب (فتح / قفل) =================
 const fmtTime = (hhmm) => {
   const [h, m] = String(hhmm || '00:00').split(':').map(Number);
@@ -3043,7 +3046,7 @@ const Receipt80 = ({ order, type, cashierName }) => {
           {order.orderNote && <div style={{ border: '1px solid #000', padding: '3px', marginTop: '4px', whiteSpace: 'pre-wrap', fontWeight: 700 }}>📝 {order.orderNote}</div>}
           <div className="rc-line" />
           <div className="rc-row"><span>المجموع</span><span>{subtotal} ج</span></div>
-          {discount > 0 && <div className="rc-row"><span>خصم {order.discountPercent}%</span><span>- {discount} ج</span></div>}
+          {discount > 0 && <div className="rc-row"><span>خصم {discountLabel(order)}</span><span>- {discount} ج</span></div>}
           {isDelivery && <div className="rc-row"><span>التوصيل</span><span>{fee} ج</span></div>}
           <div className="rc-row rc-total"><span>الإجمالي</span><span>{total} ج</span></div>
           {order.paymentMethod && <div className="rc-row"><span>الدفع</span><span>{payText(order)}</span></div>}
@@ -4839,6 +4842,8 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
   const [splitRows, setSplitRows] = useState([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]);
   const [talabatNo, setTalabatNo] = useState('');
   const [discount, setDiscount] = useState(0);
+  const [discountType, setDiscountType] = useState('percent'); // percent | amount
+  const switchDiscountType = (t) => { if (t === discountType) return; setDiscountType(t); setDiscount(0); };
   const [discountReason, setDiscountReason] = useState('');
   const [orderNote, setOrderNote] = useState('');
   const [showOrderNote, setShowOrderNote] = useState(false);
@@ -4907,7 +4912,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
   }, [custPhone]);
 
   const resetForm = () => {
-    setDiscount(0); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setOrderType('pickup');
+    setDiscount(0); setDiscountType('percent'); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setOrderType('pickup');
   };
   const cancelEdit = () => {
     setCart(stashRef.current || []); stashRef.current = null; resetForm();
@@ -4925,7 +4930,8 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     setPay(editOrder.paymentMethod || 'cash');
     if (editOrder.paymentMethod === 'split' && Array.isArray(editOrder.paymentSplit)) setSplitRows(editOrder.paymentSplit.map(p => ({ method: p.method, amount: String(p.amount) })));
     setTalabatNo(editOrder.talabatNo || '');
-    setDiscount(Number(editOrder.discountPercent) || 0);
+    setDiscountType(editOrder.discountType === 'amount' ? 'amount' : 'percent');
+    setDiscount(editOrder.discountType === 'amount' ? (Number(editOrder.discountAmount) || 0) : (Number(editOrder.discountPercent) || 0));
     setDiscountReason(editOrder.discountReason || '');
     setOrderNote(editOrder.orderNote || '');
     setShowOrderNote(!!editOrder.orderNote);
@@ -5064,7 +5070,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
   const clearCart = () => { if (cart.length === 0) return; if (window.confirm('تمسح كل الأصناف من السلة؟')) setCart([]); };
 
   const itemsTotal = cart.reduce((s, l) => s + l.unit * l.qty, 0);
-  const discountAmount = Math.round(itemsTotal * discount / 100);
+  const discountAmount = discountType === 'amount' ? Math.min(Math.max(0, Math.round(discount) || 0), itemsTotal) : Math.round(itemsTotal * discount / 100);
   const zone = zones.find(z => z._id === zoneId);
   const fee = editOrder ? (Number(editOrder.deliveryFee) || 0) : (orderType === 'delivery' ? (zone ? Number(zone.fee) || 0 : Number(manualFee) || 0) : 0);
   const total = itemsTotal - discountAmount + fee;
@@ -5086,8 +5092,8 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
   };
 
   const setCustomDiscount = (v) => {
-    const n = Math.max(0, Math.min(100, Number(String(v).replace(/[^\d.]/g, '')) || 0));
-    setDiscount(n);
+    const n = Number(String(v).replace(/[^\d.]/g, '')) || 0;
+    setDiscount(discountType === 'amount' ? Math.max(0, Math.min(Math.round(n), itemsTotal)) : Math.max(0, Math.min(100, n)));
   };
 
   const submitEdit = async () => {
@@ -5099,7 +5105,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     try {
       const payload = {
         ...(pay === 'split' ? { paymentSplit: splitRows.map(r => ({ method: r.method, amount: Number(r.amount) })) } : {}),
-        paymentMethod: pay, orderNote: orderNote.trim(), discountPercent: discount, discountReason: discountReason.trim(),
+        paymentMethod: pay, orderNote: orderNote.trim(), discountType, discountPercent: discountType === 'percent' ? discount : 0, discountAmount: discountType === 'amount' ? discount : 0, discountReason: discountReason.trim(),
         items: cart.map(l => (l.keepIndex !== undefined
           ? { keepIndex: l.keepIndex, quantity: l.qty, notes: l.notes }
           : { itemId: l._id, name: l.name, quantity: l.qty, selections: Array.isArray(l.modifierSelections) ? l.modifierSelections : undefined, modifiers: l.modifiersInfo, notes: l.notes }))
@@ -5133,11 +5139,11 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
     if (pay === 'split') { const se = splitError(splitRows, total); if (se) return alert(se); }
     setBusy(true);
     try {
-      const submitSig = JSON.stringify([cart.map(l => [l._id, l.qty, l.unit, l.modifiersInfo, l.notes]), orderType, pay, splitRows, discount, custPhone, fee, total]);
+      const submitSig = JSON.stringify([cart.map(l => [l._id, l.qty, l.unit, l.modifiersInfo, l.notes]), orderType, pay, splitRows, discount, discountType, custPhone, fee, total]);
       const payload = {
         clientRef: getSubmitClientRef(submitSig),
         ...(pay === 'split' ? { paymentSplit: splitRows.map(r => ({ method: r.method, amount: Number(r.amount) })) } : {}),
-        orderType, paymentMethod: pay, talabatNo: talabatNo.trim(), discountPercent: discount,
+        orderType, paymentMethod: pay, talabatNo: talabatNo.trim(), discountType, discountPercent: discountType === 'percent' ? discount : 0, discountAmount: discountType === 'amount' ? discount : 0,
         discountReason: discountReason.trim(), orderNote: orderNote.trim(),
         customerName: custName.trim(), customerPhone: custPhone.trim(), customerAddress: address.trim(),
         zoneName: zone ? zone.name : (orderType === 'delivery' ? 'توصيل' : ''), deliveryFee: fee,
@@ -5151,7 +5157,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
       } else {
         onCreated(data);
         setToast(`✅ أوردر #${data.orderId} اتبعت للمطبخ`);
-        setCart([]); setDiscount(0); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setCustLookup(null); clientRefRef.current = { sig: '', ref: '' };
+        setCart([]); setDiscount(0); setDiscountType('percent'); setDiscountReason(''); setOrderNote(''); setShowOrderNote(false); setNoteKey(null); setTalabatNo(''); setCustName(''); setCustPhone(''); setAddress(''); setManualFee(''); setPay('cash'); setSplitRows([{ method: 'cash', amount: '' }, { method: 'instapay', amount: '' }]); setCustLookup(null); clientRefRef.current = { sig: '', ref: '' };
       }
     } catch (e) {
       if (e.message === 'unauthorized') alert('انتهت الجلسة، سجّل دخول تاني'); else alert('تعذر الوصول للسيرفر، اتأكد من النت وحاول تاني — لو الأوردر اتسجل قبل كده مش هيتكرر.');
@@ -5282,14 +5288,18 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
             </div>
             <div className="flex flex-wrap gap-1.5 items-center">
               <button type="button" onClick={() => setDiscount(0)} className={`px-3 py-2 rounded-lg text-xs font-black border ${discount === 0 ? 'bg-zinc-600 text-white border-zinc-400' : 'bg-[#12080A] text-zinc-400 border-[#3A1218]'}`}>بدون</button>
-              {presets.map(p => (
+              <span className="flex rounded-lg overflow-hidden border border-[#3A1218]">
+                <button type="button" onClick={() => switchDiscountType('percent')} className={`px-3 py-2 text-xs font-black ${discountType === 'percent' ? 'bg-[#800020] text-white' : 'bg-[#12080A] text-zinc-400'}`}>%</button>
+                <button type="button" onClick={() => switchDiscountType('amount')} className={`px-3 py-2 text-xs font-black ${discountType === 'amount' ? 'bg-[#800020] text-white' : 'bg-[#12080A] text-zinc-400'}`}>ج</button>
+              </span>
+              {discountType === 'percent' && presets.map(p => (
                 <button key={p} type="button" onClick={() => setDiscount(p)} className={`px-3 py-2 rounded-lg text-xs font-black border ${discount === p ? 'bg-[#800020] text-white border-[#FFD700]' : 'bg-[#12080A] text-[#FFD700] border-[#3A1218] hover:border-[#800020]'}`}>{p}%</button>
               ))}
-              <input value={discount || ''} onChange={(e) => setCustomDiscount(e.target.value)} placeholder="%" className="w-16 bg-[#12080A] border border-[#3A1218] rounded-lg px-2 py-2 text-white text-xs text-center" dir="ltr" />
+              <input value={discount || ''} onChange={(e) => setCustomDiscount(e.target.value)} placeholder={discountType === 'amount' ? 'ج' : '%'} className="w-16 bg-[#12080A] border border-[#3A1218] rounded-lg px-2 py-2 text-white text-xs text-center" dir="ltr" />
             </div>
             {discount > 0 && (
               <div className="mt-2 space-y-2">
-                <p className="text-[11px] text-zinc-500">ده خصم منفصل عن خصم الموقع، ومش بيتطبق إلا لما تختار نسبة هنا.</p>
+                <p className="text-[11px] text-zinc-500">ده خصم منفصل عن خصم الموقع، ومش بيتطبق إلا لما تختار خصم هنا.</p>
                 <input value={discountReason} onChange={(e) => setDiscountReason(e.target.value)} placeholder="سبب الخصم (إجباري)" className={inp} />
               </div>
             )}
@@ -5339,7 +5349,7 @@ const PosScreen = ({ authFetch, isAdmin, onCreated, shiftOpen, onShiftOpened, ed
         <div className="shrink-0 border-t border-[#800020]/40 bg-[#220E13] p-3 space-y-2">
           <div className="flex items-center justify-between text-xs text-zinc-400 gap-2">
             <span>المجموع {itemsTotal} ج</span>
-            {discountAmount > 0 && <span className="text-green-400 font-bold">خصم {discount}%: - {discountAmount} ج</span>}
+            {discountAmount > 0 && <span className="text-green-400 font-bold">خصم {discountType === 'amount' ? `${discountAmount} ج` : `${discount}%`}: - {discountAmount} ج</span>}
             {fee > 0 && <span>توصيل {fee} ج</span>}
           </div>
           <div className="flex items-center gap-3">
@@ -6120,7 +6130,7 @@ const CashierDashboard = ({ initialTab = 'active' }) => {
           {ord.orderType !== 'talabat' && ord.customerName && ord.customerName !== '-' && <p>👤 <strong className="text-white">{ord.customerName}</strong></p>}
           {ord.customerPhone && ord.customerPhone !== '-' && <p>📞 <strong className="text-white">{ord.customerPhone}</strong></p>}
           <p>📦 <strong className="text-white">{ord.orderType === 'delivery' ? `توصيل (${ord.zoneName})` : typeLabel(ord)}</strong>{ord.source === 'pos' && <span className="text-[10px] text-zinc-500 mr-2">من الكاشير</span>}</p>
-          {ord.paymentMethod && <p>💰 <span className="text-zinc-300 text-xs">{payText(ord)}{ord.discountAmount > 0 ? ` · خصم ${ord.discountPercent}% (${ord.discountAmount} ج)` : ''}</span></p>}
+          {ord.paymentMethod && <p>💰 <span className="text-zinc-300 text-xs">{payText(ord)}{ord.discountAmount > 0 ? ` · خصم ${discountLabel(ord)}` : ''}</span></p>}
           {ord.orderNote && <p className="bg-[#FFD700]/10 border border-[#FFD700]/40 rounded-lg px-2 py-1">📝 <strong className="text-[#FFD700]">{ord.orderNote}</strong></p>}
           {ord.driverName && <p>🛵 <span className="text-zinc-300 text-xs">السواق: {ord.driverName}</span></p>}
           {ord.status === 'cancelled' && <p>✖ <span className="text-red-400 text-xs">سبب الإلغاء: {ord.cancelReason} ({ord.cancelledBy})</span></p>}

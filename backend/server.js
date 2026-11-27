@@ -366,6 +366,7 @@ const orderSchema = new mongoose.Schema({
   phoneOrders: { type: Number },
   discountPercent: { type: Number, default: 0 },
   discountAmount: { type: Number, default: 0 },
+  discountType: { type: String, enum: ["percent", "amount"], default: "percent" },
   discountReason: { type: String, default: "" },
   orderNote: { type: String, default: "" },
   printedAt: { type: Date },
@@ -1176,6 +1177,18 @@ const clampNumber = (value, min, max) => {
   return Math.min(Math.max(n, min), max);
 };
 
+// خصم الأوردر: نسبة % أو مبلغ ثابت بالجنيه — النسبة زي ما هي من غير سقف، والمبلغ الصحيح لا يتعدى مجموع الأصناف
+const parseOrderDiscount = (body, itemsTotal) => {
+  const type = body.discountType === "amount" ? "amount" : "percent";
+  const total = Math.round(Number(itemsTotal) || 0);
+  if (type === "amount") {
+    const discountAmount = Math.max(0, Math.min(Math.round(Number(body.discountAmount) || 0), total));
+    return { discountType: "amount", discountPercent: 0, discountAmount };
+  }
+  const discountPercent = clampNumber(body.discountPercent, 0, 100);
+  return { discountType: "percent", discountPercent, discountAmount: Math.round(total * discountPercent / 100) };
+};
+
 // أرقام التليفونات: بنشيل أي رموز، ونحوّل +20 لـ 0 عشان نفس العميل ما يتسجلش مرتين
 const normPhone = (v) => {
   let d = String(v ?? "").replace(/\D/g, "");
@@ -1376,7 +1389,7 @@ const discountAlertText = (o, cashierName) => {
     `🏷️ خصم على أوردر #${o.orderId}`,
     ...lines,
     `المجموع قبل الخصم: ${Number(o.itemsTotal) || 0} ج`,
-    `الخصم: ${Number(o.discountPercent) || 0}% (${Number(o.discountAmount) || 0} ج) — السبب: ${o.discountReason || "-"}`,
+    `الخصم: ${o.discountType === "amount" ? `${Number(o.discountAmount) || 0} ج` : `${Number(o.discountPercent) || 0}% (${Number(o.discountAmount) || 0} ج)`} — السبب: ${o.discountReason || "-"}`,
     `الإجمالي: ${Number(o.grandTotal) || 0} ج`,
     `الدفع: ${describePayment(o)}`,
     `الكاشير: ${cashierName}`,
@@ -2040,14 +2053,13 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
     if (priced.error) return res.status(400).json({ error: priced.error });
     const items = priced.items;
 
-    // الخصم متاح للكاشير بأي نسبة من غير PIN، لكن لازم سبب، وبيظهر في تقرير التقفيل
-    const discountPercent = clampNumber(body.discountPercent, 0, 100);
+    // الخصم متاح للكاشير بأي نسبة أو مبلغ من غير PIN، لكن لازم سبب، وبيظهر في تقرير التقفيل
     const discountReason = cleanText(body.discountReason, 200);
     const orderNote = cleanText(body.orderNote, 300);
-    if (discountPercent > 0 && discountReason.length < 2) return res.status(400).json({ error: "سبب الخصم إجباري" });
 
     const itemsTotal = items.reduce((sum, it) => sum + it.price * it.quantity, 0);
-    const discountAmount = Math.round(itemsTotal * discountPercent / 100);
+    const { discountType, discountPercent, discountAmount } = parseOrderDiscount(body, itemsTotal);
+    if (discountAmount > 0 && discountReason.length < 2) return res.status(400).json({ error: "سبب الخصم إجباري" });
 
     let customerName = cleanText(body.customerName, 80) || "-";
     const rawPhone = cleanText(body.customerPhone, 20);
@@ -2089,7 +2101,7 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
       orderId, shiftReceiptNo: currentShift.receiptSeq, shiftId: currentShift._id,
       customerName, customerPhone, orderType, customerAddress, zoneName, deliveryFee,
       items, itemsTotal, grandTotal, status: "accepted", source: "pos", paymentMethod, ...(paymentSplit ? { paymentSplit } : {}),
-      talabatNo, discountPercent, discountAmount, discountReason, orderNote,
+      talabatNo, discountType, discountPercent, discountAmount, discountReason, orderNote,
       ...(posPhone.status ? { phoneStatus: posPhone.status, phoneOrders: posPhone.count } : {}),
       createdBy: req.user.name, acceptedBy: req.user.name, acceptedAt: offlineAt || new Date(),
       ...(clientRef ? { clientRef } : {}), ...(offlineAt ? { createdAt: offlineAt } : {})
@@ -2101,7 +2113,7 @@ app.post("/api/pos/orders", requireAuth, async (req, res) => {
     console.log(`✅ POS order saved: #${saved.orderId} by ${req.user.name}`);
     await rememberUnverifiedCustomer(saved.toObject());
     if (customerPhone !== "-") void upsertCustomer({ phone: customerPhone, name: customerName, address: orderType === "delivery" ? customerAddress : "", zoneName: orderType === "delivery" ? zoneName : "" });
-    if (discountPercent > 0) {
+    if (discountAmount > 0) {
       void sendTelegramAlert(discountAlertText(saved, req.user.name));
     }
     if (orderType === "talabat") {
@@ -2173,17 +2185,20 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
     }
 
     // الخصم والكومنت
-    let discountPercent = order.discountPercent || 0;
     let discountReason = order.discountReason || "";
-    if (body.discountPercent !== undefined) {
-      discountPercent = clampNumber(body.discountPercent, 0, 100);
-      discountReason = discountPercent > 0 ? cleanText(body.discountReason ?? order.discountReason, 200) : "";
-      if (discountPercent > 0 && discountReason.length < 2) return res.status(400).json({ error: "سبب الخصم إجباري" });
-    }
     const orderNote = body.orderNote !== undefined ? cleanText(body.orderNote, 300) : (order.orderNote || "");
 
     const itemsTotal = items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
-    const discountAmount = Math.round(itemsTotal * discountPercent / 100);
+    // الخصم: نسبة أو مبلغ ثابت — لو التعديل جايب حقول خصم نستخدمها، ولو لأ نكمّل على المخزّن مع إعادة حساب المبلغ على المجموع الجديد
+    const { discountType, discountPercent, discountAmount } = parseOrderDiscount({
+      discountType: body.discountType !== undefined ? body.discountType : (order.discountType || "percent"),
+      discountPercent: body.discountPercent !== undefined ? body.discountPercent : (order.discountPercent || 0),
+      discountAmount: body.discountAmount !== undefined ? body.discountAmount : (order.discountAmount || 0),
+    }, itemsTotal);
+    if (body.discountPercent !== undefined || body.discountAmount !== undefined || body.discountType !== undefined) {
+      discountReason = discountAmount > 0 ? cleanText(body.discountReason ?? order.discountReason, 200) : "";
+      if (discountAmount > 0 && discountReason.length < 2) return res.status(400).json({ error: "سبب الخصم إجباري" });
+    }
     const grandTotal = itemsTotal - discountAmount + (Number(order.deliveryFee) || 0);
 
     if (paymentMethod === "split") {
@@ -2196,7 +2211,7 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
     const sig = (list) => JSON.stringify((list || []).map((it) => [String(it.itemId || ""), it.name, Number(it.price) || 0, Number(it.quantity) || 0, it.modifiers || [], it.notes || ""]));
     const itemsChanged = sig(items) !== sig(order.items);
     const changed = itemsChanged || paymentMethod !== order.paymentMethod || JSON.stringify(paymentSplit || []) !== JSON.stringify(splitOf(order) || []) || orderNote !== (order.orderNote || "")
-      || discountPercent !== (order.discountPercent || 0) || grandTotal !== order.grandTotal;
+      || discountPercent !== (order.discountPercent || 0) || discountType !== (order.discountType || "percent") || grandTotal !== order.grandTotal;
     if (!changed) return res.json({ order, itemsChanged: false, changed: false });
 
     const entry = {
@@ -2204,7 +2219,7 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
       beforeTotal: order.grandTotal, afterTotal: grandTotal,
       beforePayment: describePayment(order), afterPayment: describePayment({ paymentMethod, paymentSplit }), itemsChanged
     };
-    const setDoc = { items, itemsTotal, discountPercent, discountAmount, discountReason, grandTotal, paymentMethod, orderNote, editedAt: new Date(), editedBy: req.user.name, ...(paymentSplit ? { paymentSplit } : {}) };
+    const setDoc = { items, itemsTotal, discountType, discountPercent, discountAmount, discountReason, grandTotal, paymentMethod, orderNote, editedAt: new Date(), editedBy: req.user.name, ...(paymentSplit ? { paymentSplit } : {}) };
     // أوردر دليفري كان مستني نقدية من السواق واتغيّر دفعه لفيزا/انستا/محفظة: الفلوس وصلت للمطعم، فيتقفل دلوقتي
     const closesNow = !!order.awaitingCash && cashPartOf({ paymentMethod, paymentSplit, grandTotal }) <= 0;
     if (closesNow) Object.assign(setDoc, { status: "completed", completedAt: new Date(), completedBy: req.user.name, awaitingCash: false });
@@ -2229,7 +2244,7 @@ app.put("/api/pos/orders/:id", requireAuth, async (req, res) => {
 
     const payLabel = { cash: "كاش", visa: "فيزا", instapay: "انستا باي", wallet: "محفظة" };
     // لو الأوردر المعدّل عليه خصم: تنبيه واحد بالأوردر كامل بدل تنبيه التعديل العادي
-    if (discountPercent > 0) {
+    if (discountAmount > 0) {
       void sendTelegramAlert(discountAlertText(updated, req.user.name));
     } else {
       void sendTelegramAlert(`✏️ تعديل أوردر #${updated.orderId}\nبواسطة: ${req.user.name}\nالإجمالي: ${order.grandTotal} ← ${grandTotal} ج\nالدفع: ${entry.beforePayment} ← ${entry.afterPayment}\nالأصناف اتغيّرت: ${itemsChanged ? "نعم" : "لا"}\nبعد الطباعة: ${entry.afterPrint ? "نعم" : "لا"}`);
