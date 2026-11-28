@@ -3640,7 +3640,7 @@ const makePrint = (title, report, meta = {}) => ({ title, report, meta, createdA
 // شيفت الصبح (6 الصبح لـ 6 المغرب) أو الليل، حسب وقت فتح الوردية
 const shiftNameOf = (from) => { if (!from) return ''; const h = new Date(from).getHours(); return h >= 6 && h < 18 ? 'شيفت الصبح' : 'شيفت الليل'; };
 const printForClosed = (c, title) => makePrint(title || `تقفيل ${shiftNameOf(c.from || c.openedAt)}`.trim(), c.report || legacyReport(c), {
-  closedBy: c.closedBy, closedAt: c.closedAt, countedCash: c.countedCash, expectedCash: c.expectedCash, difference: c.difference, notes: c.notes
+  full: true, closedBy: c.closedBy, closedAt: c.closedAt, countedCash: c.countedCash, expectedCash: c.expectedCash, difference: c.difference, notes: c.notes
 });
 
 // أقل سعر لصنف سعره 0 وليه اختيارات إجبارية (عشان ما يظهرش 0 ج)
@@ -3673,6 +3673,7 @@ const ReportBodyFull = ({ order }) => {
   const num = (v) => Number(v) || 0;
   const row = (label, value, cls = '') => <div className={`rc-row ${cls}`}><span>{label}</span><span>{value}</span></div>;
   const section = (t) => (<><div className="rc-line" /><div className="rc-big rc-center">{t}</div></>);
+  const d = m.day; // ملخص اليوم (الشيفتين) — بيتضاف في التقفيل لما اليوم يكون فيه شيفتين
   const talabatCash = num(r.talabatCash);
   const talabatVisa = r.talabatVisa !== undefined ? num(r.talabatVisa) : Math.max(0, num(r.talabat) - talabatCash);
   const hasTalabatSplit = r.talabatCash !== undefined || r.talabatVisa !== undefined;
@@ -3692,10 +3693,10 @@ const ReportBodyFull = ({ order }) => {
       {r.openedBy && <div>الكاشير: {r.openedBy}{m.closedBy && m.closedBy !== r.openedBy ? ` (قفلها ${m.closedBy})` : ''}</div>}
 
       <div className="rc-line" />
-      <div className="rc-center rc-sub">إجمالي المبيعات (بعد الخصم، من غير أجرة التوصيل)</div>
-      <div className="rc-center rc-total">{money(net)}</div>
+      <div className="rc-center rc-sub">إجمالي المبيعات بعد الخصم (المصروفات بتتخصم من الدرج)</div>
+      <div className="rc-center rc-kid">{money(net)}</div>
       {row('عدد الأوردرات', r.count || 0, 'rc-big')}
-      {row('أجرة توصيل (مش في المبيعات)', money(r.delivery))}
+      {row('رسوم توصيل للسواق', money(r.delivery))}
       {num(r.discounts) > 0 && row('خصومات اتحسبت فعلاً', money(r.discounts))}
       {num(r.cancelled) > 0 && row(`ملغي (${r.cancelled}) مش محسوب`, money(r.cancelledTotal))}
 
@@ -3703,7 +3704,6 @@ const ReportBodyFull = ({ order }) => {
         {section('المصروفات')}
         {r.expenses.map((e, i) => <div key={i} className="rc-row rc-small"><span>- {e.reason} ({e.by})</span><span>{money(e.amount)}</span></div>)}
         {row('إجمالي المصروفات', money(r.expensesTotal), 'rc-big')}
-        <div className="rc-center rc-sub">بتتخصم من كاش الدرج مش من المبيعات</div>
       </>)}
       {section('طرق الدفع')}
       {pays.cash !== undefined && row('كاش', money(pays.cash))}
@@ -3734,10 +3734,9 @@ const ReportBodyFull = ({ order }) => {
           {row('+ كاش المبيعات', money(pays.cash || 0))}
           {num(r.cashIn) > 0 && row('+ إيداعات', money(r.cashIn))}
           {num(r.cashOut) > 0 && row('- مصروفات وسحب', money(r.cashOut))}
-          {num(r.driverCash) > 0 && row('- كاش مع السواقين', money(r.driverCash))}
+          {num(r.driverCash) > 0 && row('- أجرة التوصيل مع السواقين', money(r.driverCash))}
           <div className="rc-line" />
           {row('المتوقع في الدرج', money(expected), 'rc-big')}
-          <div className="rc-center rc-sub">الفيزا والانستا والمحفظة وطلبات فيزا مش في الدرج</div>
           {hasCounted && row('اللي اتعدّ فعلاً', money(m.countedCash), 'rc-big')}
           {hasCounted && row('الفرق', diffText, 'rc-total')}
         </>
@@ -3760,6 +3759,18 @@ const ReportBodyFull = ({ order }) => {
               {(c.items || []).map((it, j) => <div key={j} className="rc-row rc-small"><span>{it.name}</span><span>× {it.qty}</span></div>)}
             </div>
           ))}
+        </>
+      )}
+
+      {d && (
+        <>
+          <div className="rc-line" />
+          <div className="rc-big rc-center">ملخص اليوم (الشيفتين)</div>
+          {row('إجمالي الأوردرات', d.orders, 'rc-big')}
+          {row('إجمالي المبيعات', money(d.sales), 'rc-big')}
+          {row('صافي كاش الشيفتين', money(d.net))}
+          <div className="rc-line" />
+          {row('المتوقع في الدرج آخر اليوم', money(d.last), 'rc-total')}
         </>
       )}
 
@@ -5748,7 +5759,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
       } else {
         const closedReport = d.report || d.reportSnapshot || rep || {};
         const netSales = Number(closedReport.grossSales ?? closedReport.total ?? d.total ?? 0);
-        const closedMeta = { closedBy: d.closedBy || '', closedAt: d.closedAt || new Date().toISOString(), expectedCash: d.expectedCash ?? closedReport.expectedCash, notes: d.notes };
+        const closedMeta = { full: true, closedBy: d.closedBy || '', closedAt: d.closedAt || new Date().toISOString(), expectedCash: d.expectedCash ?? closedReport.expectedCash, notes: d.notes };
         // لو اليوم فيه شيفتين (الصبح والليل) بنضيف ملخص اليوم في آخر ورقة التقفيل
         try {
           const rr = await authFetch('/api/reports/day');
@@ -5758,7 +5769,7 @@ const ShiftPanel = ({ authFetch, isAdmin, shiftData, refreshShift, closedShifts,
             closedMeta.day = { orders: dd.totals?.count || 0, sales: dd.totals?.total || 0, net: cs.net, last: cs.last };
           }
         } catch (e) {}
-        // ورقتين: تقفيل الشيفت (مختصر) ثم تقرير المطبخ (الأصناف والكميات بالتفصيل)
+        // ورقتين: تقفيل الشيفت (بالتفصيل زي بحبح) ثم تقرير المطبخ (الأصناف والكميات بالتفصيل)
         requestPrint(makePrint(`تقفيل ${shiftNameOf(closedReport.from)}`.trim(), closedReport, closedMeta), 'report');
         requestPrint(makePrint(`جرد ${shiftNameOf(closedReport.from)}`.trim() || 'تقرير المطبخ - جرد الوردية', closedReport, closedMeta), 'kitchen-summary');
         setCloseOpen(false);
